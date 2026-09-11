@@ -1,10 +1,11 @@
 import os
+import re
 import sqlite3
 import hashlib
 import secrets
 import time
-from datetime import datetime, date
-from typing import List, Dict, Any, Optional, Tuple
+from datetime import datetime, date, timedelta
+from typing import List, Dict, Any, Optional, Tuple, Union
 
 DB_DIR = os.getenv("DATA_DIR", "/app/data")
 DB_PATH = os.path.join(DB_DIR, "services.db")
@@ -16,7 +17,7 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 # ==========================================
-# Criptografía de contraseñas (PBKDF2-SHA256)
+# Helpers de Criptografía y Finanzas
 # ==========================================
 def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
     if salt is None:
@@ -33,6 +34,21 @@ def verify_password(password: str, stored_hash: str, salt: str) -> bool:
     computed_hash, _ = hash_password(password, salt)
     return secrets.compare_digest(computed_hash, stored_hash)
 
+def parse_money(val: Union[str, float, int, None]) -> float:
+    """Extrae el valor numérico flotante de cadenas como '$10 USD', '15000', '$7.50', etc."""
+    if val is None:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    match = re.search(r'([0-9]+(?:[\.,][0-9]+)?)', str(val))
+    if match:
+        clean = match.group(1).replace(',', '.')
+        try:
+            return float(clean)
+        except ValueError:
+            return 0.0
+    return 0.0
+
 # ==========================================
 # Inicialización y Esquema Relacional
 # ==========================================
@@ -41,7 +57,7 @@ def init_db():
     conn = get_connection()
     try:
         with conn:
-            # 1. Tabla de administradores
+            # 1. Administradores y 2FA
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS admin_users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +71,7 @@ def init_db():
                 )
             """)
 
-            # 2. Tabla de clientes (CRM Streaming)
+            # 2. Clientes (CRM)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS clients (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,23 +79,24 @@ def init_db():
                     name TEXT NOT NULL,
                     whatsapp TEXT DEFAULT '',
                     telegram TEXT DEFAULT '',
-                    client_type TEXT DEFAULT 'consumidor_final', -- 'consumidor_final' o 'revendedor'
+                    client_type TEXT DEFAULT 'consumidor_final',
                     notes TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
 
-            # 3. Tabla de cuentas / perfiles de streaming
+            # 3. Cuentas y Perfiles de Streaming
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS streaming_accounts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    platform TEXT NOT NULL, -- Netflix, Disney+, Max, Prime, Spotify, etc.
+                    platform TEXT NOT NULL,
                     email TEXT NOT NULL,
                     password TEXT NOT NULL,
                     profile_name TEXT DEFAULT '',
                     profile_pin TEXT DEFAULT '',
                     client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
                     status TEXT DEFAULT 'libre', -- 'libre', 'ocupada', 'caida', 'reemplazada_caida', 'vencida'
+                    payment_status TEXT DEFAULT 'pagado', -- 'pagado', 'pendiente'
                     start_date TEXT DEFAULT '',
                     expiry_date TEXT DEFAULT '',
                     recurrence TEXT DEFAULT 'mensual',
@@ -92,20 +109,26 @@ def init_db():
                 )
             """)
 
-            # 4. Tabla de servicios generales (para compatibilidad previa)
+            # 4. Tabla de Transacciones y Pagos (Finanzas)
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS services (
+                CREATE TABLE IF NOT EXISTS payments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    category TEXT DEFAULT 'Servicio',
-                    expiry_date TEXT NOT NULL,
-                    recurrence TEXT DEFAULT 'mensual',
-                    cost TEXT DEFAULT '',
+                    account_id INTEGER REFERENCES streaming_accounts(id) ON DELETE SET NULL,
+                    client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                    amount REAL NOT NULL,
+                    cost REAL DEFAULT 0.0,
+                    profit REAL DEFAULT 0.0,
+                    payment_method TEXT DEFAULT 'Transferencia',
                     notes TEXT DEFAULT '',
-                    last_alert_sent TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # Migración: Agregar columna payment_status si no existe en bases de datos previas
+            try:
+                conn.execute("ALTER TABLE streaming_accounts ADD COLUMN payment_status TEXT DEFAULT 'pagado'")
+            except Exception:
+                pass
     finally:
         conn.close()
 
@@ -194,7 +217,6 @@ def find_or_create_client(
     client_type: str = "consumidor_final", 
     notes: str = ""
 ) -> Dict[str, Any]:
-    """Busca un cliente existente por nombre/alias, whatsapp o telegram, o lo crea si no existe."""
     conn = get_connection()
     clean_name = name.strip()
     clean_wa = whatsapp.strip().replace(" ", "").replace("-", "")
@@ -205,7 +227,6 @@ def find_or_create_client(
 
     try:
         with conn:
-            # Buscar por nombre, whatsapp o telegram
             query = """
                 SELECT * FROM clients 
                 WHERE lower(name) = lower(?)
@@ -217,7 +238,6 @@ def find_or_create_client(
 
             if existing:
                 client_id = existing["id"]
-                # Actualizar datos si se proporcionaron nuevos
                 conn.execute("""
                     UPDATE clients 
                     SET whatsapp = CASE WHEN length(?) > 0 THEN ? ELSE whatsapp END,
@@ -229,7 +249,6 @@ def find_or_create_client(
                 row = conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
                 return dict(row)
             else:
-                # Crear nuevo cliente
                 cursor = conn.execute("SELECT count(*) as total FROM clients")
                 total = cursor.fetchone()["total"] + 1
                 client_code = f"CLI-{total:03d}"
@@ -245,7 +264,6 @@ def find_or_create_client(
         conn.close()
 
 def search_client(query: str) -> Optional[Dict[str, Any]]:
-    """Busca un cliente por ID, código, nombre, whatsapp o usuario de telegram."""
     conn = get_connection()
     q = query.strip()
     clean_q = q.replace(" ", "").replace("-", "")
@@ -264,7 +282,6 @@ def search_client(query: str) -> Optional[Dict[str, Any]]:
                 return None
             
             client_data = dict(row)
-            # Buscar sus cuentas activas
             accounts = conn.execute("""
                 SELECT * FROM streaming_accounts 
                 WHERE client_id = ? AND status != 'reemplazada_caida'
@@ -291,7 +308,7 @@ def list_all_clients() -> List[Dict[str, Any]]:
         conn.close()
 
 # ==========================================
-# Gestión de Cuentas y Perfiles de Streaming
+# Gestión de Cuentas y Ventas
 # ==========================================
 def add_free_account(
     platform: str, 
@@ -302,7 +319,6 @@ def add_free_account(
     cost: str = "", 
     notes: str = ""
 ) -> Dict[str, Any]:
-    """Agrega una cuenta o perfil disponible (stock libre) para la venta."""
     conn = get_connection()
     clean_platform = platform.strip().title()
     try:
@@ -331,9 +347,9 @@ def assign_or_sell_account(
     start_date: str = "",
     recurrence: str = "mensual",
     price: str = "",
+    cost: str = "",
     notes: str = ""
 ) -> Dict[str, Any]:
-    """Registra una venta o asignación de cuenta/perfil a un cliente."""
     client = find_or_create_client(
         name=client_name, 
         whatsapp=whatsapp, 
@@ -347,7 +363,6 @@ def assign_or_sell_account(
     conn = get_connection()
     try:
         with conn:
-            # Verificar si la cuenta ya existía como 'libre' para asignarla
             existing_acc = conn.execute("""
                 SELECT * FROM streaming_accounts 
                 WHERE lower(email) = lower(?) AND status = 'libre'
@@ -358,24 +373,36 @@ def assign_or_sell_account(
                 acc_id = existing_acc["id"]
                 conn.execute("""
                     UPDATE streaming_accounts
-                    SET client_id = ?, status = 'ocupada', platform = ?, password = ?,
-                        profile_name = ?, profile_pin = ?, start_date = ?, expiry_date = ?,
-                        recurrence = ?, price = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                    SET client_id = ?, status = 'ocupada', payment_status = 'pagado',
+                        platform = ?, password = ?, profile_name = ?, profile_pin = ?,
+                        start_date = ?, expiry_date = ?, recurrence = ?, price = ?,
+                        cost = CASE WHEN length(?) > 0 THEN ? ELSE cost END,
+                        notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
                 """, (client["id"], clean_platform, password.strip(), profile_name.strip(), 
                       profile_pin.strip(), s_date, expiry_date.strip(), recurrence.strip(), 
-                      price.strip(), notes.strip(), acc_id))
+                      price.strip(), cost.strip(), cost.strip(), notes.strip(), acc_id))
             else:
                 cursor = conn.execute("""
                     INSERT INTO streaming_accounts (
                         platform, email, password, profile_name, profile_pin,
-                        client_id, status, start_date, expiry_date, recurrence,
-                        price, notes
-                    ) VALUES (?, ?, ?, ?, ?, ?, 'ocupada', ?, ?, ?, ?, ?)
+                        client_id, status, payment_status, start_date, expiry_date, recurrence,
+                        price, cost, notes
+                    ) VALUES (?, ?, ?, ?, ?, ?, 'ocupada', 'pagado', ?, ?, ?, ?, ?, ?)
                 """, (clean_platform, email.strip(), password.strip(), profile_name.strip(),
                       profile_pin.strip(), client["id"], s_date, expiry_date.strip(),
-                      recurrence.strip(), price.strip(), notes.strip()))
+                      recurrence.strip(), price.strip(), cost.strip(), notes.strip()))
                 acc_id = cursor.lastrowid
+
+            # Registrar la venta en la tabla de pagos / balance
+            price_num = parse_money(price)
+            cost_num = parse_money(cost)
+            profit_num = price_num - cost_num
+            if price_num > 0:
+                conn.execute("""
+                    INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                    VALUES (?, ?, ?, ?, ?, 'Inicial', 'Venta registrada')
+                """, (acc_id, client["id"], price_num, cost_num, profit_num))
 
             row = conn.execute("""
                 SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
@@ -388,7 +415,6 @@ def assign_or_sell_account(
         conn.close()
 
 def mark_account_fallen(email_or_query: str, reason: str = "Suscripción caída") -> Optional[Dict[str, Any]]:
-    """Marca una cuenta o correo en estado 'caida'."""
     conn = get_connection()
     q = email_or_query.strip()
     try:
@@ -425,18 +451,10 @@ def mark_account_fallen(email_or_query: str, reason: str = "Suscripción caída"
         conn.close()
 
 def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
-    """
-    Reemplazo inteligente:
-    1. Identifica la cuenta caída y su plataforma.
-    2. Busca una cuenta en estado 'libre' de la MISMA plataforma.
-    3. Asigna la cuenta libre al cliente manteniendo su fecha de vencimiento.
-    4. Pasa la cuenta vieja a 'reemplazada_caida'.
-    """
     conn = get_connection()
     q = email_or_query.strip()
     try:
         with conn:
-            # 1. Obtener la cuenta con problema
             old_row = conn.execute("""
                 SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type 
                 FROM streaming_accounts a
@@ -456,7 +474,6 @@ def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
             price = old_acc["price"]
             recurrence = old_acc["recurrence"]
 
-            # 2. Buscar una cuenta libre de la MISMA plataforma
             free_row = conn.execute("""
                 SELECT * FROM streaming_accounts 
                 WHERE lower(platform) = lower(?) AND status = 'libre'
@@ -464,7 +481,6 @@ def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
             """, (platform,)).fetchone()
 
             if not free_row:
-                # No hay stock de esa plataforma
                 return {
                     "success": False,
                     "error": f"No hay cuentas libres disponibles en inventario para la plataforma '{platform}'",
@@ -473,14 +489,8 @@ def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
 
             new_acc = dict(free_row)
 
-            # 3. Marcar la cuenta vieja como reemplazada
-            conn.execute("""
-                UPDATE streaming_accounts 
-                SET status = 'reemplazada_caida', updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (old_acc["id"],))
+            conn.execute("UPDATE streaming_accounts SET status = 'reemplazada_caida', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (old_acc["id"],))
 
-            # 4. Asignar la nueva cuenta libre al cliente con la fecha de vencimiento original
             conn.execute("""
                 UPDATE streaming_accounts
                 SET client_id = ?, status = 'ocupada', expiry_date = ?, 
@@ -488,7 +498,6 @@ def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
                 WHERE id = ?
             """, (client_id, expiry, price, recurrence, f"Reemplazo de {old_acc['email']}", new_acc["id"]))
 
-            # 5. Obtener los datos actualizados
             fresh_new = conn.execute("""
                 SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
                 FROM streaming_accounts a
@@ -579,7 +588,8 @@ def renew_account(account_id_or_email: str, new_expiry_date: str) -> bool:
         with conn:
             cursor = conn.execute("""
                 UPDATE streaming_accounts 
-                SET expiry_date = ?, status = 'ocupada', last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
+                SET expiry_date = ?, status = 'ocupada', payment_status = 'pagado', 
+                    last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
                 WHERE (lower(email) = lower(?) OR id = ?)
             """, (new_expiry_date.strip(), q, int(q) if q.isdigit() else -1))
             return cursor.rowcount > 0
@@ -599,36 +609,160 @@ def mark_streaming_alert_sent(account_id: int, alert_date: str):
     conn = get_connection()
     try:
         with conn:
-            conn.execute("""
-                UPDATE streaming_accounts 
-                SET last_alert_sent = ?
-                WHERE id = ?
-            """, (alert_date, account_id))
+            conn.execute("UPDATE streaming_accounts SET last_alert_sent = ? WHERE id = ?", (alert_date, account_id))
     finally:
         conn.close()
 
-# Métodos heredados para servicios generales
-def list_services() -> List[Dict[str, Any]]:
-    # Retorna tanto servicios generales como cuentas de streaming activas
-    return get_active_accounts()
+# ==========================================
+# 5. Módulo de Finanzas, Pagos y Balance
+# ==========================================
+def register_customer_payment(
+    email_or_id: str,
+    amount: Optional[float] = None,
+    payment_method: str = "Transferencia",
+    new_expiry_date: Optional[str] = None,
+    notes: str = ""
+) -> Dict[str, Any]:
+    """Registra el cobro de una mensualidad o renovación a un cliente y actualiza el balance."""
+    conn = get_connection()
+    q = email_or_id.strip()
+    try:
+        with conn:
+            row = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) LIKE lower(?) OR a.id = ?
+                LIMIT 1
+            """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
 
-def add_service(name: str, expiry_date: str, category: str = "Servicio", recurrence: str = "mensual", cost: str = "", notes: str = ""):
-    return assign_or_sell_account(
-        client_name="General",
-        platform=category or "General",
-        email=name,
-        password="",
-        expiry_date=expiry_date,
-        recurrence=recurrence,
-        price=cost,
-        notes=notes
-    )
+            if not row:
+                return {"success": False, "error": f"No se encontró la cuenta '{email_or_id}'"}
 
-def delete_service(service_id: int) -> bool:
-    return delete_account(service_id)
+            acc = dict(row)
+            acc_id = acc["id"]
+            client_id = acc.get("client_id")
+            
+            # Monto cobrado
+            final_amount = amount if amount is not None else parse_money(acc.get("price"))
+            cost_num = parse_money(acc.get("cost"))
+            profit_num = final_amount - cost_num
 
-def get_expiring_services(days_window: int = 2) -> List[Dict[str, Any]]:
-    return get_expiring_streaming_accounts(days_window)
+            # Nueva fecha si se renueva
+            if new_expiry_date:
+                final_expiry = new_expiry_date.strip()
+            else:
+                try:
+                    curr_exp = datetime.strptime(acc["expiry_date"], "%Y-%m-%d").date()
+                    # Si ya estaba vencida, renueva 30 días desde hoy; si no, 30 días desde el vencimiento
+                    base_date = max(curr_exp, date.today())
+                    final_expiry = (base_date + timedelta(days=30)).isoformat()
+                except Exception:
+                    final_expiry = (date.today() + timedelta(days=30)).isoformat()
 
-def mark_alert_sent(service_id: int, alert_date: str):
-    mark_streaming_alert_sent(service_id, alert_date)
+            # Insertar en tabla de pagos
+            conn.execute("""
+                INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (acc_id, client_id, final_amount, cost_num, profit_num, payment_method.strip(), notes.strip() or "Renovación pagada"))
+
+            # Actualizar cuenta como pagada con nuevo vencimiento
+            conn.execute("""
+                UPDATE streaming_accounts 
+                SET expiry_date = ?, payment_status = 'pagado', status = 'ocupada',
+                    last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (final_expiry, acc_id))
+
+            return {
+                "success": True,
+                "client_name": acc.get("client_name"),
+                "platform": acc["platform"],
+                "email": acc["email"],
+                "amount": final_amount,
+                "profit": profit_num,
+                "new_expiry": final_expiry,
+                "payment_method": payment_method
+            }
+    finally:
+        conn.close()
+
+def get_financial_balance(period: str = "mes_actual") -> Dict[str, Any]:
+    """Calcula el balance completo: ingresos brutos, costos de proveedores, ganancia neta y proyecciones."""
+    conn = get_connection()
+    today = date.today()
+    try:
+        with conn:
+            # 1. Pagos ya cobrados en el mes actual
+            month_str = f"{today.year}-{today.month:02d}%"
+            res = conn.execute("""
+                SELECT 
+                    COALESCE(SUM(amount), 0.0) as total_income,
+                    COALESCE(SUM(cost), 0.0) as total_costs,
+                    COALESCE(SUM(profit), 0.0) as net_profit,
+                    COUNT(*) as total_transactions
+                FROM payments
+                WHERE created_at LIKE ?
+            """, (month_str,)).fetchone()
+
+            total_income = float(res["total_income"])
+            total_costs = float(res["total_costs"])
+            net_profit = float(res["net_profit"])
+            tx_count = int(res["total_transactions"])
+
+            # 2. Dinero por cobrar esta semana (cuentas activas que vencen en los próximos 7 días)
+            active_accounts = get_active_accounts()
+            pending_receivables_7d = 0.0
+            pending_accounts_count = 0
+            pending_list = []
+
+            for a in active_accounts:
+                days = a.get("days_remaining")
+                if days is not None and -5 <= days <= 7:
+                    price_val = parse_money(a.get("price"))
+                    pending_receivables_7d += price_val
+                    pending_accounts_count += 1
+                    pending_list.append({
+                        "client": a.get("client_name"),
+                        "platform": a.get("platform"),
+                        "email": a.get("email"),
+                        "days_remaining": days,
+                        "price": price_val,
+                        "whatsapp": a.get("whatsapp"),
+                        "telegram": a.get("telegram")
+                    })
+
+            # 3. Ganancia estimada mensual total si todos pagan
+            monthly_projected_gross = sum(parse_money(a.get("price")) for a in active_accounts)
+            monthly_projected_costs = sum(parse_money(a.get("cost")) for a in active_accounts)
+            monthly_projected_profit = monthly_projected_gross - monthly_projected_costs
+
+            return {
+                "period": f"{today.strftime('%B %Y')}",
+                "collected_income": total_income,
+                "collected_costs": total_costs,
+                "collected_profit": net_profit,
+                "transactions_count": tx_count,
+                "pending_receivables_7d": pending_receivables_7d,
+                "pending_accounts_count": pending_accounts_count,
+                "pending_accounts": pending_list,
+                "projected_monthly_gross": monthly_projected_gross,
+                "projected_monthly_profit": monthly_projected_profit,
+                "active_subscriptions_total": len(active_accounts)
+            }
+    finally:
+        conn.close()
+
+def get_recent_transactions(limit: int = 15) -> List[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT p.*, a.platform, a.email, c.name as client_name, c.client_type
+            FROM payments p
+            LEFT JOIN streaming_accounts a ON p.account_id = a.id
+            LEFT JOIN clients c ON p.client_id = c.id
+            ORDER BY p.created_at DESC LIMIT ?
+        """, (limit,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()

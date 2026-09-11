@@ -68,6 +68,84 @@ class ItemCuentaLote(BaseModel):
 # ==========================================
 mcp = FastMCP("Streaming CRM & Expiry Bot")
 
+# --- Herramientas Financieras (Paso 1) ---
+@mcp.tool()
+def consultar_balance_y_ganancias(periodo: str = "mes_actual") -> str:
+    """Calcula y reporta el balance financiero en tiempo real:
+    - Ingresos totales cobrados este mes.
+    - Costos pagados a proveedores.
+    - Ganancia NETA real en el bolsillo.
+    - Dinero pendiente por cobrar en los próximos 7 días.
+    - Proyección mensual completa si todos los clientes pagan.
+    """
+    b = database.get_financial_balance(period=periodo)
+    lines = [
+        f"📊 <b>BALANCE FINANCIERO Y GANANCIAS ({b['period']}):</b>\n",
+        f"💰 <b>Ingresos Cobrados:</b> ${b['collected_income']:.2f} USD ({b['transactions_count']} cobros registrados)",
+        f"📉 <b>Costos de Proveedor:</b> ${b['collected_costs']:.2f} USD",
+        f"💵 <b>GANANCIA NETA REAL:</b> ${b['collected_profit']:.2f} USD",
+        "\n━━━━━━━━━━━━━━━━━━━━━━",
+        f"⏳ <b>POR COBRAR PRÓXIMAMENTE (7 días):</b>",
+        f"• Total a cobrar: <b>${b['pending_receivables_7d']:.2f} USD</b> ({b['pending_accounts_count']} cuentas)",
+        f"🎯 <b>Proyección Mensual Total (Todas las cuentas):</b> ${b['projected_monthly_profit']:.2f} USD de ganancia neta",
+        f"📱 Total de suscripciones activas: {b['active_subscriptions_total']}"
+    ]
+    return "\n".join(lines)
+
+@mcp.tool()
+def registrar_cobro_cliente(
+    correo_o_id: str,
+    monto: Optional[float] = None,
+    metodo_pago: str = "Transferencia",
+    nueva_fecha_vencimiento: Optional[str] = None
+) -> str:
+    """Registra el cobro de una mensualidad o renovación de un cliente:
+    Suma el dinero a tus ingresos cobrados, calcula la ganancia neta y extiende la fecha de vencimiento 30 días automáticamente.
+    - correo_o_id: Correo o ID de la cuenta que pagó.
+    - monto: Monto recibido (si no se especifica, toma el precio habitual de la cuenta).
+    - metodo_pago: 'Transferencia', 'MercadoPago', 'Binance / USDT', 'Efectivo'.
+    - nueva_fecha_vencimiento: (Opcional) Si quieres fijar una fecha específica en lugar de sumar 30 días.
+    """
+    res = database.register_customer_payment(
+        email_or_id=correo_o_id,
+        amount=monto,
+        payment_method=metodo_pago,
+        new_expiry_date=nueva_fecha_vencimiento
+    )
+    if not res.get("success"):
+        return f"❌ Error: {res.get('error')}"
+
+    return (
+        f"✅ PAGO Y RENOVACIÓN REGISTRADOS CON ÉXITO:\n"
+        f"• Cliente: {res['client_name']}\n"
+        f"• Servicio: {res['platform']} ({res['email']})\n"
+        f"• Monto cobrado: ${res['amount']:.2f} USD ({metodo_pago})\n"
+        f"• Ganancia neta de este cobro: +${res['profit']:.2f} USD\n"
+        f"• Nuevo vencimiento: <code>{res['new_expiry']}</code> (30 días extendidos)\n"
+        f"🎉 El balance financiero ha sido actualizado automáticamente."
+    )
+
+@mcp.tool()
+def consultar_cuentas_por_cobrar(dias_anticipacion: int = 7) -> str:
+    """Muestra todas las cuentas que vencen en los próximos días con el monto que debes cobrar y los datos del cliente."""
+    b = database.get_financial_balance()
+    pending = b.get("pending_accounts", [])
+    if not pending:
+        return f"🎉 ¡Al día! No hay cobros pendientes para los próximos {dias_anticipacion} días."
+
+    lines = [
+        f"⏳ <b>Cobros Pendientes ({len(pending)} cuentas - Total: ${b['pending_receivables_7d']:.2f} USD):</b>\n"
+    ]
+    for p in pending:
+        d_txt = "HOY" if p['days_remaining'] == 0 else (f"en {p['days_remaining']}d" if p['days_remaining'] > 0 else f"VENCIDA hace {abs(p['days_remaining'])}d")
+        lines.append(
+            f"• <b>{p['client']}</b> - {p['platform']} ({p['email']})\n"
+            f"  A cobrar: <b>${p['price']:.2f} USD</b> | Vence: {d_txt}\n"
+            f"  Contacto: WhatsApp: {p.get('whatsapp') or '-'} | Telegram: {p.get('telegram') or '-'}"
+        )
+    return "\n".join(lines)
+
+# --- Herramientas de Carga y Gestión ---
 @mcp.tool()
 def registrar_ventas_en_lote(
     cliente: str,
@@ -76,15 +154,7 @@ def registrar_ventas_en_lote(
     telegram: str = "",
     tipo_cliente: str = "consumidor_final"
 ) -> str:
-    """Registra múltiples ventas de cuentas/perfiles a un cliente en UNA SOLA OPERACIÓN masiva.
-    Permite cargar 10, 20 o 30 cuentas de una sola vez para que el usuario solo tenga que dar permiso ('Allow') 1 sola vez.
-    - cliente: Nombre o alias del cliente (ej. 'Matías').
-    - cuentas: Lista de cuentas con plataforma, correo, contrasena, fecha_vencimiento, precio, recurrencia, perfil, pin.
-    - whatsapp: Teléfono del cliente.
-    - telegram: Usuario de Telegram (@usuario).
-    - tipo_cliente: 'revendedor' o 'consumidor_final'.
-    """
-    # Manejar si Gemini lo envía como string JSON
+    """Registra múltiples ventas en UNA SOLA OPERACIÓN masiva para que solo pida permiso 1 sola vez."""
     lista_items = cuentas
     if isinstance(cuentas, str):
         try:
@@ -146,6 +216,7 @@ def vender_o_asignar_servicio(
     perfil: str = "",
     pin: str = "",
     precio: str = "",
+    costo: str = "",
     recurrencia: str = "mensual",
     notas: str = ""
 ) -> str:
@@ -164,6 +235,7 @@ def vender_o_asignar_servicio(
             profile_pin=pin,
             recurrence=recurrencia,
             price=precio,
+            cost=costo,
             notes=notas
         )
         return (
@@ -172,6 +244,7 @@ def vender_o_asignar_servicio(
             f"• Correo: {acc['email']}\n"
             f"• Clave: {acc['password']}" + (f" | PIN: {acc['profile_pin']}" if acc.get('profile_pin') else "") + "\n"
             f"• Vence: {acc['expiry_date']} | Recurrencia: {acc['recurrence']}\n"
+            f"• Precio: {acc.get('price') or '-'} | Costo prov: {acc.get('cost') or '-'}\n"
             f"• Tipo: {'👔 Revendedor' if acc.get('client_type') == 'revendedor' else '👤 Consumidor Final'}\n"
             f"• Contacto: WhatsApp: {acc.get('whatsapp') or '-'} | Telegram: {acc.get('telegram') or '-'}"
         )
@@ -180,9 +253,7 @@ def vender_o_asignar_servicio(
 
 @mcp.tool()
 def buscar_cliente(query: str) -> str:
-    """Busca un cliente por nombre/alias ('Maik'), código (CLI-001), WhatsApp o Telegram.
-    Devuelve su información de contacto y todas sus cuentas activas o caídas.
-    """
+    """Busca un cliente por nombre/alias ('Maik'), código (CLI-001), WhatsApp o Telegram."""
     client = database.search_client(query)
     if not client:
         return f"❌ No se encontró ningún cliente que coincida con '{query}'."
@@ -207,7 +278,7 @@ def buscar_cliente(query: str) -> str:
             pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
             lines.append(
                 f"  • {a['platform']}{perf}: {a['email']} | Clave: {a['password']}{pin}\n"
-                f"    Vence: {a['expiry_date']} | Estado: {estado_icon} | Precio: {a.get('price') or '-'}"
+                f"    Vence: {a['expiry_date']} | Estado: {estado_icon} | Cobro: {a.get('price') or '-'}"
             )
 
     return "\n".join(lines)
@@ -217,7 +288,7 @@ def marcar_cuenta_caida(correo_o_id: str, motivo: str = "Suscripción caída") -
     """Marca una cuenta o perfil como 'caida' para colocarla en la lista de reclamos."""
     acc = database.mark_account_fallen(correo_o_id, reason=motivo)
     if not acc:
-        return f"❌ No se encontró ninguna cuenta activa con el identificador '{correo_o_id}'."
+        return f"❌ No se encontró ninguna cuenta activa con '{correo_o_id}'."
 
     client_name = acc.get("client_name") or "Sin cliente"
     return (
@@ -327,14 +398,6 @@ def consultar_cuentas_caidas() -> str:
     return "\n".join(lines)
 
 @mcp.tool()
-def renovar_suscripcion(correo_o_id: str, nueva_fecha_vencimiento: str) -> str:
-    """Extiende o renueva la fecha de vencimiento de una cuenta tras recibir el pago."""
-    ok = database.renew_account(correo_o_id, nueva_fecha_vencimiento)
-    if ok:
-        return f"✅ Cuenta '{correo_o_id}' renovada exitosamente hasta el {nueva_fecha_vencimiento}."
-    return f"❌ No se encontró ninguna cuenta con '{correo_o_id}'."
-
-@mcp.tool()
 def listar_clientes_activos() -> str:
     """Muestra el listado completo de clientes registrados con su número de cuentas activas."""
     clients = database.list_all_clients()
@@ -408,13 +471,12 @@ async def lifespan(app: FastAPI):
     logger.info("Aplicación detenida.")
 
 app = FastAPI(
-    title="Gemini Streaming CRM & MCP Bot",
-    description="Servidor MCP para Gemini Spark y CRM de Streaming con 2FA",
-    version="2.1.0",
+    title="Gemini Streaming CRM & Financial Bot",
+    description="Servidor MCP para Gemini Spark y CRM de Streaming con Finanzas y 2FA",
+    version="2.2.0",
     lifespan=lifespan
 )
 
-# Montar MCP en /mcp (Accesible para Gemini Spark)
 app.mount("/mcp", mcp_app)
 
 
@@ -633,7 +695,7 @@ async def logout():
 
 
 # ==========================================
-# 4. Panel de Control Web Completo (CRM)
+# 4. Panel de Control Web Completo (CRM + Finanzas)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -644,8 +706,10 @@ async def dashboard(request: Request):
     active_accounts = database.get_active_accounts()
     free_stock = database.get_free_stock()
     fallen_accounts = database.get_fallen_accounts()
-    expiring_soon = database.get_expiring_streaming_accounts(days_window=3)
+    finance = database.get_financial_balance()
+    transactions = database.get_recent_transactions(limit=15)
 
+    # 1. Filas de Cuentas Activas con botón de Cobrar
     active_rows = ""
     for a in active_accounts:
         days = a.get("days_remaining")
@@ -675,10 +739,13 @@ async def dashboard(request: Request):
             <td><code>{a['email']}</code><br><code>{a['password']}</code> {pin}</td>
             <td><code>{a['expiry_date']}</code></td>
             <td><span class="badge {badge}">{badge_txt}</span></td>
-            <td>{a.get('price') or '-'}</td>
+            <td><strong>{a.get('price') or '-'}</strong></td>
             <td>
+                <form action="/api/collect-payment/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Registrar cobro y renovar 30 días para {a['client_name']}?');">
+                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;" title="Registrar cobro y renovar">💵 Cobrar</button>
+                </form>
                 <form action="/api/mark-fallen/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Marcar {a['email']} como caída?');">
-                    <button type="submit" class="btn-action btn-warn" title="Reportar Caída">🚨 Caída</button>
+                    <button type="submit" class="btn-action btn-warn" title="Reportar Caída">🚨</button>
                 </form>
                 <form action="/api/delete-account/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar cuenta?');">
                     <button type="submit" class="btn-action" style="color:#ef4444;" title="Eliminar">🗑️</button>
@@ -689,6 +756,7 @@ async def dashboard(request: Request):
     if not active_rows:
         active_rows = "<tr><td colspan='8' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas activas asignadas actualmente.</td></tr>"
 
+    # 2. Filas de Stock Libre
     stock_rows = ""
     for s in free_stock:
         perf = f" (Perf: {s['profile_name']})" if s.get("profile_name") else ""
@@ -710,6 +778,7 @@ async def dashboard(request: Request):
     if not stock_rows:
         stock_rows = "<tr><td colspan='6' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas libres en stock. Agrega cuentas o pídeselo a Gemini.</td></tr>"
 
+    # 3. Filas de Cuentas Caídas
     fallen_rows = ""
     for f in fallen_accounts:
         client_name = f.get("client_name") or "Sin cliente asignado"
@@ -729,27 +798,55 @@ async def dashboard(request: Request):
     if not fallen_rows:
         fallen_rows = "<tr><td colspan='5' style='text-align:center;color:#10b981;padding:20px;'>🎉 ¡No hay cuentas caídas! Todo el sistema está funcionando.</td></tr>"
 
+    # 4. Filas de Transacciones Financieras
+    tx_rows = ""
+    for t in transactions:
+        c_name = t.get("client_name") or "Venta General"
+        plat = t.get("platform") or "Streaming"
+        c_type = "👔 Revendedor" if "revend" in (t.get("client_type") or "").lower() else "👤 Final"
+        tx_rows += f"""
+        <tr>
+            <td><small style="color:#94a3b8;">{t['created_at'][:16]}</small></td>
+            <td><strong>{c_name}</strong> ({c_type})</td>
+            <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span></td>
+            <td><strong style="color:#10b981;">+${t['amount']:.2f} USD</strong></td>
+            <td><span style="color:#f59e0b;">-${t['cost']:.2f}</span></td>
+            <td><strong style="color:#38bdf8;">+${t['profit']:.2f} USD</strong></td>
+            <td><small>{t.get('payment_method') or 'Transf.'}</small></td>
+        </tr>
+        """
+    if not tx_rows:
+        tx_rows = "<tr><td colspan='7' style='text-align:center;color:#64748b;padding:20px;'>No hay transacciones registradas este mes aún.</td></tr>"
+
     html = f"""
     <!DOCTYPE html>
     <html lang="es">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Streaming CRM & MCP Bot</title>
+        <title>Streaming CRM & Finanzas</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 24px; }}
-            .container {{ max-width: 1100px; margin: 0 auto; }}
+            .container {{ max-width: 1150px; margin: 0 auto; }}
             .header-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
             h1 {{ margin: 0; color: #38bdf8; font-size: 1.6rem; display: flex; align-items: center; gap: 10px; }}
             .card {{ background: #161e2e; border: 1px solid #1e293b; border-radius: 14px; padding: 20px; margin-bottom: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }}
-            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 15px; margin-bottom: 20px; }}
-            .stat-box {{ background: #0b0f19; border: 1px solid #1e293b; border-radius: 10px; padding: 16px; }}
-            .stat-box h4 {{ margin: 0 0 6px 0; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
-            .stat-box p {{ margin: 0; font-size: 1.4rem; font-weight: 700; color: #fff; }}
-            .stat-fallen {{ border-left: 4px solid #ef4444; }}
-            .stat-stock {{ border-left: 4px solid #10b981; }}
-            .stat-active {{ border-left: 4px solid #38bdf8; }}
-            .stat-soon {{ border-left: 4px solid #f59e0b; }}
+            
+            /* Tarjetas Financieras */
+            .finance-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin-bottom: 24px; }}
+            .fin-box {{ background: #0b0f19; border: 1px solid #1e293b; border-radius: 12px; padding: 18px; }}
+            .fin-box h4 {{ margin: 0 0 6px 0; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
+            .fin-box p.amount {{ margin: 0; font-size: 1.6rem; font-weight: 800; }}
+            .fin-box small {{ display: block; margin-top: 4px; font-size: 0.75rem; color: #64748b; }}
+            .box-income {{ border-left: 4px solid #10b981; }}
+            .box-income p.amount {{ color: #10b981; }}
+            .box-costs {{ border-left: 4px solid #f59e0b; }}
+            .box-costs p.amount {{ color: #f59e0b; }}
+            .box-profit {{ border-left: 4px solid #38bdf8; background: #0c2135; }}
+            .box-profit p.amount {{ color: #38bdf8; }}
+            .box-pending {{ border-left: 4px solid #a855f7; }}
+            .box-pending p.amount {{ color: #c084fc; }}
+
             .tabs {{ display: flex; gap: 10px; border-bottom: 1px solid #334155; margin-bottom: 20px; }}
             .tab-btn {{ background: none; border: none; color: #94a3b8; padding: 12px 18px; font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }}
             .tab-btn.active {{ color: #38bdf8; border-bottom-color: #38bdf8; }}
@@ -784,29 +881,34 @@ async def dashboard(request: Request):
     <body>
         <div class="container">
             <div class="header-bar">
-                <h1>⚡ Streaming CRM & Gemini MCP</h1>
+                <h1>⚡ Streaming CRM & Finanzas</h1>
                 <div style="display: flex; align-items: center; gap: 12px;">
                     <span style="font-size:0.85rem; color:#94a3b8;">Admin: <strong>{user}</strong></span>
                     <a href="/logout" class="btn-logout">Cerrar Sesión</a>
                 </div>
             </div>
 
-            <div class="stats-grid">
-                <div class="stat-box stat-active">
-                    <h4>Cuentas Activas</h4>
-                    <p>{len(active_accounts)}</p>
+            <!-- Dashboard de Finanzas y Balance -->
+            <div class="finance-grid">
+                <div class="fin-box box-income">
+                    <h4>Ingresos Cobrados (Mes)</h4>
+                    <p class="amount">${finance['collected_income']:.2f} USD</p>
+                    <small>{finance['transactions_count']} cobros registrados</small>
                 </div>
-                <div class="stat-box stat-stock">
-                    <h4>Stock Libre</h4>
-                    <p>{len(free_stock)}</p>
+                <div class="fin-box box-costs">
+                    <h4>Costo Proveedores</h4>
+                    <p class="amount">${finance['collected_costs']:.2f} USD</p>
+                    <small>Costo base de cuentas</small>
                 </div>
-                <div class="stat-box stat-fallen">
-                    <h4>Cuentas Caídas</h4>
-                    <p>{len(fallen_accounts)}</p>
+                <div class="fin-box box-profit">
+                    <h4>Ganancia Neta Real</h4>
+                    <p class="amount">${finance['collected_profit']:.2f} USD</p>
+                    <small>Beneficio líquido en el bolsillo</small>
                 </div>
-                <div class="stat-box stat-soon">
-                    <h4>Vencen Pronto (3d)</h4>
-                    <p>{len(expiring_soon)}</p>
+                <div class="fin-box box-pending">
+                    <h4>Por Cobrar (Próximos 7d)</h4>
+                    <p class="amount">${finance['pending_receivables_7d']:.2f} USD</p>
+                    <small>{finance['pending_accounts_count']} cuentas por vencer</small>
                 </div>
             </div>
 
@@ -823,13 +925,14 @@ async def dashboard(request: Request):
                 </div>
                 <div class="endpoint-banner">
                     <span><strong>Conexión Gemini Spark:</strong> <code>https://mcp.juanconnect.online/mcp</code></span>
-                    <span>Modo CRM Activo</span>
+                    <span>Modo Financiero & CRM Activo</span>
                 </div>
             </div>
 
             <div class="card">
                 <div class="tabs">
                     <button id="btn-tab-active" class="tab-btn active" onclick="showTab('tab-active')">👥 Clientes & Activas ({len(active_accounts)})</button>
+                    <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({len(transactions)})</button>
                     <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
                 </div>
@@ -850,6 +953,25 @@ async def dashboard(request: Request):
                         </thead>
                         <tbody>
                             {active_rows}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-finance" class="tab-content" style="display:none;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Cliente</th>
+                                <th>Servicio</th>
+                                <th>Cobrado</th>
+                                <th>Costo Prov.</th>
+                                <th>Ganancia Neta</th>
+                                <th>Método</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {tx_rows}
                         </tbody>
                     </table>
                 </div>
@@ -894,6 +1016,24 @@ async def dashboard(request: Request):
     </html>
     """
     return html
+
+# Acciones Rápidas de API
+@app.post("/api/collect-payment/{account_id}")
+async def collect_payment_api(account_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = database.register_customer_payment(email_or_id=str(account_id), payment_method="Panel Web")
+    if res.get("success"):
+        await send_telegram_message(
+            f"💵 <b>Cobro y Renovación Registrados</b>\n\n"
+            f"• Cliente: {res['client_name']}\n"
+            f"• Servicio: {res['platform']}\n"
+            f"• Monto cobrado: ${res['amount']:.2f} USD\n"
+            f"• Ganancia Neta: +${res['profit']:.2f} USD\n"
+            f"• Próximo vencimiento: {res['new_expiry']}"
+        )
+    return RedirectResponse(url="/", status_code=302)
 
 @app.post("/api/mark-fallen/{account_id}")
 async def mark_fallen_api(account_id: int, request: Request):
@@ -941,7 +1081,7 @@ async def check_now_api(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-mcp", "version": "2.1.0"}
+    return {"status": "ok", "service": "streaming-crm-finance", "version": "2.2.0"}
 
 if __name__ == "__main__":
     import uvicorn

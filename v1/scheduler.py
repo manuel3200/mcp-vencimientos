@@ -40,7 +40,29 @@ async def check_and_send_alerts(days_window: int = None, force: bool = False) ->
             await asyncio.sleep(0.1)
 
     logger.info(f"Escaneo finalizado. Alertas enviadas: {sent_count}")
+
+    # Verificar salud de stock en cada comprobación diaria
+    try:
+        import database
+        from telegram_bot import format_and_send_stock_alert
+        summary = database.get_stock_health_summary()
+        if summary.get("has_alerts") and not force:
+            logger.info("Plataformas con stock crítico detectadas durante escaneo diario. Notificando...")
+            await format_and_send_stock_alert()
+    except Exception as e:
+        logger.error(f"Error verificando alertas de stock en scheduler: {e}")
+
     return sent_count
+
+async def check_and_send_stock_alerts(force: bool = False) -> bool:
+    """Verifica si existen plataformas con stock agotado o bajo su umbral y emite alerta si es necesario."""
+    import database
+    from telegram_bot import format_and_send_stock_alert
+    summary = database.get_stock_health_summary()
+    if summary.get("has_alerts") or force:
+        logger.info("Emitiendo alerta de stock por Telegram...")
+        return await format_and_send_stock_alert()
+    return False
 
 def start_scheduler():
     """Inicia el programador de tareas en segundo plano."""

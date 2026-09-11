@@ -561,6 +561,65 @@ def consultar_stock_libre(plataforma: str = "") -> str:
     return "\n".join(lines)
 
 @mcp.tool()
+def consultar_alerta_stock_bajo() -> str:
+    """Diagnostica la salud del stock y alerta si hay plataformas agotadas o por debajo del umbral mínimo de seguridad."""
+    summary = database.get_stock_health_summary()
+    platforms = summary.get("platforms", [])
+
+    if not platforms:
+        return "📦 No hay plataformas ni cuentas registradas en el catálogo."
+
+    lines = [
+        "📦 <b>DIAGNÓSTICO DE SALUD DEL INVENTARIO</b>\n"
+    ]
+
+    if summary.get("has_alerts"):
+        lines.append("⚠️ <b>¡ATENCIÓN! Se detectaron plataformas que requieren reposición urgente:</b>")
+    else:
+        lines.append("✅ <b>¡Todo el inventario está saludable! Ninguna plataforma está en nivel crítico.</b>")
+
+    for p in platforms:
+        plat = p["platform"]
+        free = p["free_count"]
+        thresh = p["min_threshold"]
+        occupied = p["occupied_count"]
+
+        if p["status"] == "agotado":
+            lines.append(f"🔴 <b>{plat}:</b> ¡AGOTADO! 0 disponibles | Mínimo: {thresh} | Activas: {occupied}")
+        elif p["status"] == "bajo":
+            lines.append(f"🟡 <b>{plat}:</b> STOCK BAJO ({free} disponibles) | Mínimo: {thresh} | Activas: {occupied}")
+        else:
+            lines.append(f"🟢 <b>{plat}:</b> Stock Óptimo ({free} disponibles) | Mínimo: {thresh}")
+
+    lines.append(f"\n📊 <b>Total Unidades Libres:</b> {summary['total_free_units']} en {summary['total_platforms']} plataformas.")
+    if summary["out_of_stock_count"] > 0:
+        lines.append(f"🚨 {summary['out_of_stock_count']} plataforma(s) con 0 stock (Agotadas).")
+    if summary["low_stock_count"] > 0:
+        lines.append(f"⚠️ {summary['low_stock_count']} plataforma(s) en umbral crítico.")
+
+    return "\n".join(lines)
+
+@mcp.tool()
+def configurar_umbral_stock(plataforma: str, umbral_minimo: int) -> str:
+    """Configura la cantidad mínima de cuentas/perfiles en stock para alertar cuando escaseen (ej: plataforma='Netflix', umbral_minimo=3)."""
+    clean_plat = plataforma.strip()
+    if umbral_minimo < 0:
+        return "❌ El umbral mínimo no puede ser negativo."
+    ok = database.set_platform_min_stock(clean_plat, umbral_minimo)
+    if ok:
+        return f"✅ Umbral mínimo de stock para '{clean_plat}' configurado en {umbral_minimo} unidades."
+    return "❌ Error al guardar el umbral de stock."
+
+@mcp.tool()
+async def enviar_alerta_stock_telegram() -> str:
+    """Envía inmediatamente el reporte visual con semáforo de stock (🔴/🟡/🟢) al bot de Telegram."""
+    from telegram_bot import format_and_send_stock_alert
+    ok = await format_and_send_stock_alert()
+    if ok:
+        return "✅ Reporte y alerta de stock enviado exitosamente a Telegram."
+    return "❌ Error: Verifica la configuración del bot de Telegram."
+
+@mcp.tool()
 def consultar_cuentas_caidas() -> str:
     """Lista todas las cuentas marcadas como caídas pendientes de reclamo."""
     fallen = database.get_fallen_accounts()
@@ -967,6 +1026,48 @@ async def dashboard(request: Request):
     if not stock_rows:
         stock_rows = "<tr><td colspan='6' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas libres en stock. Agrega cuentas o pídeselo a Gemini.</td></tr>"
 
+    # Salud del Inventario y Semáforo de Stock
+    stock_health = database.get_stock_health_summary()
+    stock_health_html = ""
+    for p in stock_health.get("platforms", []):
+        st = p["status"]
+        if st == "agotado":
+            st_color = "#ef4444"
+            st_bg = "#450a0a"
+            st_border = "#991b1b"
+            st_badge = "🔴 Agotado"
+        elif st == "bajo":
+            st_color = "#f59e0b"
+            st_bg = "#451a03"
+            st_border = "#92400e"
+            st_badge = "🟡 Stock Bajo"
+        else:
+            st_color = "#10b981"
+            st_bg = "#064e3b"
+            st_border = "#047857"
+            st_badge = "🟢 Óptimo"
+
+        stock_health_html += f"""
+        <div style="background:{st_bg};border:1px solid {st_border};border-radius:10px;padding:14px;display:flex;flex-direction:column;justify-content:space-between;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+                <strong style="color:#f1f5f9;font-size:0.95rem;">{p['platform']}</strong>
+                <span class="badge" style="background:{st_border};color:{st_color};">{st_badge}</span>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
+                <span style="font-size:1.3rem;font-weight:800;color:{st_color};">{p['free_count']} <small style="font-size:0.75rem;color:#94a3b8;font-weight:normal;">libres</small></span>
+                <small style="color:#94a3b8;">Activas: {p['occupied_count']}</small>
+            </div>
+            <form action="/api/set-stock-threshold" method="POST" style="display:flex;align-items:center;gap:6px;font-size:0.75rem;border-top:1px solid {st_border};padding-top:8px;">
+                <input type="hidden" name="platform" value="{p['platform']}">
+                <span style="color:#94a3b8;">Mín:</span>
+                <input type="number" name="min_stock" value="{p['min_threshold']}" min="0" max="99" style="width:45px;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:4px;padding:2px 4px;text-align:center;">
+                <button type="submit" class="btn-action" style="padding:2px 6px;font-size:0.7rem;background:#1e293b;color:#38bdf8;border-color:#334155;">Guardar</button>
+            </form>
+        </div>
+        """
+    if not stock_health_html:
+        stock_health_html = "<div style='color:#64748b;padding:15px;grid-column:1/-1;'>No hay plataformas registradas en el inventario aún.</div>"
+
     # 3. Filas de Cuentas Caídas
     fallen_rows = ""
     for f in fallen_accounts:
@@ -1180,12 +1281,15 @@ async def dashboard(request: Request):
 
             <div class="card">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div style="display: flex; gap: 10px;">
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                         <form action="/api/test-telegram" method="POST" style="display: inline;">
                             <button type="submit" class="btn" style="background:#475569;">📲 Test Telegram</button>
                         </form>
                         <form action="/api/check-now" method="POST" style="display: inline;">
-                            <button type="submit" class="btn" style="background:#059669;">🔍 Escanear Vencimientos Ahora</button>
+                            <button type="submit" class="btn" style="background:#059669;">🔍 Escanear Vencimientos</button>
+                        </form>
+                        <form action="/api/check-stock-alert" method="POST" style="display: inline;">
+                            <button type="submit" class="btn" style="background:#ea580c;">📦 Alerta Stock Telegram</button>
                         </form>
                     </div>
                 </div>
@@ -1250,6 +1354,16 @@ async def dashboard(request: Request):
                 </div>
 
                 <div id="tab-stock" class="tab-content" style="display:none;">
+                    <div style="margin-bottom: 24px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                            <h3 style="margin:0;font-size:1.05rem;color:#38bdf8;">🚦 Semáforo de Salud del Inventario</h3>
+                            <span style="font-size:0.8rem;color:#94a3b8;">Umbrales mínimos configurables por plataforma</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));gap:12px;">
+                            {stock_health_html}
+                        </div>
+                    </div>
+                    <h3 style="margin:20px 0 10px 0;font-size:1rem;color:#e2e8f0;">📋 Listado de Cuentas y Perfiles Libres</h3>
                     <table>
                         <thead>
                             <tr>
@@ -1364,9 +1478,33 @@ async def check_now_api(request: Request):
     sent = await check_and_send_alerts(days_window=7, force=True)
     return JSONResponse({"ok": True, "alertas_enviadas": sent})
 
+@app.post("/api/check-stock-alert")
+async def check_stock_alert_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    from telegram_bot import format_and_send_stock_alert
+    await format_and_send_stock_alert()
+    return RedirectResponse(url="/", status_code=303)
+
+@app.post("/api/set-stock-threshold")
+async def set_stock_threshold_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    platform = str(form.get("platform", "")).strip()
+    try:
+        min_stock = int(form.get("min_stock", 2))
+    except ValueError:
+        min_stock = 2
+    if platform:
+        database.set_platform_min_stock(platform, min_stock)
+    return RedirectResponse(url="/", status_code=303)
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.5.1"}
+    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.6.0"}
 
 if __name__ == "__main__":
     import uvicorn

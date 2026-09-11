@@ -130,6 +130,15 @@ def init_db():
                 conn.execute("ALTER TABLE streaming_accounts ADD COLUMN payment_status TEXT DEFAULT 'pagado'")
             except Exception:
                 pass
+
+            # 5. Tabla de Umbrales Mínimos de Stock
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS stock_thresholds (
+                    platform TEXT PRIMARY KEY,
+                    min_stock INTEGER NOT NULL DEFAULT 2,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
     finally:
         conn.close()
 
@@ -1122,3 +1131,140 @@ def mark_entire_master_account_fallen(email_or_query: str, reason: str = "Caída
             }
     finally:
         conn.close()
+
+# ==========================================
+# 7. Módulo de Alerta Temprana de Stock Bajo
+# ==========================================
+def set_platform_min_stock(platform: str, min_stock: int) -> bool:
+    """Establece o actualiza el umbral mínimo de stock para una plataforma."""
+    conn = get_connection()
+    plat = platform.strip()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO stock_thresholds (platform, min_stock, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(platform) DO UPDATE SET min_stock = excluded.min_stock, updated_at = CURRENT_TIMESTAMP
+            """, (plat, max(0, min_stock)))
+            return True
+    except Exception as e:
+        logger.error(f"Error estableciendo umbral de stock: {e}")
+        return False
+    finally:
+        conn.close()
+
+def get_stock_thresholds() -> Dict[str, int]:
+    """Obtiene el diccionario de umbrales mínimos configurados por plataforma."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT platform, min_stock FROM stock_thresholds").fetchall()
+        return {r["platform"]: r["min_stock"] for r in rows}
+    except Exception:
+        return {}
+    finally:
+        conn.close()
+
+def get_stock_health_summary(default_min_stock: int = 2) -> Dict[str, Any]:
+    """
+    Analiza todo el catálogo y devuelve un diagnóstico de salud del stock por plataforma:
+    - Agotadas (0 disponibles) -> 🔴
+    - Stock Bajo (<= umbral mínimo) -> 🟡
+    - Stock Óptimo (> umbral mínimo) -> 🟢
+    """
+    conn = get_connection()
+    try:
+        thresholds_map = {}
+        try:
+            th_rows = conn.execute("SELECT platform, min_stock FROM stock_thresholds").fetchall()
+            thresholds_map = {r["platform"].strip().lower(): r["min_stock"] for r in th_rows}
+        except Exception:
+            pass
+
+        plat_rows = conn.execute("""
+            SELECT DISTINCT platform FROM streaming_accounts
+            WHERE platform != ''
+            ORDER BY platform ASC
+        """).fetchall()
+
+        all_platforms = [r["platform"].strip() for r in plat_rows if r["platform"].strip()]
+
+        free_rows = conn.execute("""
+            SELECT platform, COUNT(*) as count 
+            FROM streaming_accounts 
+            WHERE status = 'libre'
+            GROUP BY platform
+        """).fetchall()
+        free_map = {r["platform"].strip().lower(): r["count"] for r in free_rows}
+
+        occupied_rows = conn.execute("""
+            SELECT platform, COUNT(*) as count 
+            FROM streaming_accounts 
+            WHERE status = 'ocupada'
+            GROUP BY platform
+        """).fetchall()
+        occupied_map = {r["platform"].strip().lower(): r["count"] for r in occupied_rows}
+
+        fallen_rows = conn.execute("""
+            SELECT platform, COUNT(*) as count 
+            FROM streaming_accounts 
+            WHERE status = 'caida'
+            GROUP BY platform
+        """).fetchall()
+        fallen_map = {r["platform"].strip().lower(): r["count"] for r in fallen_rows}
+
+        platforms_summary = []
+        out_of_stock_count = 0
+        low_stock_count = 0
+        optimal_count = 0
+        total_free_units = 0
+
+        for p_name in all_platforms:
+            key = p_name.lower()
+            free_cnt = free_map.get(key, 0)
+            occupied_cnt = occupied_map.get(key, 0)
+            fallen_cnt = fallen_map.get(key, 0)
+            min_thresh = thresholds_map.get(key, thresholds_map.get("default", default_min_stock))
+            total_free_units += free_cnt
+
+            if free_cnt == 0:
+                status = "agotado"
+                badge = "🔴 Agotado"
+                out_of_stock_count += 1
+            elif free_cnt <= min_thresh:
+                status = "bajo"
+                badge = "🟡 Stock Bajo"
+                low_stock_count += 1
+            else:
+                status = "optimo"
+                badge = "🟢 Óptimo"
+                optimal_count += 1
+
+            platforms_summary.append({
+                "platform": p_name,
+                "free_count": free_cnt,
+                "occupied_count": occupied_cnt,
+                "fallen_count": fallen_cnt,
+                "min_threshold": min_thresh,
+                "status": status,
+                "badge": badge,
+                "needs_alert": status in ("agotado", "bajo")
+            })
+
+        status_order = {"agotado": 0, "bajo": 1, "optimo": 2}
+        platforms_summary.sort(key=lambda x: (status_order.get(x["status"], 3), -x["occupied_count"], x["platform"]))
+
+        alert_platforms = [p for p in platforms_summary if p["needs_alert"]]
+
+        return {
+            "total_platforms": len(all_platforms),
+            "total_free_units": total_free_units,
+            "out_of_stock_count": out_of_stock_count,
+            "low_stock_count": low_stock_count,
+            "optimal_count": optimal_count,
+            "has_alerts": len(alert_platforms) > 0,
+            "alert_platforms": alert_platforms,
+            "platforms": platforms_summary
+        }
+    finally:
+        conn.close()
+

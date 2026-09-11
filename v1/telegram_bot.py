@@ -112,7 +112,7 @@ def get_main_menu_keyboard() -> Dict[str, Any]:
                 {"text": "⏳ Por Cobrar (7d)", "callback_data": "menu_cobros"}
             ],
             [
-                {"text": "📦 Stock Libre", "callback_data": "menu_stock"},
+                {"text": "📦 Stock & Alertas", "callback_data": "menu_stock"},
                 {"text": "📺 Pantallas", "callback_data": "menu_screens"}
             ],
             [
@@ -203,6 +203,59 @@ async def format_and_send_alert(account: Dict[str, Any]) -> bool:
     reply_markup = get_alert_keyboard(account["id"], wa_url)
     return await send_telegram_message(message_text, reply_markup=reply_markup)
 
+async def format_and_send_stock_alert(chat_id: str = "") -> bool:
+    """Envía un reporte interactivo de alerta de stock bajo o crítico por Telegram."""
+    summary = database.get_stock_health_summary()
+    platforms = summary.get("platforms", [])
+
+    if not platforms:
+        msg = "📦 <b>Control de Inventario:</b>\n\nNo hay cuentas o plataformas registradas en el sistema."
+        return await send_telegram_message(msg, chat_id=chat_id)
+
+    lines = [
+        "📦 <b>SALUD DEL INVENTARIO & ALERTAS DE STOCK</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    ]
+
+    has_alerts = summary.get("has_alerts", False)
+    if has_alerts:
+        lines.append("⚠️ <b>¡ATENCIÓN! Plataformas en nivel crítico o agotadas:</b>\n")
+    else:
+        lines.append("✅ <b>¡Todo en orden! Stock saludable en todas las plataformas:</b>\n")
+
+    for p in platforms:
+        plat_name = p["platform"]
+        free = p["free_count"]
+        thresh = p["min_threshold"]
+        occupied = p["occupied_count"]
+
+        if p["status"] == "agotado":
+            lines.append(f"🔴 <b>{plat_name}:</b> ¡AGOTADO! (0 libres | Mín: {thresh} | Activas: {occupied})")
+        elif p["status"] == "bajo":
+            lines.append(f"🟡 <b>{plat_name}:</b> {free} libre(s) (STOCK BAJO | Mín: {thresh} | Activas: {occupied})")
+        else:
+            lines.append(f"🟢 <b>{plat_name}:</b> {free} libre(s) (Mín: {thresh})")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"📊 <b>Resumen:</b> {summary['total_free_units']} cuentas libres en {summary['total_platforms']} plataformas.")
+    if summary['out_of_stock_count'] > 0:
+        lines.append(f"🚨 <b>{summary['out_of_stock_count']} plataforma(s) con stock CERO (Agotadas).</b>")
+    if summary['low_stock_count'] > 0:
+        lines.append(f"⚠️ <b>{summary['low_stock_count']} plataforma(s) en umbral crítico.</b>")
+
+    kb = {
+        "inline_keyboard": [
+            [
+                {"text": "📦 Ver Cuentas Libres", "callback_data": "menu_stock_list"},
+                {"text": "🔄 Re-verificar", "callback_data": "check_stock_alert"}
+            ],
+            [
+                {"text": "🔙 Menú Principal", "callback_data": "menu_main"}
+            ]
+        ]
+    }
+    return await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+
 # ==========================================
 # Despachadores de Mensajes y Callbacks
 # ==========================================
@@ -239,19 +292,8 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         )
         await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
 
-    elif cmd in ("/stock", "stock"):
-        stock = database.get_free_stock()
-        if not stock:
-            txt = "📦 <b>Stock Libre:</b> No tienes cuentas libres en stock actualmente."
-        else:
-            lines = [f"📦 <b>STOCK LIBRE ({len(stock)} disponibles):</b>\n"]
-            for s in stock[:15]:
-                perf = f" ({s['profile_name']})" if s.get('profile_name') else ""
-                lines.append(f"• <b>{s['platform']}</b>{perf}: <code>{s['email']}</code>")
-            if len(stock) > 15:
-                lines.append(f"\n<i>... y {len(stock) - 15} más en el panel web.</i>")
-            txt = "\n".join(lines)
-        await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+    elif cmd in ("/stock", "stock", "/alerta_stock", "/stock_bajo", "/alertas_stock", "/inventario"):
+        await format_and_send_stock_alert(chat_id=chat_id)
 
     elif cmd in ("/escanear", "/scan"):
         from scheduler import check_and_send_alerts
@@ -323,16 +365,31 @@ async def handle_telegram_callback(query: Dict[str, Any]):
 
     elif data == "menu_stock":
         await answer_callback_query(query_id)
+        await format_and_send_stock_alert(chat_id=chat_id)
+
+    elif data == "menu_stock_list":
+        await answer_callback_query(query_id)
         stock = database.get_free_stock()
         if not stock:
             await send_telegram_message("📦 No hay cuentas libres en stock actualmente.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
         else:
-            lines = [f"📦 <b>STOCK DISPONIBLE ({len(stock)} cuentas libres):</b>\n"]
-            for s in stock[:10]:
+            lines = [f"📦 <b>CUENTAS LIBRES EN INVENTARIO ({len(stock)}):</b>\n"]
+            for s in stock[:15]:
                 perf = f" ({s['profile_name']})" if s.get('profile_name') else ""
                 lines.append(f"• <b>{s['platform']}</b>{perf}: <code>{s['email']}</code>")
-            txt = "\n".join(lines)
-            await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+            if len(stock) > 15:
+                lines.append(f"\n<i>... y {len(stock) - 15} más en el panel web.</i>")
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "📊 Ver Semáforo de Stock", "callback_data": "menu_stock"}],
+                    [{"text": "🔙 Menú Principal", "callback_data": "menu_main"}]
+                ]
+            }
+            await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+
+    elif data == "check_stock_alert":
+        await answer_callback_query(query_id, "Comprobando niveles de inventario...", show_alert=False)
+        await format_and_send_stock_alert(chat_id=chat_id)
 
     elif data == "menu_screens":
         await answer_callback_query(query_id)

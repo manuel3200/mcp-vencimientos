@@ -3,7 +3,7 @@ import re
 import httpx
 import asyncio
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple, Union
 
 import database
 

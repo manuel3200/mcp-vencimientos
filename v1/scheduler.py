@@ -11,22 +11,24 @@ from telegram_bot import format_and_send_alert
 logger = logging.getLogger("scheduler")
 scheduler = AsyncIOScheduler()
 
-async def check_and_send_alerts(days_window: int = None) -> int:
+import asyncio
+
+async def check_and_send_alerts(days_window: int = None, force: bool = False) -> int:
     """Verifica servicios y cuentas de streaming por vencer y envía notificaciones por Telegram."""
     if days_window is None:
         try:
-            days_window = int(os.getenv("DAYS_BEFORE_ALERT", "2"))
+            days_window = int(os.getenv("DAYS_BEFORE_ALERT", "7"))
         except ValueError:
-            days_window = 2
+            days_window = 7
 
-    logger.info(f"Iniciando escaneo de vencimientos (ventana: {days_window} días)...")
+    logger.info(f"Iniciando escaneo de vencimientos (ventana: {days_window} días, force={force})...")
     expiring = get_expiring_streaming_accounts(days_window=days_window)
     today_str = date.today().isoformat()
     sent_count = 0
 
     for item in expiring:
-        # Evitar re-enviar la misma alerta el mismo día
-        if item.get("last_alert_sent") == today_str:
+        # Evitar re-enviar la misma alerta el mismo día a menos que sea forzado
+        if not force and item.get("last_alert_sent") == today_str:
             logger.info(f"Alerta ya enviada hoy para {item.get('email')}, omitiendo...")
             continue
 
@@ -35,6 +37,7 @@ async def check_and_send_alerts(days_window: int = None) -> int:
             mark_streaming_alert_sent(item["id"], today_str)
             sent_count += 1
             logger.info(f"Alerta enviada con éxito para cliente {item.get('client_name')} ({item.get('platform')})")
+            await asyncio.sleep(0.1)
 
     logger.info(f"Escaneo finalizado. Alertas enviadas: {sent_count}")
     return sent_count

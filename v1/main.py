@@ -618,10 +618,10 @@ async def enviar_alerta_prueba_telegram(mensaje: str = "Prueba de conexión con 
     return "❌ Error: Verifica que TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID estén configurados correctamente."
 
 @mcp.tool()
-async def verificar_vencimientos_ahora(dias_anticipacion: int = 2) -> str:
-    """Ejecuta una comprobación inmediata de vencimientos de streaming y envía alertas con datos de contacto por Telegram."""
-    enviadas = await check_and_send_alerts(days_window=dias_anticipacion)
-    return f"Comprobación manual completada. Se enviaron {enviadas} alerta(s) de vencimiento por Telegram."
+async def verificar_vencimientos_ahora(dias_anticipacion: int = 7) -> str:
+    """Ejecuta una comprobación inmediata de vencimientos de streaming y envía alertas con datos de contacto y botones de acción rápida por Telegram."""
+    enviadas = await check_and_send_alerts(days_window=dias_anticipacion, force=True)
+    return f"Comprobación manual completada. Se enviaron {enviadas} alerta(s) de vencimiento interactivas por Telegram."
 
 
 # ==========================================
@@ -1361,12 +1361,12 @@ async def check_now_api(request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    sent = await check_and_send_alerts()
+    sent = await check_and_send_alerts(days_window=7, force=True)
     return JSONResponse({"ok": True, "alertas_enviadas": sent})
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.5.0"}
+    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.5.1"}
 
 if __name__ == "__main__":
     import uvicorn

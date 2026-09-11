@@ -255,8 +255,18 @@ async def handle_telegram_message(msg: Dict[str, Any]):
 
     elif cmd in ("/escanear", "/scan"):
         from scheduler import check_and_send_alerts
-        sent = await check_and_send_alerts()
-        await send_telegram_message(f"🔍 Escaneo completado. Se enviaron {sent} alerta(s).", chat_id=chat_id)
+        sent = await check_and_send_alerts(days_window=7, force=True)
+        if sent == 0:
+            sent = await check_and_send_alerts(days_window=30, force=True)
+        await send_telegram_message(f"🔍 Escaneo completado. Se enviaron {sent} alerta(s) interactivas.", chat_id=chat_id)
+
+    elif cmd in ("/alerta", "/alerta_demo", "/test_alerta"):
+        accounts = database.get_active_accounts()
+        if accounts:
+            await format_and_send_alert(accounts[0])
+            await send_telegram_message("👆 ¡Arriba tienes la alerta interactiva con botones de 1 toque!", chat_id=chat_id)
+        else:
+            await send_telegram_message("No hay cuentas activas registradas para enviar alerta.", chat_id=chat_id)
 
 async def handle_telegram_callback(query: Dict[str, Any]):
     """Procesa pulsaciones de botones inline."""
@@ -295,7 +305,21 @@ async def handle_telegram_callback(query: Dict[str, Any]):
                 d_str = "HOY" if p['days_remaining'] == 0 else f"en {p['days_remaining']}d"
                 lines.append(f"• <b>{p['client']}</b> - {p['platform']}: <b>${p['price']:.2f} USD</b> ({d_str})")
             txt = "\n".join(lines)
-            await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "🔔 Enviar Tarjetas de Cobro (1-Toque)", "callback_data": "menu_scan"}],
+                    [{"text": "🔙 Volver al Menú", "callback_data": "menu_main"}]
+                ]
+            }
+            await send_telegram_message(txt, reply_markup=kb, chat_id=chat_id)
+
+    elif data == "menu_main":
+        await answer_callback_query(query_id)
+        menu_text = (
+            "🤖 <b>Streaming CRM - Panel de Control Telegram</b>\n\n"
+            "Bienvenido al panel rápido. Selecciona una acción para gestionar tu negocio:"
+        )
+        await send_telegram_message(menu_text, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
 
     elif data == "menu_stock":
         await answer_callback_query(query_id)
@@ -343,8 +367,37 @@ async def handle_telegram_callback(query: Dict[str, Any]):
     elif data == "menu_scan":
         await answer_callback_query(query_id, "Iniciando escaneo...", show_alert=False)
         from scheduler import check_and_send_alerts
-        sent = await check_and_send_alerts()
-        await send_telegram_message(f"🔍 Escaneo completado. Se enviaron {sent} alerta(s).", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        sent = await check_and_send_alerts(days_window=7, force=True)
+        if sent == 0:
+            sent = await check_and_send_alerts(days_window=30, force=True)
+            if sent == 0:
+                accounts = database.get_active_accounts()
+                if accounts:
+                    await format_and_send_alert(accounts[0])
+                    sent = 1
+                    await send_telegram_message(
+                        "ℹ️ No había cuentas por vencer en 30 días, pero te enviamos la primera cuenta activa para que pruebes los botones interactivos.",
+                        reply_markup=get_main_menu_keyboard(),
+                        chat_id=chat_id
+                    )
+                else:
+                    await send_telegram_message(
+                        "🔍 Escaneo completado: No tienes cuentas activas registradas.",
+                        reply_markup=get_main_menu_keyboard(),
+                        chat_id=chat_id
+                    )
+            else:
+                await send_telegram_message(
+                    f"✅ Se enviaron {sent} alerta(s) de los próximos 30 días con botones interactivos.",
+                    reply_markup=get_main_menu_keyboard(),
+                    chat_id=chat_id
+                )
+        else:
+            await send_telegram_message(
+                f"✅ Escaneo completado. Se enviaron {sent} alerta(s) interactivas con botones de acción rápida de 1 toque.",
+                reply_markup=get_main_menu_keyboard(),
+                chat_id=chat_id
+            )
 
     # 2. Acciones de Cuenta (Cobro y Caída)
     elif data.startswith("pay_"):

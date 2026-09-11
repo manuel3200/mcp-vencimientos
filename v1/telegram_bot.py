@@ -1,4 +1,5 @@
 import os
+import re
 import httpx
 import logging
 from typing import Optional, Dict, Any
@@ -40,15 +41,21 @@ async def send_telegram_message(text: str, parse_mode: str = "HTML") -> bool:
         logger.error(f"Excepción al enviar mensaje de Telegram: {e}")
         return False
 
-async def format_and_send_alert(service: Dict[str, Any]) -> bool:
-    """Formatea una alerta atractiva de vencimiento y la envía por Telegram."""
-    name = service.get("name", "Servicio")
-    category = service.get("category", "General")
-    expiry = service.get("expiry_date", "Sin fecha")
-    cost = service.get("cost", "")
-    recurrence = service.get("recurrence", "mensual")
-    notes = service.get("notes", "")
-    days = service.get("days_remaining", 0)
+async def format_and_send_alert(account: Dict[str, Any]) -> bool:
+    """Formatea una alerta de vencimiento para cuentas de streaming con datos del cliente."""
+    client_name = account.get("client_name") or "Cliente"
+    client_type = account.get("client_type") or "consumidor_final"
+    type_badge = "👔 Revendedor" if "revend" in client_type.lower() else "👤 Consumidor Final"
+    
+    whatsapp = account.get("whatsapp", "").strip()
+    telegram = account.get("telegram", "").strip()
+    
+    platform = account.get("platform", "Streaming")
+    email = account.get("email", "")
+    profile_name = account.get("profile_name", "")
+    expiry = account.get("expiry_date", "")
+    price = account.get("price", "")
+    days = account.get("days_remaining", 0)
     
     if days is not None and days < 0:
         icon = "🚨"
@@ -62,23 +69,32 @@ async def format_and_send_alert(service: Dict[str, Any]) -> bool:
     else:
         icon = "🔔"
         header = f"<b>¡AVISO: VENCE EN {days} DÍAS!</b>"
-        
+
     lines = [
         f"{icon} {header}",
-        "━━━━━━━━━━━━━━━━━━",
-        f"📌 <b>Servicio:</b> {name}",
-        f"🏷️ <b>Categoría:</b> {category}",
-        f"📅 <b>Vence:</b> <code>{expiry}</code>",
-        f"🔄 <b>Recurrencia:</b> {recurrence}",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"👤 <b>Cliente:</b> {client_name} ({type_badge})",
     ]
+
+    # Links directos de contacto
+    if whatsapp:
+        clean_num = re.sub(r'[^0-9]', '', whatsapp)
+        lines.append(f"📱 <b>WhatsApp:</b> <a href=\"https://wa.me/{clean_num}\">{whatsapp}</a>")
+    if telegram:
+        clean_tg = telegram.lstrip('@')
+        lines.append(f"💬 <b>Telegram:</b> <a href=\"https://t.me/{clean_tg}\">@{clean_tg}</a>")
+
+    lines.append("──────────────────────")
+    service_label = f"{platform} (Perfil: {profile_name})" if profile_name else platform
+    lines.append(f"📺 <b>Plataforma:</b> {service_label}")
+    lines.append(f"📧 <b>Correo:</b> <code>{email}</code>")
+    lines.append(f"📅 <b>Vence:</b> <code>{expiry}</code>")
     
-    if cost:
-        lines.append(f"💰 <b>Costo:</b> {cost}")
-    if notes:
-        lines.append(f"📝 <b>Notas:</b> {notes}")
-        
-    lines.append("━━━━━━━━━━━━━━━━━━")
-    lines.append("<i>Generado automáticamente por Gemini MCP Bot</i>")
+    if price:
+        lines.append(f"💰 <b>A cobrar:</b> {price}")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("<i>🔔 Avisa a tu cliente para cobrar la renovación</i>")
     
     message_text = "\n".join(lines)
     return await send_telegram_message(message_text)

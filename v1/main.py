@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 import logging
 from contextlib import asynccontextmanager
@@ -30,7 +31,7 @@ def verify_session_cookie(cookie: Optional[str]) -> Optional[str]:
     if not cookie:
         return None
     try:
-        data = serializer.loads(cookie, salt="session-auth", max_age=86400 * 7) # 7 días
+        data = serializer.loads(cookie, salt="session-auth", max_age=86400 * 7)
         return data.get("user")
     except (SignatureExpired, BadSignature):
         return None
@@ -42,112 +43,261 @@ def verify_preauth_cookie(cookie: Optional[str]) -> Optional[str]:
     if not cookie:
         return None
     try:
-        data = serializer.loads(cookie, salt="preauth", max_age=300) # 5 minutos
+        data = serializer.loads(cookie, salt="preauth", max_age=300)
         return data.get("user")
     except (SignatureExpired, BadSignature):
         return None
 
 # ==========================================
-# 1. Definición del Servidor FastMCP
+# 1. Herramientas FastMCP para Gemini Spark
 # ==========================================
-mcp = FastMCP("Vencimientos & Telegram Bot")
+mcp = FastMCP("Streaming CRM & Expiry Bot")
 
 @mcp.tool()
-def agregar_servicio(
-    nombre: str,
+def vender_o_asignar_servicio(
+    cliente: str,
+    plataforma: str,
+    correo: str,
+    contrasena: str,
     fecha_vencimiento: str,
-    costo: str = "",
-    categoria: str = "Servicio",
+    whatsapp: str = "",
+    telegram: str = "",
+    tipo_cliente: str = "consumidor_final",
+    perfil: str = "",
+    pin: str = "",
+    precio: str = "",
     recurrencia: str = "mensual",
     notas: str = ""
 ) -> str:
-    """Registra un nuevo servicio o suscripción para monitoreo de vencimiento.
-    - nombre: Nombre del servicio (ej. 'Netflix', 'Hosting Oracle', 'Dominio juanconnect.online').
+    """Registra una venta o asignación de una cuenta o perfil de streaming a un cliente.
+    - cliente: Nombre o alias del cliente (ej. 'Maik', 'Carlos').
+    - plataforma: Nombre del servicio (ej. 'Netflix', 'Disney+', 'Max', 'Prime', 'Spotify').
+    - correo: Correo o usuario de la cuenta.
+    - contrasena: Contraseña de la cuenta.
     - fecha_vencimiento: Formato 'YYYY-MM-DD' (ej. '2026-10-15').
-    - costo: Precio o tarifa (ej. '$12 USD', '1500 ARS').
-    - categoria: Tipo de servicio (ej. 'Hosting', 'Suscripción', 'Dominio', 'Seguro').
-    - recurrencia: Periodicidad ('mensual', 'anual', 'unico', 'trimestral').
-    - notas: Detalles adicionales o enlaces.
+    - whatsapp: Número de WhatsApp con código de país (ej. '+5491122334455').
+    - telegram: Usuario de Telegram (ej. '@maik_stream').
+    - tipo_cliente: 'revendedor' o 'consumidor_final'.
+    - perfil: Nombre o número de perfil si es venta de pantalla (ej. 'Perfil 2').
+    - pin: PIN del perfil si aplica.
+    - precio: Precio cobrado al cliente (ej. '$10 USD', '15000 ARS').
+    - recurrencia: 'mensual', 'trimestral', 'anual', 'unico'.
     """
     try:
-        svc = database.add_service(
-            name=nombre,
+        acc = database.assign_or_sell_account(
+            client_name=cliente,
+            platform=plataforma,
+            email=correo,
+            password=contrasena,
             expiry_date=fecha_vencimiento,
-            category=categoria,
+            whatsapp=whatsapp,
+            telegram=telegram,
+            client_type=tipo_cliente,
+            profile_name=perfil,
+            profile_pin=pin,
             recurrence=recurrencia,
+            price=precio,
+            notes=notas
+        )
+        return (
+            f"✅ Venta registrada exitosamente para {acc['client_name']} ({acc['client_code']}):\n"
+            f"• Plataforma: {acc['platform']}" + (f" (Perfil: {acc['profile_name']})" if acc.get('profile_name') else "") + "\n"
+            f"• Correo: {acc['email']}\n"
+            f"• Clave: {acc['password']}" + (f" | PIN: {acc['profile_pin']}" if acc.get('profile_pin') else "") + "\n"
+            f"• Vence: {acc['expiry_date']} | Recurrencia: {acc['recurrence']}\n"
+            f"• Tipo: {'👔 Revendedor' if acc.get('client_type') == 'revendedor' else '👤 Consumidor Final'}\n"
+            f"• Contacto: WhatsApp: {acc.get('whatsapp') or '-'} | Telegram: {acc.get('telegram') or '-'}"
+        )
+    except Exception as e:
+        return f"❌ Error al registrar venta: {str(e)}"
+
+@mcp.tool()
+def buscar_cliente(query: str) -> str:
+    """Busca un cliente por nombre/alias ('Maik'), código (CLI-001), WhatsApp o Telegram.
+    Devuelve su información de contacto y todas sus cuentas activas o caídas.
+    """
+    client = database.search_client(query)
+    if not client:
+        return f"❌ No se encontró ningún cliente que coincida con '{query}'."
+
+    tipo = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
+    lines = [
+        f"👤 <b>Cliente:</b> {client['name']} ({client['client_code']})",
+        f"• Tipo: {tipo}",
+        f"• WhatsApp: {client.get('whatsapp') or 'No registrado'}",
+        f"• Telegram: {client.get('telegram') or 'No registrado'}",
+        f"• Notas: {client.get('notes') or '-'}",
+        "\n📺 <b>Servicios contratados:</b>"
+    ]
+
+    accounts = client.get("accounts", [])
+    if not accounts:
+        lines.append("  (No tiene cuentas asociadas actualmente)")
+    else:
+        for a in accounts:
+            estado_icon = "✅ Activa" if a["status"] == "ocupada" else ("🚨 CAÍDA" if a["status"] == "caida" else a["status"])
+            perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
+            pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
+            lines.append(
+                f"  • {a['platform']}{perf}: {a['email']} | Clave: {a['password']}{pin}\n"
+                f"    Vence: {a['expiry_date']} | Estado: {estado_icon} | Precio: {a.get('price') or '-'}"
+            )
+
+    return "\n".join(lines)
+
+@mcp.tool()
+def marcar_cuenta_caida(correo_o_id: str, motivo: str = "Suscripción caída") -> str:
+    """Marca una cuenta o perfil como 'caida' para colocarla en la lista de reclamos.
+    - correo_o_id: Correo o ID de la cuenta que presentó fallas.
+    - motivo: Motivo del reporte (ej. 'suscripción caída', 'clave cambiada', 'pantalla bloqueada').
+    """
+    acc = database.mark_account_fallen(correo_o_id, reason=motivo)
+    if not acc:
+        return f"❌ No se encontró ninguna cuenta activa con el identificador '{correo_o_id}'."
+
+    client_name = acc.get("client_name") or "Sin cliente"
+    return (
+        f"🚨 Cuenta marcada como CAÍDA:\n"
+        f"• Plataforma: {acc['platform']}\n"
+        f"• Correo: {acc['email']}\n"
+        f"• Cliente afectado: {client_name}\n"
+        f"• Motivo: {motivo}\n\n"
+        f"💡 Puedes pedirme: 'Cámbiame este correo {acc['email']} por una libre' para asignarle reemplazo automático."
+    )
+
+@mcp.tool()
+def agregar_stock_libre(
+    plataforma: str,
+    correo: str,
+    contrasena: str,
+    perfil: str = "",
+    pin: str = "",
+    costo: str = "",
+    notas: str = ""
+) -> str:
+    """Agrega una cuenta o perfil libre al inventario disponible para la venta o reemplazo.
+    - plataforma: Nombre del servicio (ej. 'Netflix', 'Disney+', 'Max', 'Spotify').
+    - correo: Correo o usuario de la cuenta.
+    - contrasena: Contraseña de la cuenta.
+    - perfil: Nombre de perfil si es pantalla individual.
+    - pin: PIN si aplica.
+    - costo: Costo que te cobró tu proveedor.
+    """
+    try:
+        acc = database.add_free_account(
+            platform=plataforma,
+            email=correo,
+            password=contrasena,
+            profile_name=perfil,
+            profile_pin=pin,
             cost=costo,
             notes=notas
         )
         return (
-            f"✅ Servicio '{svc['name']}' agregado con éxito.\n"
-            f"- ID: {svc['id']}\n"
-            f"- Vence: {svc['expiry_date']}\n"
-            f"- Costo: {svc['cost'] or 'No especificado'}\n"
-            f"- Recurrencia: {svc['recurrence']}"
+            f"✅ Cuenta libre agregada al stock disponible:\n"
+            f"• ID: {acc['id']}\n"
+            f"• Plataforma: {acc['platform']}\n"
+            f"• Correo: {acc['email']}\n"
+            f"• Clave: {acc['password']}" + (f" | Perfil: {acc['profile_name']}" if acc.get("profile_name") else "")
         )
     except Exception as e:
-        return f"❌ Error al agregar servicio: {str(e)}"
+        return f"❌ Error al agregar stock: {str(e)}"
 
 @mcp.tool()
-def listar_servicios() -> str:
-    """Obtiene la lista completa de todos los servicios registrados y su estado actual."""
-    svcs = database.list_services()
-    if not svcs:
-        return "No hay servicios registrados actualmente."
-    
-    output = [f"📋 Total de servicios registrados: {len(svcs)}\n"]
-    for s in svcs:
-        days = s.get("days_remaining")
-        if days is None:
-            estado = "⚠️ Fecha inválida"
-        elif days < 0:
-            estado = f"🚨 VENCIDO hace {abs(days)} días"
-        elif days == 0:
-            estado = "⚠️ Vence HOY"
-        elif days <= 2:
-            estado = f"🔔 Vence en {days} días (¡Próximo!)"
-        else:
-            estado = f"✅ Vence en {days} días"
-            
-        output.append(
-            f"• [ID: {s['id']}] {s['name']} ({s['category']})\n"
-            f"  Vence: {s['expiry_date']} | Estado: {estado}\n"
-            f"  Costo: {s['cost'] or '-'} | Recurrencia: {s['recurrence']}\n"
+def reemplazar_cuenta_caida(correo_o_id: str) -> str:
+    """Reemplazo inteligente de cuenta:
+    Identifica la plataforma de la cuenta caída, busca automáticamente una cuenta libre
+    de la misma plataforma en stock, se la asigna al cliente conservando la fecha de
+    vencimiento y te entrega las nuevas credenciales listas para enviar.
+    """
+    res = database.replace_fallen_account(correo_o_id)
+    if not res:
+        return f"❌ No se encontró ninguna cuenta caída o activa con '{correo_o_id}'."
+
+    if not res.get("success"):
+        old = res.get("old_account", {})
+        return (
+            f"⚠️ NO HAY STOCK DISPONIBLE:\n"
+            f"No se encontraron cuentas libres de la plataforma '{old.get('platform')}' en el inventario.\n"
+            f"La cuenta {old.get('email')} permanece marcada como caída. Por favor agrega una cuenta libre primero."
         )
-    return "\n".join(output)
+
+    new_acc = res["new_account"]
+    old_acc = res["old_account"]
+    client_name = new_acc.get("client_name") or "Cliente"
+
+    return (
+        f"🎉 REEMPLAZO EXITOSO REALIZADO:\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Cliente:</b> {client_name}\n"
+        f"📺 <b>Plataforma:</b> {new_acc['platform']}\n"
+        f"❌ <b>Cuenta anterior (Caída):</b> {old_acc['email']}\n"
+        f"✨ <b>NUEVA CUENTA ASIGNADA:</b>\n"
+        f"• Correo: <code>{new_acc['email']}</code>\n"
+        f"• Contraseña: <code>{new_acc['password']}</code>" + (f"\n• Perfil: {new_acc['profile_name']}" if new_acc.get("profile_name") else "") + (f" [PIN: {new_acc['profile_pin']}]" if new_acc.get("profile_pin") else "") + "\n"
+        f"📅 <b>Mantiene vencimiento:</b> <code>{new_acc['expiry_date']}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👉 Copia estos datos y envíaselos a {client_name} por WhatsApp/Telegram."
+    )
 
 @mcp.tool()
-def proximos_vencimientos(dias_anticipacion: int = 7) -> str:
-    """Consulta los servicios que están por vencer en los próximos días (por defecto 7 días)."""
-    svcs = database.get_expiring_services(days_window=dias_anticipacion)
-    if not svcs:
-        return f"No hay servicios que venzan en los próximos {dias_anticipacion} días."
-    
-    output = [f"🔔 Servicios por vencer en los próximos {dias_anticipacion} días ({len(svcs)}):\n"]
-    for s in svcs:
-        days = s.get("days_remaining")
-        desc_dias = "HOY" if days == 0 else (f"en {days} días" if days > 0 else f"vencido hace {abs(days)} días")
-        output.append(
-            f"• {s['name']} (ID: {s['id']}) - Vence {desc_dias} ({s['expiry_date']})\n"
-            f"  Costo: {s['cost'] or '-'} | Recurrencia: {s['recurrence']}"
+def consultar_stock_libre(plataforma: str = "") -> str:
+    """Consulta el inventario de cuentas y perfiles libres listos para entregar."""
+    stock = database.get_free_stock(plataforma if plataforma else None)
+    if not stock:
+        msg = f"de la plataforma '{plataforma}'" if plataforma else "en el inventario"
+        return f"📦 No hay cuentas libres disponibles {msg}."
+
+    lines = [f"📦 <b>Stock Disponible ({len(stock)} cuentas libres):</b>\n"]
+    for s in stock:
+        perf = f" (Perfil: {s['profile_name']})" if s.get("profile_name") else ""
+        pin = f" [PIN: {s['profile_pin']}]" if s.get("profile_pin") else ""
+        lines.append(f"• [{s['id']}] {s['platform']}{perf}: <code>{s['email']}</code> | Clave: <code>{s['password']}</code>{pin}")
+
+    return "\n".join(lines)
+
+@mcp.tool()
+def consultar_cuentas_caidas() -> str:
+    """Lista todas las cuentas marcadas como caídas pendientes de reclamo o solución."""
+    fallen = database.get_fallen_accounts()
+    if not fallen:
+        return "🎉 ¡Excelente! No hay ninguna cuenta caída actualmente."
+
+    lines = [f"🚨 <b>Cuentas Caídas Pendientes ({len(fallen)}):</b>\n"]
+    for f in fallen:
+        client_name = f.get("client_name") or "Sin cliente asignado"
+        lines.append(
+            f"• [{f['id']}] {f['platform']}: {f['email']}\n"
+            f"  Cliente: {client_name} | Tel: {f.get('whatsapp') or '-'} | Tg: {f.get('telegram') or '-'}\n"
+            f"  Detalle: {f.get('notes') or '-'}\n"
         )
-    return "\n".join(output)
+    return "\n".join(lines)
 
 @mcp.tool()
-def eliminar_servicio(id_servicio: int) -> str:
-    """Elimina un servicio registrado a partir de su ID numérico."""
-    ok = database.delete_service(service_id=id_servicio)
+def renovar_suscripcion(correo_o_id: str, nueva_fecha_vencimiento: str) -> str:
+    """Extiende o renueva la fecha de vencimiento de una cuenta tras recibir el pago del cliente.
+    - nueva_fecha_vencimiento: Formato 'YYYY-MM-DD'.
+    """
+    ok = database.renew_account(correo_o_id, nueva_fecha_vencimiento)
     if ok:
-        return f"✅ Servicio con ID {id_servicio} eliminado correctamente."
-    return f"❌ No se encontró ningún servicio con ID {id_servicio}."
+        return f"✅ Cuenta '{correo_o_id}' renovada exitosamente hasta el {nueva_fecha_vencimiento}."
+    return f"❌ No se encontró ninguna cuenta con '{correo_o_id}'."
 
 @mcp.tool()
-def renovar_servicio(id_servicio: int, nueva_fecha_vencimiento: str) -> str:
-    """Actualiza la fecha de vencimiento de un servicio tras haberlo pagado o renovado."""
-    ok = database.update_service_date(service_id=id_servicio, new_expiry_date=nueva_fecha_vencimiento)
-    if ok:
-        return f"✅ Fecha de vencimiento actualizada a {nueva_fecha_vencimiento} para el servicio ID {id_servicio}."
-    return f"❌ No se pudo actualizar el servicio ID {id_servicio}."
+def listar_clientes_activos() -> str:
+    """Muestra el listado completo de clientes registrados con su número de cuentas activas."""
+    clients = database.list_all_clients()
+    if not clients:
+        return "No hay clientes registrados en la base de datos."
+
+    lines = [f"👥 <b>Clientes Registrados ({len(clients)}):</b>\n"]
+    for c in clients:
+        tipo = "👔 Revendedor" if c.get("client_type") == "revendedor" else "👤 Final"
+        lines.append(
+            f"• [{c['client_code']}] {c['name']} ({tipo}) - Cuentas activas: {c.get('active_accounts_count', 0)}\n"
+            f"  WhatsApp: {c.get('whatsapp') or '-'} | Telegram: {c.get('telegram') or '-'}"
+        )
+    return "\n".join(lines)
 
 @mcp.tool()
 def cambiar_clave_admin(nueva_contrasena: str, usuario: str = "admin") -> str:
@@ -156,7 +306,7 @@ def cambiar_clave_admin(nueva_contrasena: str, usuario: str = "admin") -> str:
         clean_user = usuario.strip().lower()
         clean_pass = nueva_contrasena.strip()
         database.create_or_update_admin(clean_user, clean_pass)
-        return f"✅ Contraseña del usuario '{clean_user}' actualizada correctamente. Ya puedes ingresar al panel web con tu nueva contraseña."
+        return f"✅ Contraseña del usuario '{clean_user}' actualizada correctamente."
     except Exception as e:
         return f"❌ Error al actualizar contraseña: {str(e)}"
 
@@ -175,9 +325,9 @@ async def enviar_alerta_prueba_telegram(mensaje: str = "Prueba de conexión con 
 
 @mcp.tool()
 async def verificar_vencimientos_ahora(dias_anticipacion: int = 2) -> str:
-    """Ejecuta una comprobación inmediata de vencimientos y envía alertas por Telegram si aplica."""
+    """Ejecuta una comprobación inmediata de vencimientos de streaming y envía alertas con datos de contacto por Telegram."""
     enviadas = await check_and_send_alerts(days_window=dias_anticipacion)
-    return f"Comprobación manual completada. Se enviaron {enviadas} alerta(s) por Telegram."
+    return f"Comprobación manual completada. Se enviaron {enviadas} alerta(s) de vencimiento por Telegram."
 
 
 # ==========================================
@@ -187,20 +337,17 @@ mcp_app = mcp.http_app(path="/")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Inicialización de DB
     database.init_db()
     
-    # Determinar usuario y contraseña asegurando que nunca sean cadenas vacías
     raw_user = os.getenv("ADMIN_USERNAME")
     raw_pass = os.getenv("ADMIN_PASSWORD")
-    admin_user = raw_user.strip() if raw_user and raw_user.strip() else "admin"
+    admin_user = raw_user.strip().lower() if raw_user and raw_user.strip() else "admin"
     admin_pass = raw_pass.strip() if raw_pass and raw_pass.strip() else "admin123"
 
-    # Siempre asegurar que el usuario administrador existe con esta contraseña
     existing = database.get_admin_user(admin_user)
     totp_secret = existing.get("totp_secret") if existing else pyotp.random_base32()
     database.create_or_update_admin(admin_user, admin_pass, totp_secret)
-    logger.info(f"Usuario administrador '{admin_user}' inicializado correctamente con contraseña activa.")
+    logger.info(f"Usuario administrador '{admin_user}' sincronizado con éxito.")
 
     start_scheduler()
     logger.info("Aplicación y tareas programadas iniciadas.")
@@ -210,9 +357,9 @@ async def lifespan(app: FastAPI):
     logger.info("Aplicación detenida.")
 
 app = FastAPI(
-    title="Gemini Expiry Alert MCP & Web Panel",
-    description="Servidor MCP para Gemini Spark y Panel con Autenticación 2FA",
-    version="1.2.0",
+    title="Gemini Streaming CRM & MCP Bot",
+    description="Servidor MCP para Gemini Spark y CRM de Streaming con 2FA",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -229,7 +376,7 @@ LOGIN_HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Iniciar Sesión - Control de Vencimientos</title>
+    <title>Iniciar Sesión - Streaming CRM & MCP</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
         .login-card { background: #161e2e; border: 1px solid #1e293b; border-radius: 16px; padding: 36px; width: 100%; max-width: 400px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.5); }
@@ -253,7 +400,7 @@ LOGIN_HTML_TEMPLATE = """
     <div class="login-card">
         <div class="icon-box">🔐</div>
         <h2>Acceso Administrativo</h2>
-        <p class="subtitle">Panel de Vencimientos & Gemini MCP</p>
+        <p class="subtitle">CRM de Streaming & Gemini MCP</p>
         {{MESSAGE_HTML}}
         <form action="/login" method="POST">
             <div class="form-group">
@@ -341,20 +488,17 @@ async def login_submit(username: str = Form(...), password: str = Form(...)):
     if not database.verify_admin_credentials(user, passw):
         return RedirectResponse(url="/login?error=Usuario+o+contrase%C3%B1a+incorrectos", status_code=302)
 
-    # Generar código OTP de 6 dígitos para Telegram
     otp = f"{secrets.randbelow(900000) + 100000}"
     database.set_telegram_otp(user, otp, duration_seconds=300)
 
-    # Enviar el código por Telegram
     msg = (
         "🔐 <b>Código de Verificación 2FA</b>\n\n"
-        "Alguien está iniciando sesión en el Panel Web de Vencimientos.\n\n"
+        "Alguien está iniciando sesión en el Panel de Streaming.\n\n"
         f"Tu código de acceso es: <code>{otp}</code>\n\n"
-        "⏱️ <i>Válido durante 5 minutos. Si no fuiste tú, revisa tu contraseña.</i>"
+        "⏱️ <i>Válido durante 5 minutos.</i>"
     )
     await send_telegram_message(msg)
 
-    # Generar cookie de pre-autenticación
     preauth = create_preauth_cookie(user)
     response = RedirectResponse(url="/2fa", status_code=302)
     response.set_cookie(
@@ -371,7 +515,6 @@ async def recover_password():
     raw_user = os.getenv("ADMIN_USERNAME")
     admin_user = raw_user.strip().lower() if raw_user and raw_user.strip() else "admin"
     
-    # Generar clave temporal de 6 dígitos
     temp_pass = f"{secrets.randbelow(900000) + 100000}"
     database.create_or_update_admin(admin_user, temp_pass)
     
@@ -406,11 +549,9 @@ async def twofa_submit(request: Request, otp_code: str = Form(...)):
     code = otp_code.strip()
     is_valid = False
 
-    # 1. Validar con OTP de Telegram
     if database.verify_telegram_otp(preauth_user, code):
         is_valid = True
     else:
-        # 2. Validar con TOTP (Google Authenticator)
         admin_data = database.get_admin_user(preauth_user)
         if admin_data and admin_data.get("totp_secret"):
             totp = pyotp.TOTP(admin_data["totp_secret"])
@@ -420,7 +561,6 @@ async def twofa_submit(request: Request, otp_code: str = Form(...)):
     if not is_valid:
         return RedirectResponse(url="/2fa?error=C%C3%B3digo+inv%C3%A1lido+o+expirado", status_code=302)
 
-    # Código válido: Establecer sesión completa
     session = create_session_cookie(preauth_user)
     response = RedirectResponse(url="/", status_code=302)
     response.set_cookie(
@@ -428,7 +568,7 @@ async def twofa_submit(request: Request, otp_code: str = Form(...)):
         value=session,
         httponly=True,
         samesite="lax",
-        max_age=86400 * 7 # 7 días
+        max_age=86400 * 7
     )
     response.delete_cookie("preauth_token")
     return response
@@ -442,7 +582,7 @@ async def logout():
 
 
 # ==========================================
-# 4. Panel de Control Web (Protegido por 2FA)
+# 4. Panel de Control Web Completo (CRM)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
@@ -450,47 +590,97 @@ async def dashboard(request: Request):
     if not user:
         return RedirectResponse(url="/login", status_code=302)
 
-    svcs = database.list_services()
-    has_token = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
-    has_chat_id = bool(os.getenv("TELEGRAM_CHAT_ID"))
-    tz = os.getenv("TIMEZONE", "America/Argentina/Buenos_Aires")
-    alert_hour = os.getenv("ALERT_HOUR", "9")
-    days_window = os.getenv("DAYS_BEFORE_ALERT", "2")
-    
-    rows_html = ""
-    for s in svcs:
-        days = s.get("days_remaining")
-        badge_class = "badge-ok"
-        badge_text = f"En {days} días"
+    active_accounts = database.get_active_accounts()
+    free_stock = database.get_free_stock()
+    fallen_accounts = database.get_fallen_accounts()
+    all_clients = database.list_all_clients()
+    expiring_soon = database.get_expiring_streaming_accounts(days_window=3)
+
+    # 1. Filas de Cuentas Activas
+    active_rows = ""
+    for a in active_accounts:
+        days = a.get("days_remaining")
+        badge = "badge-ok"
+        badge_txt = f"En {days}d"
         if days is None:
-            badge_class = "badge-warn"
-            badge_text = "Fecha inválida"
+            badge = "badge-warn"; badge_txt = "Fecha inválida"
         elif days < 0:
-            badge_class = "badge-danger"
-            badge_text = f"Vencido (-{abs(days)}d)"
+            badge = "badge-danger"; badge_txt = f"Vencida (-{abs(days)}d)"
         elif days <= 2:
-            badge_class = "badge-warn"
-            badge_text = f"¡Vence en {days}d!"
-            
-        rows_html += f"""
+            badge = "badge-warn"; badge_txt = f"¡Vence en {days}d!"
+
+        wa_clean = re.sub(r'[^0-9]', '', a.get("whatsapp", ""))
+        wa_link = f'<a href="https://wa.me/{wa_clean}" target="_blank" style="color: #22c55e;">{a.get("whatsapp")}</a>' if wa_clean else '-'
+        tg_clean = a.get("telegram", "").lstrip("@")
+        tg_link = f'<a href="https://t.me/{tg_clean}" target="_blank" style="color: #38bdf8;">@{tg_clean}</a>' if tg_clean else '-'
+        client_tag = f"👔 {a.get('client_name')}" if "revend" in (a.get("client_type") or "").lower() else f"👤 {a.get('client_name')}"
+
+        perf = f"<br><small style='color:#94a3b8;'>Perf: {a['profile_name']}</small>" if a.get("profile_name") else ""
+        pin = f"<small style='color:#94a3b8;'>PIN: {a['profile_pin']}</small>" if a.get("profile_pin") else ""
+
+        active_rows += f"""
         <tr>
-            <td>{s['id']}</td>
-            <td><strong>{s['name']}</strong></td>
-            <td>{s['category']}</td>
-            <td><code>{s['expiry_date']}</code></td>
-            <td><span class="badge {badge_class}">{badge_text}</span></td>
-            <td>{s['cost'] or '-'}</td>
-            <td>{s['recurrence']}</td>
+            <td><strong>{client_tag}</strong><br><small style="color:#64748b;">{a.get('client_code') or ''}</small></td>
+            <td>{wa_link}<br>{tg_link}</td>
+            <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{a['platform']}</span>{perf}</td>
+            <td><code>{a['email']}</code><br><code>{a['password']}</code> {pin}</td>
+            <td><code>{a['expiry_date']}</code></td>
+            <td><span class="badge {badge}">{badge_txt}</span></td>
+            <td>{a.get('price') or '-'}</td>
             <td>
-                <form action="/api/delete-service/{s['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar {s['name']}?');">
-                    <button type="submit" class="btn-del" title="Eliminar servicio">🗑️</button>
+                <form action="/api/mark-fallen/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Marcar {a['email']} como caída?');">
+                    <button type="submit" class="btn-action btn-warn" title="Reportar Caída">🚨 Caída</button>
+                </form>
+                <form action="/api/delete-account/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar cuenta?');">
+                    <button type="submit" class="btn-action" style="color:#ef4444;" title="Eliminar">🗑️</button>
                 </form>
             </td>
         </tr>
         """
+    if not active_rows:
+        active_rows = "<tr><td colspan='8' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas activas asignadas actualmente.</td></tr>"
 
-    if not rows_html:
-        rows_html = "<tr><td colspan='8' style='text-align: center; color: #888;'>No hay servicios registrados aún. Pídeselo a Gemini o usa la API.</td></tr>"
+    # 2. Filas de Stock Libre
+    stock_rows = ""
+    for s in free_stock:
+        perf = f" (Perf: {s['profile_name']})" if s.get("profile_name") else ""
+        pin = f" [PIN: {s['profile_pin']}]" if s.get("profile_pin") else ""
+        stock_rows += f"""
+        <tr>
+            <td><strong>{s['platform']}</strong>{perf}</td>
+            <td><code>{s['email']}</code></td>
+            <td><code>{s['password']}</code>{pin}</td>
+            <td>{s.get('cost') or '-'}</td>
+            <td><span class="badge badge-ok">Disponible</span></td>
+            <td>
+                <form action="/api/delete-account/{s['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar del stock?');">
+                    <button type="submit" class="btn-action" style="color:#ef4444;">🗑️</button>
+                </form>
+            </td>
+        </tr>
+        """
+    if not stock_rows:
+        stock_rows = "<tr><td colspan='6' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas libres en stock. Agrega cuentas o pídeselo a Gemini.</td></tr>"
+
+    # 3. Filas de Cuentas Caídas
+    fallen_rows = ""
+    for f in fallen_accounts:
+        client_name = f.get("client_name") or "Sin cliente asignado"
+        fallen_rows += f"""
+        <tr>
+            <td><strong>{f['platform']}</strong></td>
+            <td><code>{f['email']}</code></td>
+            <td><strong>{client_name}</strong></td>
+            <td><small style="color:#fca5a5;">{f.get('notes') or 'Reportada'}</small></td>
+            <td>
+                <form action="/api/auto-replace/{f['id']}" method="POST" style="display:inline;">
+                    <button type="submit" class="btn-action btn-replace" title="Buscar reemplazo en stock de la misma plataforma">🔄 Reemplazar Automáticamente</button>
+                </form>
+            </td>
+        </tr>
+        """
+    if not fallen_rows:
+        fallen_rows = "<tr><td colspan='5' style='text-align:center;color:#10b981;padding:20px;'>🎉 ¡No hay cuentas caídas! Todo el sistema está funcionando.</td></tr>"
 
     html = f"""
     <!DOCTYPE html>
@@ -498,96 +688,159 @@ async def dashboard(request: Request):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>MCP Expiry Alert Bot</title>
+        <title>Streaming CRM & MCP Bot</title>
         <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 24px; }}
-            .container {{ max-width: 950px; margin: 0 auto; }}
-            .header-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }}
-            .card {{ background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }}
-            h1 {{ margin: 0; color: #38bdf8; display: flex; align-items: center; gap: 10px; font-size: 1.5rem; }}
-            .user-tag {{ font-size: 0.85rem; background: #334155; padding: 6px 12px; border-radius: 20px; display: flex; align-items: center; gap: 8px; }}
-            .status-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px; margin-bottom: 20px; }}
-            .status-box {{ background: #0f172a; padding: 15px; border-radius: 8px; border: 1px solid #334155; }}
-            .status-box h4 {{ margin: 0 0 8px 0; color: #94a3b8; font-size: 0.8rem; text-transform: uppercase; }}
-            .status-box p {{ margin: 0; font-size: 1.1rem; font-weight: bold; }}
-            .badge {{ padding: 4px 8px; border-radius: 6px; font-size: 0.8rem; font-weight: bold; }}
-            .badge-ok {{ background: #065f46; color: #6ee7b7; }}
-            .badge-warn {{ background: #854d0e; color: #fde047; }}
-            .badge-danger {{ background: #991b1b; color: #fca5a5; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; }}
-            th, td {{ padding: 12px 10px; text-align: left; border-bottom: 1px solid #334155; font-size: 0.95rem; }}
-            th {{ color: #94a3b8; font-weight: 600; }}
-            .endpoint-box {{ background: #0284c7; color: white; padding: 12px 16px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-top: 15px; }}
-            code {{ font-family: monospace; background: #0f172a; padding: 3px 6px; border-radius: 4px; }}
-            .btn {{ background: #2563eb; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.9rem; font-weight: 500; }}
-            .btn:hover {{ background: #1d4ed8; }}
-            .btn-logout {{ background: #475569; color: #cbd5e1; text-decoration: none; padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; }}
-            .btn-logout:hover {{ background: #64748b; color: white; }}
-            .btn-del {{ background: transparent; border: none; cursor: pointer; font-size: 1.1rem; padding: 4px; border-radius: 4px; }}
-            .btn-del:hover {{ background: #334155; }}
+            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 24px; }}
+            .container {{ max-width: 1100px; margin: 0 auto; }}
+            .header-bar {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }}
+            h1 {{ margin: 0; color: #38bdf8; font-size: 1.6rem; display: flex; align-items: center; gap: 10px; }}
+            .card {{ background: #161e2e; border: 1px solid #1e293b; border-radius: 14px; padding: 20px; margin-bottom: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }}
+            .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 15px; margin-bottom: 20px; }}
+            .stat-box {{ background: #0b0f19; border: 1px solid #1e293b; border-radius: 10px; padding: 16px; }}
+            .stat-box h4 {{ margin: 0 0 6px 0; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
+            .stat-box p {{ margin: 0; font-size: 1.4rem; font-weight: 700; color: #fff; }}
+            .stat-fallen {{ border-left: 4px solid #ef4444; }}
+            .stat-stock {{ border-left: 4px solid #10b981; }}
+            .stat-active {{ border-left: 4px solid #38bdf8; }}
+            .stat-soon {{ border-left: 4px solid #f59e0b; }}
+            .tabs {{ display: flex; gap: 10px; border-bottom: 1px solid #334155; margin-bottom: 20px; }}
+            .tab-btn {{ background: none; border: none; color: #94a3b8; padding: 12px 18px; font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }}
+            .tab-btn.active {{ color: #38bdf8; border-bottom-color: #38bdf8; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: 12px 14px; text-align: left; border-bottom: 1px solid #1e293b; font-size: 0.9rem; }}
+            th {{ color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }}
+            .badge {{ padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; display: inline-block; }}
+            .badge-ok {{ background: #064e3b; color: #6ee7b7; }}
+            .badge-warn {{ background: #78350f; color: #fde047; }}
+            .badge-danger {{ background: #7f1d1d; color: #fca5a5; }}
+            code {{ font-family: monospace; background: #0b0f19; padding: 3px 6px; border-radius: 4px; font-size: 0.85rem; }}
+            .btn {{ background: #0284c7; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.85rem; font-weight: 600; }}
+            .btn:hover {{ background: #0369a1; }}
+            .btn-action {{ background: transparent; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 0.8rem; font-weight: 600; }}
+            .btn-warn {{ color: #f59e0b; border-color: #78350f; }}
+            .btn-warn:hover {{ background: #451a03; }}
+            .btn-replace {{ background: #059669; color: white; border: none; }}
+            .btn-replace:hover {{ background: #047857; }}
+            .btn-logout {{ background: #1e293b; color: #cbd5e1; text-decoration: none; padding: 8px 14px; border-radius: 8px; font-size: 0.85rem; }}
+            .btn-logout:hover {{ background: #334155; color: #fff; }}
+            .endpoint-banner {{ background: #0369a1; color: white; padding: 12px 18px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-top: 15px; font-size: 0.9rem; }}
         </style>
+        <script>
+            function showTab(tabId) {{
+                document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+                document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+                document.getElementById(tabId).style.display = 'block';
+                document.getElementById('btn-' + tabId).classList.add('active');
+            }}
+        </script>
     </head>
     <body>
         <div class="container">
             <div class="header-bar">
-                <h1>⚡ Gemini Spark MCP - Panel</h1>
+                <h1>⚡ Streaming CRM & Gemini MCP</h1>
                 <div style="display: flex; align-items: center; gap: 12px;">
-                    <span class="user-tag">👤 <strong>{user}</strong> (2FA Activo)</span>
+                    <span style="font-size:0.85rem; color:#94a3b8;">Admin: <strong>{user}</strong></span>
                     <a href="/logout" class="btn-logout">Cerrar Sesión</a>
                 </div>
             </div>
 
-            <div class="card">
-                <div class="status-grid">
-                    <div class="status-box">
-                        <h4>Bot de Telegram</h4>
-                        <p>{'✅ Conectado' if (has_token and has_chat_id) else '❌ Sin Configurar'}</p>
-                    </div>
-                    <div class="status-box">
-                        <h4>Verificación Diaria</h4>
-                        <p>{alert_hour}:00 hs ({tz})</p>
-                    </div>
-                    <div class="status-box">
-                        <h4>Anticipación de Alerta</h4>
-                        <p>{days_window} días antes</p>
-                    </div>
-                    <div class="status-box">
-                        <h4>Servicios Registrados</h4>
-                        <p>{len(svcs)}</p>
-                    </div>
+            <div class="stats-grid">
+                <div class="stat-box stat-active">
+                    <h4>Cuentas Activas</h4>
+                    <p>{len(active_accounts)}</p>
                 </div>
-                <div style="display: flex; gap: 10px;">
-                    <form action="/api/test-telegram" method="POST" style="display: inline;">
-                        <button type="submit" class="btn">📲 Probar Alerta Telegram</button>
-                    </form>
-                    <form action="/api/check-now" method="POST" style="display: inline;">
-                        <button type="submit" class="btn" style="background: #059669;">🔍 Escanear Vencimientos</button>
-                    </form>
+                <div class="stat-box stat-stock">
+                    <h4>Stock Libre</h4>
+                    <p>{len(free_stock)}</p>
                 </div>
-                <div class="endpoint-box">
-                    <span><strong>URL para Gemini Spark:</strong> <code>https://mcp.juanconnect.online/mcp</code></span>
+                <div class="stat-box stat-fallen">
+                    <h4>Cuentas Caídas</h4>
+                    <p>{len(fallen_accounts)}</p>
+                </div>
+                <div class="stat-box stat-soon">
+                    <h4>Vencen Pronto (3d)</h4>
+                    <p>{len(expiring_soon)}</p>
                 </div>
             </div>
 
             <div class="card">
-                <h3>📅 Servicios Registrados</h3>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Nombre</th>
-                            <th>Categoría</th>
-                            <th>Vence</th>
-                            <th>Estado</th>
-                            <th>Costo</th>
-                            <th>Recurrencia</th>
-                            <th>Acción</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {rows_html}
-                    </tbody>
-                </table>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; gap: 10px;">
+                        <form action="/api/test-telegram" method="POST" style="display: inline;">
+                            <button type="submit" class="btn" style="background:#475569;">📲 Test Telegram</button>
+                        </form>
+                        <form action="/api/check-now" method="POST" style="display: inline;">
+                            <button type="submit" class="btn" style="background:#059669;">🔍 Escanear Vencimientos Ahora</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="endpoint-banner">
+                    <span><strong>Conexión Gemini Spark:</strong> <code>https://mcp.juanconnect.online/mcp</code></span>
+                    <span>Modo CRM Activo</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="tabs">
+                    <button id="btn-tab-active" class="tab-btn active" onclick="showTab('tab-active')">👥 Clientes & Activas ({len(active_accounts)})</button>
+                    <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
+                    <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
+                </div>
+
+                <div id="tab-active" class="tab-content" style="display:block;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Cliente</th>
+                                <th>Contacto</th>
+                                <th>Servicio</th>
+                                <th>Credenciales</th>
+                                <th>Vence</th>
+                                <th>Estado</th>
+                                <th>Precio</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {active_rows}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-stock" class="tab-content" style="display:none;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plataforma</th>
+                                <th>Correo</th>
+                                <th>Contraseña</th>
+                                <th>Costo</th>
+                                <th>Estado</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {stock_rows}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-fallen" class="tab-content" style="display:none;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plataforma</th>
+                                <th>Correo Caído</th>
+                                <th>Cliente</th>
+                                <th>Detalle</th>
+                                <th>Acción Inmediata</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {fallen_rows}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </body>
@@ -595,33 +848,54 @@ async def dashboard(request: Request):
     """
     return html
 
-@app.post("/api/test-telegram")
-async def test_telegram(request: Request):
+# Acciones Rápidas de API para el Dashboard
+@app.post("/api/mark-fallen/{account_id}")
+async def mark_fallen_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
-        raise HTTPException(status_code=401, detail="No autorizado")
-    ok = await send_telegram_message("🔔 <b>Prueba manual exitosa:</b> El bot de alertas está operativo.")
-    return JSONResponse({"ok": ok, "message": "Mensaje enviado" if ok else "Fallo al enviar mensaje"})
+        raise HTTPException(status_code=401)
+    database.mark_account_fallen(str(account_id), reason="Marcada desde el Panel")
+    return RedirectResponse(url="/", status_code=302)
+
+@app.post("/api/auto-replace/{account_id}")
+async def auto_replace_api(account_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = database.replace_fallen_account(str(account_id))
+    if res and res.get("success"):
+        new_a = res["new_account"]
+        msg = f"✅ Reemplazo exitoso para {new_a.get('client_name')}: {new_a['platform']} -> {new_a['email']}"
+        await send_telegram_message(f"🔄 <b>Reemplazo de Cuenta</b>\n\n{msg}")
+    return RedirectResponse(url="/", status_code=302)
+
+@app.post("/api/delete-account/{account_id}")
+async def delete_account_api(account_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.delete_account(account_id)
+    return RedirectResponse(url="/", status_code=302)
+
+@app.post("/api/test-telegram")
+async def test_telegram_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    ok = await send_telegram_message("🔔 <b>Prueba de Telegram exitosa desde el Panel Web de Streaming CRM</b>")
+    return JSONResponse({"ok": ok})
 
 @app.post("/api/check-now")
-async def manual_check(request: Request):
+async def check_now_api(request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
-        raise HTTPException(status_code=401, detail="No autorizado")
+        raise HTTPException(status_code=401)
     sent = await check_and_send_alerts()
     return JSONResponse({"ok": True, "alertas_enviadas": sent})
 
-@app.post("/api/delete-service/{service_id}")
-async def delete_service_api(service_id: int, request: Request):
-    user = verify_session_cookie(request.cookies.get("session_token"))
-    if not user:
-        raise HTTPException(status_code=401, detail="No autorizado")
-    database.delete_service(service_id)
-    return RedirectResponse(url="/", status_code=302)
-
 @app.get("/health")
 async def health():
-    return {"status": "ok", "arm_server": True, "service": "gemini-expiry-mcp"}
+    return {"status": "ok", "service": "streaming-crm-mcp", "version": "2.0.0"}
 
 if __name__ == "__main__":
     import uvicorn

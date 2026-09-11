@@ -1,122 +1,52 @@
-# ⚡ Gemini Spark MCP - Alertas de Vencimiento por Telegram
+# ⚡ Gemini Spark MCP - CRM de Cuentas y Perfiles de Streaming
 
 Servidor **MCP (Model Context Protocol)** con transporte **Streamable HTTP / SSE**, diseñado para integrarse con **Gemini Spark** (`gemini.google.com/spark/apps`) y correr en **Docker (Portainer)** sobre arquitectura **ARM64 (Oracle Cloud Ampere)** o AMD64.
 
-Incluye un **planificador automático en segundo plano** que revisa diariamente tus servicios y te envía alertas a **Telegram 2 días antes** de que venzan (sin necesidad de que abras Gemini para consultar).
+Gestiona tu negocio de venta de cuentas y perfiles de streaming (Netflix, Disney+, Max, Prime, Spotify, YouTube, etc.) directamente en lenguaje natural con Gemini Spark.
 
 ---
 
-## 🚀 Arquitectura y Capacidades
+## 🚀 Capacidades del Sistema
 
-```
-                       ┌─────────────────────────┐
-                       │  Gemini Spark / Web     │
-                       │  (gemini.google.com)    │
-                       └────────────┬────────────┘
-                                    │ Consulta / Registra herramientas
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│  Servidor en Oracle Cloud ARM (Docker / Portainer)                     │
-│                                                                        │
-│   ┌──────────────────────────────────────────────────────────────┐    │
-│   │ FastMCP + FastAPI                                            │    │
-│   │ • Endpoint MCP: https://tu-dominio.com/mcp                   │    │
-│   │ • Dashboard Web: https://tu-dominio.com/                     │    │
-│   └───────────────┬──────────────────────────────▲───────────────┘    │
-│                   │                              │                     │
-│                   ▼                              │                     │
-│   ┌──────────────────────────────┐ ┌─────────────┴───────────────┐    │
-│   │ Base de Datos SQLite         │ │ Tarea Programada (Scheduler)│    │
-│   │ /app/data/services.db        │ │ Revisa todos los días a las │    │
-│   │ (Volumen persistente)        │ │ 09:00 hs (configurable)     │    │
-│   └──────────────────────────────┘ └─────────────┬───────────────┘    │
-└──────────────────────────────────────────────────┼─────────────────────┘
-                                                   │ Alerta 2 días antes
-                                                   ▼
-                                     ┌───────────────────────────┐
-                                     │     Bot de Telegram       │
-                                     │  (Mensaje directo al cel) │
-                                     └───────────────────────────┘
-```
-
----
-
-## 🛠️ Herramientas que expone a Gemini Spark
-
-Cuando chatees con Gemini, tendrá acceso a estas herramientas automáticas:
-* **`agregar_servicio`**: Registra un servicio (*nombre*, *fecha_vencimiento*, *costo*, *recurrencia*, *categoría*, *notas*).
-* **`listar_servicios`**: Muestra la lista de todos los servicios, días restantes y estado (*activo*, *por vencer*, *vencido*).
-* **`proximos_vencimientos`**: Filtra los servicios que vencen en los próximos $N$ días.
-* **`renovar_servicio`**: Actualiza la fecha de corte tras haber realizado el pago.
-* **`eliminar_servicio`**: Elimina un servicio registrado por su ID.
-* **`enviar_alerta_prueba_telegram`**: Envía un mensaje de prueba a tu chat.
-* **`verificar_vencimientos_ahora`**: Dispara manualmente la comprobación y envía las alertas correspondientes.
-
----
-
-## 📋 Paso 1: Crear tu Bot de Telegram (1 minuto)
-
-1. Abre Telegram y busca al usuario oficial **`@BotFather`**.
-2. Envía el comando `/newbot`.
-3. Sigue las instrucciones para darle un nombre y usuario (ej. `JuanVencimientosBot`).
-4. `@BotFather` te entregará el **`BOT_TOKEN`** (algo como `7123456789:AAH...`).
-5. Ahora busca a **`@userinfobot`** en Telegram y dale a *Iniciar*. Te responderá con tu número de **`Id`** (este es tu `TELEGRAM_CHAT_ID`).
-6. **Importante:** Envía un mensaje cualquiera (o dale `/start`) a tu nuevo bot para que tenga permiso de enviarte mensajes.
-
----
-
-## 🐳 Paso 2: Despliegue en Portainer (Oracle ARM)
-
-Como tu servidor Oracle Cloud usa **Portainer** (ej. `portainer.juanconnect.online`):
-
-### Opción A: Desplegar como Stack desde la carpeta del servidor
-1. Sube o clona la carpeta `v1` en tu servidor Oracle:
-   ```bash
-   scp -r v1 usuario@tu-servidor-ip:~/mcp-v1
-   ```
-2. O en Portainer:
-   - Ve a **Stacks** -> **Add stack**.
-   - Nombre: `mcp-vencimientos`.
-   - Pega el contenido de `docker-compose.yml`.
-   - En **Environment variables**, define:
-     - `TELEGRAM_BOT_TOKEN`: El token de BotFather.
-     - `TELEGRAM_CHAT_ID`: Tu ID de Telegram.
-     - `DAYS_BEFORE_ALERT`: `2`
-     - `ALERT_HOUR`: `9`
-     - `TIMEZONE`: `America/Argentina/Buenos_Aires` (o tu zona horaria).
-   - Haz clic en **Deploy the stack**.
-
----
-
-## 🌐 Paso 3: Configurar Dominio y HTTPS
-
-Gemini Spark requiere una URL segura con **HTTPS**:
-
-Si ya usas **Nginx Proxy Manager**, **Traefik** o **Cloudflare Tunnels** con tu dominio `juanconnect.online`:
-1. Crea un subdominio, por ejemplo: `mcp.juanconnect.online`.
-2. Apunta el proxy hacia el contenedor en el puerto `8000`.
-3. Activa el certificado SSL / HTTPS (Let's Encrypt o Cloudflare).
-4. Abre `https://mcp.juanconnect.online` en tu navegador: verás el **Dashboard Web** interactivo con el estado del bot y la tabla de servicios.
-
----
-
-## 🔗 Paso 4: Conectar a Gemini Spark
-
-1. Entra en tu navegador a: **[gemini.google.com/spark/apps](https://gemini.google.com/spark/apps)**.
-2. En la sección **Aplicaciones personalizadas para Spark**, pega la URL completa del endpoint MCP:
-   ```text
-   https://mcp.juanconnect.online/mcp
-   ```
-3. Haz clic en **Siguiente** y confirma los permisos.
+1. **Gestión de Clientes (CRM):**
+   - Registro de clientes con ID único (`CLI-001`), nombre/alias (ej: "Maik"), teléfono de WhatsApp y usuario de Telegram.
+   - Distinción entre **Revendedor** y **Consumidor Final**.
+2. **Stock Libre (Inventario):**
+   - Almacena cuentas y perfiles libres listos para entregar.
+3. **Reporte de Cuentas Caídas:**
+   - Si una suscripción se cae, se marca como caída con el motivo.
+4. **Reemplazo Inteligente Automático:**
+   - Si dices *"Cámbiame este correo caído"*, el sistema detecta la plataforma, busca una cuenta libre de la **misma plataforma** en el stock, se la asigna al cliente conservando su fecha de vencimiento y te entrega las credenciales para enviárselas.
+5. **Alertas a Telegram 2 días antes:**
+   - Te avisa diariamente con los datos de contacto directo (enlace a WhatsApp y Telegram) para que le cobres la renovación con 1 clic.
+6. **Panel Web Protegido con 2FA:**
+   - Visualiza en pestañas: *Clientes y Activas*, *Stock Libre* y *Cuentas Caídas*.
 
 ---
 
 ## 💬 Ejemplos de uso con Gemini Spark
 
-Una vez conectado, puedes hablarle a Gemini de manera totalmente natural:
+* **Vender o asignar un servicio:**
+  > *"Anota una venta para Maik, su WhatsApp es +5491122334455 y su Telegram es @maik_stream, es revendedor. La cuenta es netflix1@correo.com clave 1234, perfil 2, vence el 25 de octubre por $10 USD mensual."*
 
-* *"Anota que el hosting de Oracle vence el 28 de este mes, cuesta $0 y es mensual."*
-* *"Agrega la suscripción a Netflix por $15 USD que vence el 15 de octubre."*
-* *"¿Cuáles son los servicios que vencen en los próximos 7 días?"*
-* *"Mándame un mensaje de prueba a Telegram para ver si está conectado."*
-* *"Ya pagué el dominio de juanconnect, cámbiale el vencimiento al 2027-09-10."*
+* **Buscar cliente y sus servicios:**
+  > *"Búscame a Maik, ¿qué cuentas tiene y cuándo vencen?"*
+
+* **Cargar cuentas libres al stock:**
+  > *"Tengo este Disney+ libre en stock: correo disney_libre@correo.com clave pass123."*
+
+* **Reportar caída:**
+  > *"Se cayó la suscripción de netflix1@correo.com, márcalo como caído."*
+
+* **Reemplazar automáticamente por una cuenta de la misma plataforma:**
+  > *"Cámbiame el correo caído netflix1@correo.com por una libre."*
+  *(Gemini te responderá con las nuevas credenciales de la cuenta de reemplazo).*
+
+* **Consultar stock libre:**
+  > *"¿Cuánto stock libre tengo disponible?"* o *"¿Tengo Disney+ libre?"*
+
+* **Consultar cuentas caídas:**
+  > *"¿Qué cuentas caídas tengo para reclamar?"*
+
+* **Renovar tras recibir el pago:**
+  > *"Maik me pagó la renovación de Netflix, cámbiale la fecha al 2026-11-25."*

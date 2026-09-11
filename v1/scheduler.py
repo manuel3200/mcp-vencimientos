@@ -52,6 +52,12 @@ async def check_and_send_alerts(days_window: int = None, force: bool = False) ->
     except Exception as e:
         logger.error(f"Error verificando alertas de stock en scheduler: {e}")
 
+    # Verificar vencimiento de cuentas madre ante mayoristas
+    try:
+        await check_and_send_supplier_expiry_alerts(days_window=3, force=force)
+    except Exception as e:
+        logger.error(f"Error verificando vencimiento de cuentas madre en scheduler: {e}")
+
     return sent_count
 
 async def check_and_send_stock_alerts(force: bool = False) -> bool:
@@ -63,6 +69,24 @@ async def check_and_send_stock_alerts(force: bool = False) -> bool:
         logger.info("Emitiendo alerta de stock por Telegram...")
         return await format_and_send_stock_alert()
     return False
+
+async def check_and_send_supplier_expiry_alerts(days_window: int = 3, force: bool = False) -> int:
+    """Verifica cuentas madre que vencen ante proveedores mayoristas o con riesgo de corte y notifica a Telegram."""
+    import database
+    from telegram_bot import format_and_send_supplier_alert
+    expiring_masters = database.get_expiring_master_accounts(days_window=days_window)
+    sent_count = 0
+
+    for item in expiring_masters:
+        try:
+            success = await format_and_send_supplier_alert(item)
+            if success:
+                sent_count += 1
+                await asyncio.sleep(0.1)
+        except Exception as e:
+            logger.error(f"Error enviando alerta de cuenta madre para {item.get('email')}: {e}")
+
+    return sent_count
 
 def start_scheduler():
     """Inicia el programador de tareas en segundo plano."""

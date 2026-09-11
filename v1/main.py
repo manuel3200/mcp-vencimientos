@@ -6,7 +6,7 @@ import logging
 import urllib.parse
 from datetime import date, datetime
 from contextlib import asynccontextmanager
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Tuple
 
 from fastapi import FastAPI, Request, Response, Form, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -16,10 +16,12 @@ from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 import pyotp
 
 import database
+import system_logger
+system_logger.setup_system_logging()
+
 from telegram_bot import send_telegram_message, format_and_send_alert, start_telegram_polling, stop_telegram_polling, send_full_backup_to_telegram
 from scheduler import start_scheduler, stop_scheduler, check_and_send_alerts
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("main")
 
 # ==========================================
@@ -1029,6 +1031,169 @@ def configurar_datos_pago(
         f"🎉 Ya están disponibles e integrados en todas las plantillas de WhatsApp mediante la etiqueta {{metodos_pago}}."
     )
 
+@mcp.tool()
+def consultar_logs_sistema(
+    nivel: str = "ALL",
+    modulo: str = "",
+    query: str = "",
+    limite: int = 50
+) -> str:
+    """Consulta los logs y eventos recientes del sistema para diagnóstico y depuración de errores.
+    - nivel: 'ALL', 'ERROR', 'WARNING', 'INFO'.
+    - modulo: Filtrar por módulo (ej: 'main', 'telegram_bot', 'scheduler', 'database').
+    - query: Término de búsqueda de texto o excepción en los logs.
+    - limite: Cantidad máxima de registros a devolver (por defecto 50).
+    """
+    logs = system_logger.get_recent_logs(level=nivel, module=modulo, query=query, limit=limite)
+    if not logs:
+        return "📋 No se encontraron logs que coincidan con los filtros especificados."
+
+    lines = [f"📋 <b>LOGS RECIENTES DEL SISTEMA ({len(logs)} eventos):</b>\n"]
+    for l in logs:
+        ico = "🚨" if l["level"] in ("ERROR", "CRITICAL") else ("⚠️" if l["level"] == "WARNING" else "ℹ️")
+        lines.append(f"{ico} <code>{l['timestamp']}</code> [<b>{l['level']}</b>] [<b>{l['module']}</b>]: {l['message']}")
+        if l.get("traceback"):
+            lines.append(f"<pre>{l['traceback'][:500]}</pre>")
+    return "\n".join(lines)
+
+@mcp.tool()
+def diagnostico_salud_sistema() -> str:
+    """Devuelve un informe integral del estado de salud del sistema (base de datos, bot de Telegram, scheduler y resumen de errores recientes)."""
+    rep = system_logger.get_system_health_report()
+    db = rep["database"]
+    ls = rep["logs_summary"]
+    status_ico = "🟢" if rep["status"] == "OK" else ("🟡" if rep["status"] == "WARNING" else "🔴")
+
+    out = [
+        f"{status_ico} <b>REPORTE DE SALUD DEL SISTEMA ({rep['status']}):</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"⏱️ <b>Tiempo Activo (Uptime):</b> {rep['uptime']}",
+        f"🗄️ <b>Base de Datos:</b> {db['status']} ({db['size']} | {db['total_accounts']} cuentas)",
+        f"🤖 <b>Bot Telegram:</b> {rep['telegram']['status']}",
+        f"⏰ <b>Scheduler Alertas:</b> {rep['scheduler']['status']}",
+        f"📊 <b>Buffer de Eventos:</b> {ls['total_buffered']}",
+        f"⚠️ <b>Advertencias:</b> {ls['warnings_count']} | 🚨 <b>Errores:</b> {ls['errors_count']}",
+        "━━━━━━━━━━━━━━━━━━━━━━"
+    ]
+    if ls.get("last_error"):
+        le = ls["last_error"]
+        out.append(f"🚨 <b>Último Error Registrado ({le['timestamp']}) en [{le['module']}]:</b>\n<code>{le['message']}</code>")
+    else:
+        out.append("✨ <i>Todos los servicios operan con normalidad sin errores recientes.</i>")
+    return "\n".join(out)
+
+@mcp.tool()
+def listar_proveedores() -> str:
+    """Lista todos los proveedores mayoristas registrados, cuentas contratadas y total pagado en ARS."""
+    sups = database.get_suppliers()
+    if not sups:
+        return "🏢 No hay proveedores mayoristas registrados actualmente. Usa 'crear_o_actualizar_proveedor' para dar de alta uno."
+
+    lines = ["🏢 <b>PROVEEDORES MAYORISTAS REGISTRADOS:</b>\n"]
+    for s in sups:
+        lines.append(
+            f"🔹 <b>{s['name']}</b> (ID: <code>{s['id']}</code>)\n"
+            f"  📱 Contacto: {s.get('contact') or 'No registrado'}\n"
+            f"  💳 Datos de Pago: <code>{s.get('payment_info') or 'Sin datos'}</code>\n"
+            f"  📺 Cuentas Madre: <b>{s['master_accounts_count']}</b> ({s['profiles_count']} perfiles)\n"
+            f"  💰 Total Pagado: <b>{s['total_spent_formatted']}</b>\n"
+            f"  📝 Notas: {s.get('notes') or '-'}\n"
+        )
+    return "\n".join(lines)
+
+@mcp.tool()
+def crear_o_actualizar_proveedor(
+    nombre: str,
+    contacto: str = "",
+    info_pago: str = "",
+    notas: str = "",
+    id_proveedor: Optional[int] = None
+) -> str:
+    """Registra o modifica un proveedor mayorista:
+    - nombre: Nombre del proveedor o empresa mayorista (ej: 'Streaming Mayorista ARG').
+    - contacto: Teléfono WhatsApp o usuario de Telegram.
+    - info_pago: CBU, CVU, Alias o Binance USDT para abonarle las cuentas.
+    - notas: Condiciones de garantía, horarios o acuerdos.
+    - id_proveedor: ID si se desea editar uno existente.
+    """
+    res = database.save_supplier(
+        supplier_id=id_proveedor,
+        name=nombre,
+        contact=contacto,
+        payment_info=info_pago,
+        notes=notas
+    )
+    act = "actualizado" if id_proveedor else "creado"
+    return (
+        f"✅ PROVEEDOR {act.upper()} CON ÉXITO:\n"
+        f"• ID: <code>{res['id']}</code>\n"
+        f"• Nombre: <b>{res['name']}</b>\n"
+        f"• Contacto: {res.get('contact') or '-'}\n"
+        f"• Info de Pago: <code>{res.get('payment_info') or '-'}</code>"
+    )
+
+@mcp.tool()
+def consultar_cuentas_madre(solo_con_riesgo: bool = False) -> str:
+    """Monitorea las cuentas madre ante proveedores mayoristas, reportando fecha de vencimiento y detectando si algún cliente vence después que la cuenta (Riesgo de Corte).
+    - solo_con_riesgo: Si es True, filtra únicamente las cuentas con alerta de desfase o próximas a vencer en <= 3 días.
+    """
+    masters = database.get_master_accounts_overview()
+    if not masters:
+        return "📺 No hay cuentas registradas en el sistema."
+
+    if solo_con_riesgo:
+        masters = [m for m in masters if m["risk_mismatch"] or (m["days_remaining_supplier"] is not None and m["days_remaining_supplier"] <= 3)]
+        if not masters:
+            return "✅ ¡Excelente! No hay cuentas madre con riesgo de corte ni próximas a vencer."
+
+    lines = ["🏢 <b>ESTADO DE CUENTAS MADRE ANTE PROVEEDORES:</b>\n"]
+    for m in masters:
+        risk_ico = "⚠️ " if m["risk_mismatch"] else ""
+        lines.append(
+            f"{risk_ico}📺 <b>{m['platform']}</b> - <code>{m['email']}</code>\n"
+            f"  👔 Proveedor: <b>{m['supplier_name']}</b>\n"
+            f"  📅 Vencimiento Mayorista: <code>{m['supplier_expiry_date'] or 'Sin fecha'}</code> ({m['status_label']})\n"
+            f"  👥 Perfiles: {m['profiles_occupied']} ocupados / {m['profiles_total']} totales\n"
+            f"  💵 Costo Mayorista: {m['supplier_cost_formatted']}\n"
+        )
+        if m["risk_mismatch"]:
+            lines.append(f"  🚨 <b>ALERTA:</b> {m['mismatch_warning']}\n")
+    return "\n".join(lines)
+
+@mcp.tool()
+def renovar_cuenta_madre(
+    correo: str,
+    plataforma: str,
+    nueva_fecha_vence: str,
+    costo_ars: float = 0.0,
+    metodo_pago: str = "Transferencia",
+    notas: str = ""
+) -> str:
+    """Renueva una cuenta madre actualizando su fecha de vencimiento ante el proveedor en todos sus perfiles y asentando el costo en las finanzas del negocio.
+    - correo: Email de la cuenta principal.
+    - plataforma: Nombre del servicio (ej: 'Netflix 4K').
+    - nueva_fecha_vence: Nueva fecha de corte con el proveedor (formato YYYY-MM-DD).
+    - costo_ars: Importe pagado al proveedor en Pesos Argentinos (ARS).
+    - metodo_pago: 'Transferencia', 'Mercado Pago', 'Binance USDT', etc.
+    - notas: Detalle adicional o comprobante.
+    """
+    res = database.renew_master_account(
+        email=correo,
+        platform=plataforma,
+        new_supplier_expiry=nueva_fecha_vence,
+        cost=costo_ars,
+        payment_method=metodo_pago,
+        notes=notes
+    )
+    return (
+        f"✅ CUENTA MADRE RENOVADA CON ÉXITO:\n"
+        f"• Plataforma: <b>{res['platform']}</b>\n"
+        f"• Correo: <code>{res['email']}</code>\n"
+        f"• Nuevo Vencimiento Mayorista: <code>{res['new_supplier_expiry']}</code>\n"
+        f"• Costo Registrado: {res['cost_formatted']} ({metodo_pago})\n"
+        f"🎉 Todos los perfiles vinculados quedaron sincronizados y el egreso asentado en el balance financiero."
+    )
+
 
 
 # ==========================================
@@ -1304,6 +1469,10 @@ async def dashboard(request: Request):
     payment_settings = database.get_payment_settings()
     whatsapp_templates = database.get_whatsapp_templates()
     formatted_payment_preview = database.get_formatted_payment_methods()
+    suppliers_list = database.get_suppliers()
+    master_accounts_list = database.get_master_accounts_overview()
+    system_health = system_logger.get_system_health_report()
+    recent_logs = system_logger.get_recent_logs(limit=120)
 
     msg_raw = request.query_params.get("msg", "")
     wa_param = request.query_params.get("wa", "")
@@ -1339,6 +1508,14 @@ async def dashboard(request: Request):
             msg_text = "✅ Plantilla de WhatsApp guardada con éxito."
         elif msg_raw == "template_reset":
             msg_text = "🔄 Plantilla restaurada a los valores predeterminados de fábrica."
+        elif msg_raw == "supplier_saved":
+            msg_text = "✅ Proveedor mayorista guardado correctamente."
+        elif msg_raw == "supplier_deleted":
+            msg_text = "🗑️ Proveedor mayorista eliminado."
+        elif msg_raw == "master_renewed":
+            msg_text = "✅ Cuenta madre renovada con éxito y perfiles sincronizados."
+        elif msg_raw == "logs_cleared":
+            msg_text = "🧹 Buffer de logs en memoria limpiado."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -1630,6 +1807,107 @@ async def dashboard(request: Request):
     if not combos_html:
         combos_html = "<div style='color:#64748b;padding:20px;grid-column:1/-1;'>No hay combos activos configurados aún.</div>"
 
+    # 8. Filas de Proveedores Mayoristas
+    suppliers_table_rows = ""
+    for s in suppliers_list:
+        clean_contact = re.sub(r'[^0-9]', '', s.get("contact") or "")
+        contact_html = "-"
+        if s.get("contact"):
+            if "@" in s["contact"]:
+                tg_user = s["contact"].replace("@", "").strip()
+                contact_html = f'<a href="https://t.me/{tg_user}" target="_blank" style="color:#38bdf8;">@{tg_user}</a>'
+            elif clean_contact:
+                contact_html = f'<a href="https://wa.me/{clean_contact}" target="_blank" style="color:#22c55e;">{s["contact"]}</a>'
+            else:
+                contact_html = s["contact"]
+        
+        safe_name = s['name'].replace("'", "\\'")
+        safe_contact = (s.get('contact') or '').replace("'", "\\'")
+        safe_payment = (s.get('payment_info') or '').replace("'", "\\'")
+        safe_notes = (s.get('notes') or '').replace("'", "\\'")
+
+        suppliers_table_rows += f"""
+        <tr>
+            <td><strong>{s['name']}</strong></td>
+            <td>{contact_html}</td>
+            <td><code>{s.get('payment_info') or '-'}</code></td>
+            <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{s['master_accounts_count']} cuentas ({s['profiles_count']} perfiles)</span></td>
+            <td><strong style="color:#f59e0b;">{s['total_spent_formatted']}</strong></td>
+            <td><small style="color:#94a3b8;">{s.get('notes') or '-'}</small></td>
+            <td>
+                <div style="display:flex;gap:6px;">
+                    <button type="button" class="btn-action" style="color:#38bdf8;" onclick="openSupplierModal('{s['id']}', '{safe_name}', '{safe_contact}', '{safe_payment}', '{safe_notes}')" title="Editar">✏️</button>
+                    <form action="/api/suppliers/delete/{s['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar al proveedor {safe_name}?');">
+                        <button type="submit" class="btn-action" style="color:#ef4444;" title="Eliminar">🗑️</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+    if not suppliers_table_rows:
+        suppliers_table_rows = "<tr><td colspan='7' style='text-align:center;color:#64748b;padding:20px;'>No hay proveedores mayoristas registrados aún.</td></tr>"
+
+    # 9. Filas de Cuentas Madre ante Proveedores
+    master_accounts_table_rows = ""
+    for m in master_accounts_list:
+        sup_days = m.get("days_remaining_supplier")
+        if sup_days is None:
+            s_badge = '<span class="badge badge-warn">Sin Fecha</span>'
+        elif sup_days < 0:
+            s_badge = f'<span class="badge badge-danger">Vencida (-{abs(sup_days)}d)</span>'
+        elif sup_days <= 3:
+            s_badge = f'<span class="badge badge-warn">¡Vence en {sup_days}d!</span>'
+        else:
+            s_badge = f'<span class="badge badge-ok">En {sup_days}d</span>'
+
+        if m["risk_mismatch"]:
+            risk_cell = f'<span class="badge badge-danger">🚨 Desfase de Corte</span><br><small style="color:#f87171;font-size:0.75rem;">{m["mismatch_warning"]}</small>'
+        else:
+            risk_cell = '<span class="badge badge-ok" style="font-size:0.75rem;">✓ Sincronizado</span>'
+
+        safe_email = m['email'].replace("'", "\\'")
+        safe_plat = m['platform'].replace("'", "\\'")
+        cur_expiry = m.get('supplier_expiry_date') or ''
+        cur_cost = m.get('supplier_cost') or 0.0
+
+        master_accounts_table_rows += f"""
+        <tr style="{'background:rgba(239,68,68,0.06);' if m['risk_mismatch'] else ''}">
+            <td><strong>{m['platform']}</strong></td>
+            <td><code>{m['email']}</code></td>
+            <td><span class="badge" style="background:#1e293b;color:#cbd5e1;">{m['supplier_name']}</span></td>
+            <td><code>{cur_expiry or 'No fijada'}</code> {s_badge}</td>
+            <td>{m['profiles_occupied']} / {m['profiles_total']} ({m['occupancy_rate']}%)</td>
+            <td style="color:#f59e0b;font-weight:600;">{m['supplier_cost_formatted']}</td>
+            <td>{risk_cell}</td>
+            <td>
+                <button type="button" onclick="openRenewMasterModal('{safe_email}', '{safe_plat}', '{cur_expiry}', {cur_cost})" class="btn" style="background:#0284c7;padding:5px 10px;font-size:0.8rem;">🔄 Renovar</button>
+            </td>
+        </tr>
+        """
+    if not master_accounts_table_rows:
+        master_accounts_table_rows = "<tr><td colspan='8' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas madre registradas.</td></tr>"
+
+    # 10. Filas del Terminal de Logs
+    initial_logs_html = ""
+    for l in recent_logs:
+        lvl = l.get("level", "INFO").upper()
+        lvl_class = "error" if lvl in ("ERROR", "CRITICAL") else ("warn" if lvl == "WARNING" else "info")
+        tb_str = l.get("traceback") or ""
+        safe_tb = tb_str.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        tb_html = f'<div class="log-tb">{safe_tb}</div>' if safe_tb else ""
+        safe_msg = l.get("message", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        initial_logs_html += f"""
+        <div class="log-row log-{lvl_class}">
+            <span class="log-time">{l['timestamp']}</span>
+            <span class="log-badge log-badge-{lvl_class}">{lvl}</span>
+            <span class="log-mod">[{l['module']}]</span>
+            <span class="log-txt">{safe_msg}</span>
+            {tb_html}
+        </div>
+        """
+    if not initial_logs_html:
+        initial_logs_html = "<div style='color:#64748b;padding:20px;text-align:center;'>No hay logs registrados en memoria.</div>"
+
     html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -1761,8 +2039,219 @@ async def dashboard(request: Request):
                 border-color: #0284c7;
                 color: #ffffff;
             }}
+
+            /* Terminal de Logs & Diagnóstico */
+            .log-terminal {{
+                background: #020617;
+                border: 1px solid #1e293b;
+                border-radius: 10px;
+                padding: 14px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                font-size: 0.82rem;
+                line-height: 1.6;
+                max-height: 520px;
+                overflow-y: auto;
+            }}
+            .log-row {{
+                padding: 4px 8px;
+                border-radius: 4px;
+                margin-bottom: 2px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: baseline;
+                border-left: 3px solid transparent;
+            }}
+            .log-row:hover {{
+                background: rgba(255,255,255,0.03);
+            }}
+            .log-error {{
+                background: rgba(239, 68, 68, 0.12);
+                border-left-color: #ef4444;
+                color: #fca5a5;
+            }}
+            .log-warn {{
+                background: rgba(245, 158, 11, 0.10);
+                border-left-color: #f59e0b;
+                color: #fde68a;
+            }}
+            .log-info {{
+                border-left-color: #38bdf8;
+                color: #cbd5e1;
+            }}
+            .log-time {{
+                color: #64748b;
+                font-size: 0.75rem;
+                min-width: 145px;
+            }}
+            .log-badge {{
+                padding: 1px 6px;
+                border-radius: 4px;
+                font-weight: 700;
+                font-size: 0.7rem;
+                text-transform: uppercase;
+            }}
+            .log-badge-error {{ background: #7f1d1d; color: #fecaca; }}
+            .log-badge-warn {{ background: #78350f; color: #fef08a; }}
+            .log-badge-info {{ background: #0c4a6e; color: #bae6fd; }}
+            .log-mod {{
+                color: #a78bfa;
+                font-weight: 600;
+            }}
+            .log-txt {{
+                flex: 1;
+                word-break: break-word;
+            }}
+            .log-tb {{
+                width: 100%;
+                margin: 4px 0 6px 20px;
+                padding: 8px;
+                background: #000;
+                border: 1px solid #7f1d1d;
+                border-radius: 4px;
+                color: #f87171;
+                font-size: 0.75rem;
+                white-space: pre-wrap;
+            }}
+            .filter-btn {{
+                background: #1e293b;
+                border: 1px solid #334155;
+                color: #94a3b8;
+                padding: 6px 12px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.8rem;
+                font-weight: 600;
+            }}
+            .filter-btn.active {{
+                background: #0284c7;
+                border-color: #0284c7;
+                color: #fff;
+            }}
         </style>
         <script>
+            // Modal Proveedores Mayoristas
+            function openSupplierModal(id, name, contact, payment, notes) {{
+                document.getElementById('sup-modal-id').value = id || '';
+                document.getElementById('sup-modal-name').value = name || '';
+                document.getElementById('sup-modal-contact').value = contact || '';
+                document.getElementById('sup-modal-payment').value = payment || '';
+                document.getElementById('sup-modal-notes').value = notes || '';
+                document.getElementById('sup-modal-title').innerText = id ? '✏️ Editar Proveedor Mayorista' : '➕ Nuevo Proveedor Mayorista';
+                document.getElementById('modal-supplier').style.display = 'flex';
+            }}
+            function closeSupplierModal() {{
+                document.getElementById('modal-supplier').style.display = 'none';
+            }}
+
+            // Modal Renovación de Cuenta Madre
+            function openRenewMasterModal(email, platform, curExpiry, curCost) {{
+                document.getElementById('rm-modal-email').value = email;
+                document.getElementById('rm-modal-plat').value = platform;
+                document.getElementById('rm-display-account').innerText = platform + ' - ' + email;
+                
+                let baseDate = new Date();
+                if (curExpiry) {{
+                    const parsed = new Date(curExpiry + 'T00:00:00');
+                    if (!isNaN(parsed) && parsed > baseDate) baseDate = parsed;
+                }}
+                baseDate.setDate(baseDate.getDate() + 30);
+                const yyyy = baseDate.getFullYear();
+                const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
+                const dd = String(baseDate.getDate()).padStart(2, '0');
+                document.getElementById('rm-modal-expiry').value = yyyy + '-' + mm + '-' + dd;
+                document.getElementById('rm-modal-cost').value = curCost || '';
+                document.getElementById('modal-renew-master').style.display = 'flex';
+            }}
+            function closeRenewMasterModal() {{
+                document.getElementById('modal-renew-master').style.display = 'none';
+            }}
+
+            // Terminal de Logs & Diagnóstico en Vivo
+            let currentLogLevel = 'ALL';
+            let cachedLogs = [];
+
+            async function refreshSystemLogs() {{
+                const term = document.getElementById('logs-terminal');
+                if (!term) return;
+                try {{
+                    const res = await fetch('/api/logs/json');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    cachedLogs = data.logs || [];
+                    renderFilteredLogs();
+                    
+                    if (data.health) {{
+                        const h = data.health;
+                        const statEl = document.getElementById('health-overall-status');
+                        if (statEl) {{
+                            statEl.innerText = h.status;
+                            statEl.className = 'badge ' + (h.status === 'OK' ? 'badge-ok' : (h.status === 'WARNING' ? 'badge-warn' : 'badge-danger'));
+                        }}
+                        const errsEl = document.getElementById('health-errors-count');
+                        if (errsEl) errsEl.innerText = (h.logs_summary ? h.logs_summary.errors_count : 0);
+                        const warnsEl = document.getElementById('health-warns-count');
+                        if (warnsEl) warnsEl.innerText = (h.logs_summary ? h.logs_summary.warnings_count : 0);
+                        const uptimeEl = document.getElementById('health-uptime');
+                        if (uptimeEl) uptimeEl.innerText = 'Uptime: ' + (h.uptime || '-');
+                    }}
+                }} catch (e) {{
+                    console.error('Error cargando logs:', e);
+                }}
+            }}
+
+            function setLogFilterLevel(lvl) {{
+                currentLogLevel = lvl;
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                const b = document.getElementById('filter-btn-' + lvl.toLowerCase());
+                if (b) b.classList.add('active');
+                renderFilteredLogs();
+            }}
+
+            function filterLogsLocally() {{
+                renderFilteredLogs();
+            }}
+
+            function renderFilteredLogs() {{
+                const term = document.getElementById('logs-terminal');
+                const searchQ = (document.getElementById('log-search-input')?.value || '').toLowerCase().trim();
+                if (!term) return;
+
+                if (!cachedLogs || cachedLogs.length === 0) return;
+
+                let filtered = cachedLogs.filter(l => {{
+                    const lvl = (l.level || 'INFO').toUpperCase();
+                    if (currentLogLevel === 'ERROR' && !(lvl === 'ERROR' || lvl === 'CRITICAL')) return false;
+                    if (currentLogLevel === 'WARNING' && lvl !== 'WARNING') return false;
+                    if (currentLogLevel === 'INFO' && lvl !== 'INFO') return false;
+
+                    if (searchQ) {{
+                        const text = (l.message + ' ' + l.module + ' ' + (l.traceback || '')).toLowerCase();
+                        if (!text.includes(searchQ)) return false;
+                    }}
+                    return true;
+                }});
+
+                if (filtered.length === 0) {{
+                    term.innerHTML = '<div style="color:#64748b;padding:20px;text-align:center;">No hay registros que coincidan con el filtro actual.</div>';
+                    return;
+                }}
+
+                let html = '';
+                filtered.forEach(l => {{
+                    const lvl = (l.level || 'INFO').toUpperCase();
+                    const lvlClass = (lvl === 'ERROR' || lvl === 'CRITICAL') ? 'error' : (lvl === 'WARNING' ? 'warn' : 'info');
+                    const tbHtml = l.traceback ? '<div class="log-tb">' + l.traceback.replace(/</g, '&lt;') + '</div>' : '';
+                    html += '<div class="log-row log-' + lvlClass + '">' +
+                        '<span class="log-time">' + l.timestamp + '</span> ' +
+                        '<span class="log-badge log-badge-' + lvlClass + '">' + lvl + '</span> ' +
+                        '<span class="log-mod">[' + l.module + ']</span> ' +
+                        '<span class="log-txt">' + (l.message || '').replace(/</g, '&lt;') + '</span>' +
+                        tbHtml +
+                    '</div>';
+                }});
+                term.innerHTML = html;
+            }}
             function showTab(tabId) {{
                 document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
                 document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
@@ -2105,12 +2594,14 @@ async def dashboard(request: Request):
                 <div class="tabs">
                     <button id="btn-tab-active" class="tab-btn active" onclick="showTab('tab-active')">👥 Clientes & Activas ({len(active_accounts)})</button>
                     <button id="btn-tab-screens" class="tab-btn" onclick="showTab('tab-screens')">📺 Pantallas ({len(screens_overview)})</button>
+                    <button id="btn-tab-suppliers" class="tab-btn" onclick="showTab('tab-suppliers')">🏢 Proveedores & Cuentas ({len(suppliers_list)}/{len(master_accounts_list)})</button>
                     <button id="btn-tab-catalog" class="tab-btn" onclick="showTab('tab-catalog')">🏷️ Precios & Combos ({len(catalog_items)}/{len(combos_list)})</button>
                     <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({len(transactions)})</button>
                     <button id="btn-tab-templates" class="tab-btn" onclick="showTab('tab-templates')">💬 Plantillas WhatsApp</button>
                     <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
                     <button id="btn-tab-backup" class="tab-btn" onclick="showTab('tab-backup')">📁 Excel & Backups</button>
+                    <button id="btn-tab-logs" class="tab-btn" onclick="showTab('tab-logs'); refreshSystemLogs();">📋 Logs & Diagnóstico</button>
                 </div>
 
                 <div id="tab-active" class="tab-content" style="display:block;">
@@ -2518,6 +3009,143 @@ async def dashboard(request: Request):
                         </div>
                     </div>
                 </div>
+
+                <div id="tab-suppliers" class="tab-content" style="display:none;">
+                    <!-- 1. Cuentas Madre ante Proveedores Mayoristas -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; margin-bottom:24px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <h3 style="margin:0; color:#38bdf8; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+                                    📺 Cuentas Madre & Vencimientos Mayoristas
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Monitoreo centralizado para prevenir cortes masivos: compara el vencimiento con tu proveedor vs el vencimiento de tus clientes.
+                                </p>
+                            </div>
+                            <div>
+                                <span class="badge badge-ok" style="font-size:0.8rem;">{len(master_accounts_list)} Cuentas Madre</span>
+                            </div>
+                        </div>
+
+                        <div style="overflow-x:auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Plataforma</th>
+                                        <th>Correo Cuenta Madre</th>
+                                        <th>Proveedor</th>
+                                        <th>Vence Proveedor</th>
+                                        <th>Perfiles Asignados</th>
+                                        <th>Costo Mayorista</th>
+                                        <th>Riesgo Desfase</th>
+                                        <th>Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {master_accounts_table_rows}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 2. Directorio de Proveedores Mayoristas -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <h3 style="margin:0; color:#38bdf8; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+                                    🏢 Directorio de Proveedores Mayoristas
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Gestiona contactos directos, medios de pago (Alias / CBU / USDT) y gastos acumulados con cada mayorista.
+                                </p>
+                            </div>
+                            <button type="button" onclick="openSupplierModal()" class="btn" style="background:#059669; font-weight:bold;">
+                                ➕ Registrar Proveedor Mayorista
+                            </button>
+                        </div>
+
+                        <div style="overflow-x:auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Proveedor</th>
+                                        <th>Contacto</th>
+                                        <th>Datos de Pago</th>
+                                        <th>Cuentas / Perfiles</th>
+                                        <th>Total Abonado</th>
+                                        <th>Notas / Garantía</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {suppliers_table_rows}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-logs" class="tab-content" style="display:none;">
+                    <!-- Tarjetas de Diagnóstico y Salud -->
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-bottom:20px;">
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Estado General</small>
+                            <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+                                <span id="health-overall-status" class="badge {'badge-ok' if system_health['status'] == 'OK' else ('badge-warn' if system_health['status'] == 'WARNING' else 'badge-danger')}" style="font-size:0.95rem; padding:4px 10px;">
+                                    {system_health['status']}
+                                </span>
+                            </div>
+                            <small id="health-uptime" style="color:#64748b; margin-top:4px; display:block;">Uptime: {system_health['uptime']}</small>
+                        </div>
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Base de Datos SQLite</small>
+                            <div style="margin-top:6px; font-size:1.1rem; font-weight:700; color:#38bdf8;">
+                                {system_health['database']['total_accounts']} cuentas
+                            </div>
+                            <small style="color:#64748b; margin-top:4px; display:block;">{system_health['database']['size']} | {system_health['database']['status']}</small>
+                        </div>
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Bot de Telegram</small>
+                            <div style="margin-top:6px; font-size:1.1rem; font-weight:700; color:#10b981;">
+                                {system_health['telegram']['status']}
+                            </div>
+                            <small style="color:#64748b; margin-top:4px; display:block;">Polling interactivo activo</small>
+                        </div>
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Errores / Advertencias</small>
+                            <div style="margin-top:6px; font-size:1.1rem; font-weight:700; color:{'#ef4444' if system_health['logs_summary']['errors_count'] > 0 else '#10b981'};">
+                                <span id="health-errors-count">{system_health['logs_summary']['errors_count']}</span> err / <span id="health-warns-count">{system_health['logs_summary']['warnings_count']}</span> warn
+                            </div>
+                            <small style="color:#64748b; margin-top:4px; display:block;">{system_health['logs_summary']['total_buffered']} eventos en buffer</small>
+                        </div>
+                    </div>
+
+                    <!-- Barra de Controles del Terminal de Logs -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:18px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:12px;">
+                            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                                <span style="font-size:0.8rem; color:#94a3b8; font-weight:600; margin-right:4px;">Nivel:</span>
+                                <button type="button" id="filter-btn-all" class="filter-btn active" onclick="setLogFilterLevel('ALL')">TODOS</button>
+                                <button type="button" id="filter-btn-error" class="filter-btn" onclick="setLogFilterLevel('ERROR')">🚨 ERRORES</button>
+                                <button type="button" id="filter-btn-warning" class="filter-btn" onclick="setLogFilterLevel('WARNING')">⚠️ ADVERTENCIAS</button>
+                                <button type="button" id="filter-btn-info" class="filter-btn" onclick="setLogFilterLevel('INFO')">ℹ️ INFO</button>
+                            </div>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <input type="text" id="log-search-input" onkeyup="filterLogsLocally()" placeholder="🔍 Buscar texto o excepción..." style="background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem; min-width:200px;">
+                                <button type="button" onclick="refreshSystemLogs()" class="btn" style="background:#1e293b; border:1px solid #334155; padding:6px 12px; font-size:0.8rem;">🔄 Actualizar</button>
+                                <a href="/api/logs/download" class="btn" style="background:#0284c7; padding:6px 12px; font-size:0.8rem; text-decoration:none;">📥 Descargar TXT</a>
+                                <form action="/api/logs/clear" method="POST" style="display:inline;" onsubmit="return confirm('¿Limpiar buffer de eventos en memoria? El archivo en disco se mantendrá.');">
+                                    <button type="submit" class="btn" style="background:#7f1d1d; padding:6px 12px; font-size:0.8rem;">🧹 Limpiar</button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Terminal Negro Interactivo -->
+                        <div id="logs-terminal" class="log-terminal">
+                            {initial_logs_html}
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2648,6 +3276,82 @@ async def dashboard(request: Request):
                 <div style="display:flex;justify-content:flex-end;margin-top:16px;border-top:1px solid #334155;padding-top:12px;">
                     <button type="button" onclick="closeClient360Modal()" class="btn" style="background:#475569;padding:8px 16px;">Cerrar Ficha</button>
                 </div>
+            </div>
+        </div>
+
+        <!-- Modal: Registrar / Editar Proveedor Mayorista -->
+        <div id="modal-supplier" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:12px;padding:24px;width:90%;max-width:500px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #334155;padding-bottom:10px;">
+                    <h3 id="sup-modal-title" style="margin:0;color:#38bdf8;font-size:1.15rem;">🏢 Proveedor Mayorista</h3>
+                    <button type="button" onclick="closeSupplierModal()" style="background:none;border:none;color:#94a3b8;font-size:1.3rem;cursor:pointer;">✕</button>
+                </div>
+                <form action="/api/suppliers/save" method="POST">
+                    <input type="hidden" id="sup-modal-id" name="supplier_id" value="">
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Nombre del Proveedor *</label>
+                        <input type="text" id="sup-modal-name" name="name" required placeholder="Ej: Streaming Mayorista ARG" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Contacto (WhatsApp o @Telegram)</label>
+                        <input type="text" id="sup-modal-contact" name="contact" placeholder="+54911... o @proveedor_streaming" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Datos de Pago (CBU / Alias / USDT)</label>
+                        <input type="text" id="sup-modal-payment" name="payment_info" placeholder="Alias MP, CVU o Binance Pay" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Condiciones / Notas de Garantía</label>
+                        <textarea id="sup-modal-notes" name="notes" rows="3" placeholder="Garantía de 30 días, horario de reposición 9 a 21hs..." style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;resize:vertical;"></textarea>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;">
+                        <button type="button" onclick="closeSupplierModal()" class="btn" style="background:#475569;">Cancelar</button>
+                        <button type="submit" class="btn" style="background:#059669;font-weight:bold;">💾 Guardar Proveedor</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal: Renovar Cuenta Madre ante Proveedor -->
+        <div id="modal-renew-master" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:12px;padding:24px;width:90%;max-width:480px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #334155;padding-bottom:10px;">
+                    <h3 style="margin:0;color:#38bdf8;font-size:1.15rem;">🔄 Renovar Cuenta Madre</h3>
+                    <button type="button" onclick="closeRenewMasterModal()" style="background:none;border:none;color:#94a3b8;font-size:1.3rem;cursor:pointer;">✕</button>
+                </div>
+                <form action="/api/master-accounts/renew" method="POST">
+                    <input type="hidden" id="rm-modal-email" name="email" value="">
+                    <input type="hidden" id="rm-modal-plat" name="platform" value="">
+                    <div style="margin-bottom:14px;background:#0f172a;padding:10px 14px;border-radius:8px;border:1px solid #334155;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Cuenta a Renovar:</span>
+                        <strong id="rm-display-account" style="color:#f8fafc;font-size:0.95rem;">-</strong>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Nueva Fecha de Vencimiento Mayorista *</label>
+                        <input type="date" id="rm-modal-expiry" name="new_supplier_expiry" required style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Costo Pagado al Proveedor ($ ARS)</label>
+                        <input type="number" step="any" id="rm-modal-cost" name="cost" placeholder="3200" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Método de Pago Empleado</label>
+                        <select name="payment_method" style="width:100%;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                            <option value="Transferencia Bancaria">Transferencia Bancaria / CBU</option>
+                            <option value="Mercado Pago">Mercado Pago</option>
+                            <option value="Binance USDT">Binance / USDT</option>
+                            <option value="Efectivo">Efectivo</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Notas o Comprobante</label>
+                        <input type="text" name="notes" placeholder="Ej: Comprobante MP #827391" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;">
+                        <button type="button" onclick="closeRenewMasterModal()" class="btn" style="background:#475569;">Cancelar</button>
+                        <button type="submit" class="btn" style="background:#0284c7;font-weight:bold;">⚡ Confirmar Renovación</button>
+                    </div>
+                </form>
             </div>
         </div>
     </body>
@@ -3051,9 +3755,95 @@ async def trigger_backup_api(request: Request):
     msg = urllib.parse.quote("📲 Copia de seguridad enviada exitosamente a tu Telegram.")
     return RedirectResponse(url=f"/?msg={msg}", status_code=303)
 
+# API Proveedores y Cuentas Madre (Paso 4)
+@app.post("/api/suppliers/save")
+async def api_save_supplier(
+    request: Request,
+    name: str = Form(...),
+    contact: str = Form(""),
+    payment_info: str = Form(""),
+    notes: str = Form(""),
+    supplier_id: Optional[str] = Form(None)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    
+    sid = int(supplier_id) if supplier_id and supplier_id.strip() else None
+    database.save_supplier(
+        supplier_id=sid,
+        name=name.strip(),
+        contact=contact.strip(),
+        payment_info=payment_info.strip(),
+        notes=notes.strip()
+    )
+    return RedirectResponse(url="/?msg=supplier_saved#tab-suppliers", status_code=303)
+
+@app.post("/api/suppliers/delete/{supplier_id}")
+async def api_delete_supplier(supplier_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.delete_supplier(supplier_id)
+    return RedirectResponse(url="/?msg=supplier_deleted#tab-suppliers", status_code=303)
+
+@app.post("/api/master-accounts/renew")
+async def api_renew_master(
+    request: Request,
+    email: str = Form(...),
+    platform: str = Form(...),
+    new_supplier_expiry: str = Form(...),
+    cost: float = Form(0.0),
+    payment_method: str = Form("Transferencia"),
+    notes: str = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.renew_master_account(
+        email=email.strip(),
+        platform=platform.strip(),
+        new_supplier_expiry=new_supplier_expiry.strip(),
+        cost=cost,
+        payment_method=payment_method.strip(),
+        notes=notes.strip()
+    )
+    return RedirectResponse(url="/?msg=master_renewed#tab-suppliers", status_code=303)
+
+# API Logs y Diagnóstico del Sistema
+@app.get("/api/logs/json")
+async def api_get_logs_json(request: Request, level: str = "ALL", query: str = ""):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    logs = system_logger.get_recent_logs(level=level, query=query, limit=120)
+    health = system_logger.get_system_health_report()
+    return {"logs": logs, "health": health}
+
+@app.get("/api/logs/download")
+async def api_download_logs(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    content = system_logger.get_raw_log_file(max_lines=3000)
+    today_str = datetime.now().strftime("%Y%m%d_%H%M")
+    return Response(
+        content=content.encode("utf-8", errors="replace"),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=system_logs_{today_str}.txt"}
+    )
+
+@app.post("/api/logs/clear")
+async def api_clear_logs(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    system_logger.clear_memory_logs()
+    return RedirectResponse(url="/?msg=logs_cleared#tab-logs", status_code=303)
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.7.0"}
+    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "3.1.0"}
 
 if __name__ == "__main__":
     import uvicorn

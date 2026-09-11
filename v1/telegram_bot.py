@@ -186,15 +186,16 @@ def get_main_menu_keyboard() -> Dict[str, Any]:
                 {"text": "📺 Pantallas", "callback_data": "menu_screens"}
             ],
             [
-                {"text": "📦 Stock & Alertas", "callback_data": "menu_stock"},
-                {"text": "🚨 Cuentas Caídas", "callback_data": "menu_fallen"}
+                {"text": "🏢 Proveedores & Cuentas", "callback_data": "menu_master_accounts"},
+                {"text": "📦 Stock & Alertas", "callback_data": "menu_stock"}
             ],
             [
                 {"text": "💳 Datos de Cobro & CBU", "callback_data": "menu_datos_pago"},
-                {"text": "🔍 Escanear Ahora", "callback_data": "menu_scan"}
+                {"text": "🚨 Cuentas Caídas", "callback_data": "menu_fallen"}
             ],
             [
-                {"text": "💾 Descargar Backup CSV", "callback_data": "menu_backup"}
+                {"text": "📋 Diagnóstico & Logs", "callback_data": "menu_logs"},
+                {"text": "💾 Backup CSV", "callback_data": "menu_backup"}
             ]
         ]
     }
@@ -430,6 +431,54 @@ async def format_and_send_stock_alert(chat_id: str = "") -> bool:
     }
     return await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
 
+async def format_and_send_supplier_alert(item: Dict[str, Any], chat_id: str = "") -> bool:
+    """Envía una alerta prioritaria de vencimiento de cuenta madre ante el proveedor mayorista."""
+    plat = item.get("platform", "")
+    email = item.get("email", "")
+    days = item.get("days_remaining_supplier")
+    sup_name = item.get("supplier_name") or "Sin asignar"
+    sup_contact = item.get("supplier_contact") or ""
+    sup_exp = item.get("supplier_expiry_date") or "-"
+    risk = item.get("risk_mismatch", False)
+    occ = item.get("profiles_occupied", 0)
+    tot = item.get("profiles_total", 0)
+
+    lines = [
+        "🏢 <b>ALERTA DE CUENTA MADRE (PROVEEDOR)</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"📺 <b>Servicio:</b> {plat}",
+        f"📧 <b>Cuenta Principal:</b> <code>{email}</code>",
+        f"👔 <b>Proveedor:</b> {sup_name}",
+        f"📅 <b>Vencimiento Mayorista:</b> <code>{sup_exp}</code>"
+    ]
+
+    if days is not None:
+        if days < 0:
+            lines.append(f"🚨 <b>ESTADO: ¡VENCIDA HACE {abs(days)} DÍAS!</b>")
+        elif days == 0:
+            lines.append("🚨 <b>ESTADO: ¡VENCE HOY ANTE EL PROVEEDOR!</b>")
+        else:
+            lines.append(f"⏳ <b>ESTADO: Vence en {days} días</b>")
+
+    lines.append(f"👥 <b>Perfiles Asignados:</b> {occ} de {tot} activos")
+
+    if risk:
+        lines.append(
+            f"\n⚠️ <b>¡RIESGO DE CORTE INMINENTE!</b>\n"
+            f"Hay clientes con perfiles que vencen después de la cuenta madre (hasta {item.get('client_max_expiry')}). "
+            f"Renueva la cuenta con tu proveedor para que tus clientes no sufran cortes."
+        )
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+
+    kb_buttons = []
+    clean_sup_phone = re.sub(r'[^0-9]', '', sup_contact)
+    if clean_sup_phone:
+        kb_buttons.append([{"text": f"💬 Contactar a {sup_name} (WhatsApp)", "url": f"https://wa.me/{clean_sup_phone}"}])
+    kb_buttons.append([{"text": "🔙 Menú Principal", "callback_data": "menu_main"}])
+
+    return await send_telegram_message("\n".join(lines), reply_markup={"inline_keyboard": kb_buttons}, chat_id=chat_id)
+
 # ==========================================
 # Despachadores de Mensajes y Callbacks
 # ==========================================
@@ -565,6 +614,75 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         )
         await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
 
+    elif cmd in ("/logs", "logs", "/diagnostico", "diagnostico", "/salud", "salud"):
+        import system_logger
+        rep = system_logger.get_system_health_report()
+        db = rep["database"]
+        ls = rep["logs_summary"]
+        status_emoji = "🟢" if rep["status"] == "OK" else ("🟡" if rep["status"] == "WARNING" else "🔴")
+        lines = [
+            f"{status_emoji} <b>DIAGNÓSTICO DEL SISTEMA ({rep['status']}):</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"⏱️ <b>Uptime:</b> {rep['uptime']}",
+            f"🗄️ <b>Base de Datos:</b> {db['status']} ({db['size']} | {db['total_accounts']} cuentas)",
+            f"🤖 <b>Telegram Polling:</b> {rep['telegram']['status']}",
+            f"⏰ <b>Scheduler:</b> {rep['scheduler']['status']}",
+            f"📊 <b>Buffer de Logs:</b> {ls['total_buffered']} eventos",
+            f"⚠️ <b>Advertencias:</b> {ls['warnings_count']} | 🚨 <b>Errores:</b> {ls['errors_count']}",
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        ]
+        if ls.get("last_error"):
+            le = ls["last_error"]
+            lines.append(f"🚨 <b>Último Error ({le['timestamp']}) en [{le['module']}]:</b>")
+            lines.append(f"<code>{le['message'][:300]}</code>")
+        else:
+            lines.append("✨ <i>¡Sin errores recientes registrados en el sistema!</i>")
+
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔄 Actualizar Diagnóstico", "callback_data": "menu_logs"}],
+                [{"text": "🔙 Menú Principal", "callback_data": "menu_main"}]
+            ]
+        }
+        await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+
+    elif cmd in ("/proveedores", "proveedores", "/mayoristas", "mayoristas"):
+        sups = database.get_suppliers()
+        if not sups:
+            await send_telegram_message("🏢 No hay proveedores mayoristas registrados aún. Puedes agregarlos desde el panel web.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["🏢 <b>PROVEEDORES MAYORISTAS REGISTRADOS:</b>\n"]
+            for s in sups:
+                c = f" | 📱 {s['contact']}" if s.get("contact") else ""
+                lines.append(
+                    f"🔹 <b>{s['name']}</b>{c}\n"
+                    f"  Cuentas Madre: <b>{s['master_accounts_count']}</b> ({s['profiles_count']} perfiles)\n"
+                    f"  Total Pagado: <b>{s['total_spent_formatted']}</b>\n"
+                    f"  Datos de Pago: <code>{s.get('payment_info') or 'Sin datos'}</code>\n"
+                )
+            lines.append("<i>Gestiona altas y pagos desde la pestaña 'Proveedores' del Panel Web.</i>")
+            await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif cmd in ("/cuentas_madre", "cuentas_madre", "/vencimientos_madre", "vencimientos_madre"):
+        masters = database.get_master_accounts_overview()
+        if not masters:
+            await send_telegram_message("📺 No hay cuentas registradas en el sistema.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["🏢 <b>MONITOR DE CUENTAS MADRE & PROVEEDORES:</b>\n"]
+            for m in masters[:10]:
+                risk_ico = "⚠️ " if m["risk_mismatch"] else ""
+                lines.append(
+                    f"{risk_ico}📺 <b>{m['platform']}</b> - <code>{m['email']}</code>\n"
+                    f"  Proveedor: <b>{m['supplier_name']}</b>\n"
+                    f"  Vence Proveedor: <code>{m['supplier_expiry_date'] or 'Sin fecha'}</code> ({m['status_label']})\n"
+                    f"  Perfiles: {m['profiles_occupied']} ocupados / {m['profiles_total']} tot\n"
+                )
+                if m["risk_mismatch"]:
+                    lines.append(f"  🔴 <i>{m['mismatch_warning']}</i>\n")
+            if len(masters) > 10:
+                lines.append(f"<i>... y {len(masters) - 10} más en el Panel Web.</i>")
+            await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
 async def handle_telegram_callback(query: Dict[str, Any]):
     """Procesa pulsaciones de botones inline."""
     _, authorized_chat = get_telegram_config()
@@ -698,6 +816,87 @@ async def handle_telegram_callback(query: Dict[str, Any]):
             ]
         }
         await send_telegram_message(txt, reply_markup=kb, chat_id=chat_id)
+
+    elif data == "menu_logs":
+        await answer_callback_query(query_id)
+        import system_logger
+        rep = system_logger.get_system_health_report()
+        db = rep["database"]
+        ls = rep["logs_summary"]
+        status_emoji = "🟢" if rep["status"] == "OK" else ("🟡" if rep["status"] == "WARNING" else "🔴")
+        lines = [
+            f"{status_emoji} <b>DIAGNÓSTICO DEL SISTEMA ({rep['status']}):</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"⏱️ <b>Uptime:</b> {rep['uptime']}",
+            f"🗄️ <b>Base de Datos:</b> {db['status']} ({db['size']} | {db['total_accounts']} cuentas)",
+            f"🤖 <b>Telegram Polling:</b> {rep['telegram']['status']}",
+            f"⏰ <b>Scheduler:</b> {rep['scheduler']['status']}",
+            f"📊 <b>Buffer de Logs:</b> {ls['total_buffered']} eventos",
+            f"⚠️ <b>Advertencias:</b> {ls['warnings_count']} | 🚨 <b>Errores:</b> {ls['errors_count']}",
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        ]
+        if ls.get("last_error"):
+            le = ls["last_error"]
+            lines.append(f"🚨 <b>Último Error ({le['timestamp']}) en [{le['module']}]:</b>")
+            lines.append(f"<code>{le['message'][:300]}</code>")
+        else:
+            lines.append("✨ <i>¡Sin errores recientes registrados en el sistema!</i>")
+
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔄 Actualizar Diagnóstico", "callback_data": "menu_logs"}],
+                [{"text": "🔙 Menú Principal", "callback_data": "menu_main"}]
+            ]
+        }
+        await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+
+    elif data == "menu_master_accounts":
+        await answer_callback_query(query_id)
+        masters = database.get_master_accounts_overview()
+        if not masters:
+            await send_telegram_message("📺 No hay cuentas registradas en el sistema.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["🏢 <b>MONITOR DE CUENTAS MADRE & PROVEEDORES:</b>\n"]
+            for m in masters[:8]:
+                risk_ico = "⚠️ " if m["risk_mismatch"] else ""
+                lines.append(
+                    f"{risk_ico}📺 <b>{m['platform']}</b> - <code>{m['email']}</code>\n"
+                    f"  Proveedor: <b>{m['supplier_name']}</b>\n"
+                    f"  Vence Proveedor: <code>{m['supplier_expiry_date'] or 'Sin fecha'}</code> ({m['status_label']})\n"
+                    f"  Perfiles: {m['profiles_occupied']} ocupados / {m['profiles_total']} tot\n"
+                )
+                if m["risk_mismatch"]:
+                    lines.append(f"  🔴 <i>{m['mismatch_warning']}</i>\n")
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "🏢 Ver Proveedores", "callback_data": "menu_suppliers"}],
+                    [{"text": "🔙 Menú Principal", "callback_data": "menu_main"}]
+                ]
+            }
+            await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+
+    elif data == "menu_suppliers":
+        await answer_callback_query(query_id)
+        sups = database.get_suppliers()
+        if not sups:
+            await send_telegram_message("🏢 No hay proveedores mayoristas registrados aún.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["🏢 <b>PROVEEDORES MAYORISTAS REGISTRADOS:</b>\n"]
+            for s in sups:
+                c = f" | 📱 {s['contact']}" if s.get("contact") else ""
+                lines.append(
+                    f"🔹 <b>{s['name']}</b>{c}\n"
+                    f"  Cuentas Madre: <b>{s['master_accounts_count']}</b> ({s['profiles_count']} perfiles)\n"
+                    f"  Total Pagado: <b>{s['total_spent_formatted']}</b>\n"
+                    f"  Datos de Pago: <code>{s.get('payment_info') or 'Sin datos'}</code>\n"
+                )
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "📺 Ver Cuentas Madre", "callback_data": "menu_master_accounts"}],
+                    [{"text": "🔙 Menú Principal", "callback_data": "menu_main"}]
+                ]
+            }
+            await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
 
     elif data == "menu_stock":
         await answer_callback_query(query_id)

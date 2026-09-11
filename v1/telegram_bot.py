@@ -103,6 +103,72 @@ async def answer_callback_query(callback_query_id: str, text: str = "", show_ale
         logger.error(f"Error al responder callback query: {e}")
         return False
 
+async def send_telegram_document(
+    filename: str,
+    content: bytes,
+    caption: str = "",
+    chat_id: str = ""
+) -> bool:
+    """Envía un archivo adjunto descargable (CSV, Excel, etc.) al chat administrativo de Telegram."""
+    token, default_chat = get_telegram_config()
+    target_chat = chat_id if chat_id else default_chat
+    if not token or not target_chat:
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    data = {
+        "chat_id": target_chat,
+        "caption": caption,
+        "parse_mode": "HTML"
+    }
+    files = {
+        "document": (filename, content, "text/csv")
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            res = await client.post(url, data=data, files=files)
+            data_resp = res.json()
+            return bool(res.status_code == 200 and data_resp.get("ok"))
+    except Exception as e:
+        logger.error(f"Error al enviar documento por Telegram: {e}")
+        return False
+
+async def send_full_backup_to_telegram(chat_id: str = "") -> bool:
+    """Genera y envía los reportes CSV de cuentas activas, stock y balance financiero a Telegram."""
+    date_str = date.today().strftime("%Y%m%d")
+    await send_telegram_message("📦 <b>Generando copia de seguridad de tu CRM en Excel/CSV...</b>", chat_id=chat_id)
+
+    # 1. Cuentas Activas
+    csv_active = database.export_active_accounts_csv().encode("utf-8-sig")
+    await send_telegram_document(
+        filename=f"crm_cuentas_activas_{date_str}.csv",
+        content=csv_active,
+        caption="📋 <b>Cuentas y Clientes Activos (Excel/CSV)</b>",
+        chat_id=chat_id
+    )
+
+    # 2. Stock Libre
+    csv_stock = database.export_free_stock_csv().encode("utf-8-sig")
+    await send_telegram_document(
+        filename=f"crm_stock_libre_{date_str}.csv",
+        content=csv_stock,
+        caption="📦 <b>Inventario de Stock Libre (Excel/CSV)</b>",
+        chat_id=chat_id
+    )
+
+    # 3. Transacciones y Finanzas
+    csv_tx = database.export_transactions_csv().encode("utf-8-sig")
+    await send_telegram_document(
+        filename=f"crm_balance_transacciones_{date_str}.csv",
+        content=csv_tx,
+        caption="💵 <b>Historial Financiero y Ganancias (Excel/CSV)</b>",
+        chat_id=chat_id
+    )
+
+    await send_telegram_message("✅ <b>Copia de seguridad enviada con éxito.</b> Archivos listos para abrir en Microsoft Excel.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+    return True
+
 def get_main_menu_keyboard() -> Dict[str, Any]:
     """Teclado inline del menú principal."""
     return {
@@ -118,6 +184,9 @@ def get_main_menu_keyboard() -> Dict[str, Any]:
             [
                 {"text": "🚨 Cuentas Caídas", "callback_data": "menu_fallen"},
                 {"text": "🔍 Escanear Ahora", "callback_data": "menu_scan"}
+            ],
+            [
+                {"text": "💾 Descargar Backup CSV", "callback_data": "menu_backup"}
             ]
         ]
     }
@@ -310,6 +379,9 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         else:
             await send_telegram_message("No hay cuentas activas registradas para enviar alerta.", chat_id=chat_id)
 
+    elif cmd in ("/backup", "backup", "/exportar", "exportar"):
+        await send_full_backup_to_telegram(chat_id=chat_id)
+
 async def handle_telegram_callback(query: Dict[str, Any]):
     """Procesa pulsaciones de botones inline."""
     _, authorized_chat = get_telegram_config()
@@ -455,6 +527,10 @@ async def handle_telegram_callback(query: Dict[str, Any]):
                 reply_markup=get_main_menu_keyboard(),
                 chat_id=chat_id
             )
+
+    elif data == "menu_backup":
+        await answer_callback_query(query_id, "Generando copia de seguridad...", show_alert=False)
+        await send_full_backup_to_telegram(chat_id=chat_id)
 
     # 2. Acciones de Cuenta (Cobro y Caída)
     elif data.startswith("pay_"):

@@ -3,10 +3,12 @@ import re
 import json
 import secrets
 import logging
+import urllib.parse
+from datetime import date, datetime
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any, Union
 
-from fastapi import FastAPI, Request, Response, Form, HTTPException
+from fastapi import FastAPI, Request, Response, Form, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
@@ -14,7 +16,7 @@ from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 import pyotp
 
 import database
-from telegram_bot import send_telegram_message, format_and_send_alert, start_telegram_polling, stop_telegram_polling
+from telegram_bot import send_telegram_message, format_and_send_alert, start_telegram_polling, stop_telegram_polling, send_full_backup_to_telegram
 from scheduler import start_scheduler, stop_scheduler, check_and_send_alerts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -682,6 +684,45 @@ async def verificar_vencimientos_ahora(dias_anticipacion: int = 7) -> str:
     enviadas = await check_and_send_alerts(days_window=dias_anticipacion, force=True)
     return f"Comprobación manual completada. Se enviaron {enviadas} alerta(s) de vencimiento interactivas por Telegram."
 
+@mcp.tool()
+def exportar_resumen_csv(tipo: str = "activas") -> str:
+    """Genera y retorna una planilla en formato CSV para Excel. tipo puede ser: 'activas', 'stock', o 'transacciones'."""
+    clean_type = tipo.strip().lower()
+    if "stock" in clean_type:
+        return database.export_free_stock_csv()
+    elif "trans" in clean_type or "pago" in clean_type or "balance" in clean_type:
+        return database.export_transactions_csv()
+    else:
+        return database.export_active_accounts_csv()
+
+@mcp.tool()
+def importar_stock_desde_csv(contenido_csv: str) -> str:
+    """Carga masivamente cuentas y perfiles libres a partir de un texto o contenido CSV/Excel (separado por comas, puntos y comas o tabulaciones)."""
+    res = database.import_free_stock_csv(contenido_csv)
+    if not res.get("success"):
+        return f"❌ Error en la importación: {res.get('error')}"
+    err_msg = f" (Errores en {len(res['errors'])} líneas: {', '.join(res['errors'][:3])})" if res.get("errors") else ""
+    return f"✅ Importación completada: {res['imported']} cuentas agregadas al stock libre, {res['skipped']} omitidas{err_msg}."
+
+@mcp.tool()
+def importar_ventas_desde_csv(contenido_csv: str) -> str:
+    """Importa masivamente clientes y ventas activas con sus vencimientos desde un archivo o texto CSV/Excel."""
+    res = database.import_sales_csv(contenido_csv)
+    if not res.get("success"):
+        return f"❌ Error en la importación: {res.get('error')}"
+    err_msg = f" (Errores en {len(res['errors'])} líneas: {', '.join(res['errors'][:3])})" if res.get("errors") else ""
+    return f"✅ Importación de ventas completada: {res['imported']} suscripciones y clientes asignados con éxito, {res['skipped']} omitidas{err_msg}."
+
+@mcp.tool()
+async def enviar_backup_telegram() -> str:
+    """Genera y envía automáticamente copias de seguridad en formato Excel/CSV (cuentas activas, stock y balance) como archivos descargables al bot de Telegram."""
+    from telegram_bot import send_full_backup_to_telegram
+    ok = await send_full_backup_to_telegram()
+    if ok:
+        return "✅ Copia de seguridad en Excel/CSV generada y enviada a tu chat de Telegram."
+    return "❌ Error al generar o enviar la copia de seguridad por Telegram."
+
+
 
 # ==========================================
 # 2. Servidor Web FastAPI & Lifespan
@@ -949,6 +990,16 @@ async def dashboard(request: Request):
     fallen_accounts = database.get_fallen_accounts()
     finance = database.get_financial_balance()
     transactions = database.get_recent_transactions(limit=15)
+
+    msg_raw = request.query_params.get("msg", "")
+    msg_banner = ""
+    if msg_raw:
+        msg_banner = f"""
+        <div style="background:#065f46; border:1px solid #10b981; color:#d1fae5; padding:12px 18px; border-radius:8px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+            <span>{msg_raw}</span>
+            <a href="/" style="color:#a7f3d0; text-decoration:none; font-weight:bold; cursor:pointer;">✕</a>
+        </div>
+        """
 
     # 1. Filas de Cuentas Activas con botón de Cobrar
     active_rows = ""
@@ -1255,6 +1306,8 @@ async def dashboard(request: Request):
                 </div>
             </div>
 
+            {msg_banner}
+
             <!-- Dashboard de Finanzas y Balance -->
             <div class="finance-grid">
                 <div class="fin-box box-income">
@@ -1306,6 +1359,7 @@ async def dashboard(request: Request):
                     <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({len(transactions)})</button>
                     <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
+                    <button id="btn-tab-backup" class="tab-btn" onclick="showTab('tab-backup')">📁 Excel & Backups</button>
                 </div>
 
                 <div id="tab-active" class="tab-content" style="display:block;">
@@ -1396,6 +1450,78 @@ async def dashboard(request: Request):
                             {fallen_rows}
                         </tbody>
                     </table>
+                </div>
+
+                <div id="tab-backup" class="tab-content" style="display:none;">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        <!-- Card 1: Descargas Excel/CSV -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; display:flex; flex-direction:column; justify-content:space-between;">
+                            <div>
+                                <h3 style="margin:0 0 10px 0; color:#38bdf8; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+                                    📥 Exportar a Excel (CSV)
+                                </h3>
+                                <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:16px;">
+                                    Descarga tus reportes en formato universal compatible con Excel y Google Sheets (codificación UTF-8 con BOM):
+                                </p>
+                                <div style="display:flex; flex-direction:column; gap:10px;">
+                                    <a href="/api/export/active.csv" class="btn" style="background:#15803d; text-align:center; padding:10px; font-weight:600;" download>
+                                        📊 Descargar Clientes & Cuentas Activas
+                                    </a>
+                                    <a href="/api/export/stock.csv" class="btn" style="background:#0284c7; text-align:center; padding:10px; font-weight:600;" download>
+                                        📦 Descargar Inventario de Stock Libre
+                                    </a>
+                                    <a href="/api/export/transactions.csv" class="btn" style="background:#4338ca; text-align:center; padding:10px; font-weight:600;" download>
+                                        💵 Descargar Balance y Cobros
+                                    </a>
+                                </div>
+                            </div>
+                            <form action="/api/trigger-backup" method="POST" style="margin-top:16px; border-top:1px solid #1e293b; padding-top:14px;">
+                                <button type="submit" class="btn" style="width:100%; background:#7c3aed; padding:10px; font-weight:600;" title="Enviar los 3 archivos CSV directo a tu Telegram">
+                                    📲 Enviar Copia de Seguridad a Telegram
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Card 2: Carga Masiva de Stock -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <h3 style="margin:0; color:#10b981; font-size:1.1rem;">📦 Importar Stock Libre</h3>
+                                <a href="/api/export/template-stock.csv" style="font-size:0.75rem; color:#38bdf8; text-decoration:none;" download>📥 Plantilla Ejemplo</a>
+                            </div>
+                            <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:12px;">
+                                Carga cuentas y perfiles libres subiendo un archivo <code>.csv</code> o pegando filas de Excel:
+                            </p>
+                            <form action="/api/import/stock" method="POST" enctype="multipart/form-data">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">Archivo CSV:</label>
+                                <input type="file" name="file" accept=".csv,.txt" style="display:block; width:100%; font-size:0.8rem; margin-bottom:12px; color:#cbd5e1;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">O pegar texto directo:</label>
+                                <textarea name="csv_text" placeholder="Plataforma, Correo, Clave, Perfil, PIN, Costo..." style="width:100%; height:75px; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px; font-size:0.8rem; box-sizing:border-box; margin-bottom:12px;"></textarea>
+                                <button type="submit" class="btn" style="width:100%; background:#059669; padding:10px; font-weight:600;">
+                                    🚀 Procesar Carga de Stock
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Card 3: Migración de Ventas / Clientes -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <h3 style="margin:0; color:#f59e0b; font-size:1.1rem;">👥 Importar Clientes & Ventas</h3>
+                                <a href="/api/export/template-sales.csv" style="font-size:0.75rem; color:#38bdf8; text-decoration:none;" download>📥 Plantilla Ejemplo</a>
+                            </div>
+                            <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:12px;">
+                                Migra tu cartera con nombres, WhatsApp, vencimientos y precios asignados:
+                            </p>
+                            <form action="/api/import/sales" method="POST" enctype="multipart/form-data">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">Archivo CSV:</label>
+                                <input type="file" name="file" accept=".csv,.txt" style="display:block; width:100%; font-size:0.8rem; margin-bottom:12px; color:#cbd5e1;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">O pegar texto directo:</label>
+                                <textarea name="csv_text" placeholder="Cliente, WhatsApp, Tipo, Plataforma, Correo, Vencimiento, Precio..." style="width:100%; height:75px; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px; font-size:0.8rem; box-sizing:border-box; margin-bottom:12px;"></textarea>
+                                <button type="submit" class="btn" style="width:100%; background:#d97706; padding:10px; font-weight:600;">
+                                    🚀 Procesar Migración de Ventas
+                                </button>
+                            </form>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1502,9 +1628,133 @@ async def set_stock_threshold_api(request: Request):
         database.set_platform_min_stock(platform, min_stock)
     return RedirectResponse(url="/", status_code=303)
 
+# ==========================================
+# Endpoints de Exportación e Importación (Excel / CSV)
+# ==========================================
+@app.get("/api/export/active.csv")
+async def export_active_csv(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    content = database.export_active_accounts_csv()
+    filename = f"crm_cuentas_activas_{date.today().strftime('%Y%m%d')}.csv"
+    return Response(
+        content=content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@app.get("/api/export/stock.csv")
+async def export_stock_csv(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    content = database.export_free_stock_csv()
+    filename = f"crm_stock_libre_{date.today().strftime('%Y%m%d')}.csv"
+    return Response(
+        content=content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@app.get("/api/export/transactions.csv")
+async def export_transactions_csv_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    content = database.export_transactions_csv()
+    filename = f"crm_balance_transacciones_{date.today().strftime('%Y%m%d')}.csv"
+    return Response(
+        content=content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@app.get("/api/export/template-stock.csv")
+async def export_template_stock(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    content = database.get_csv_template_stock()
+    return Response(
+        content=content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=plantilla_stock_modelo.csv"}
+    )
+
+@app.get("/api/export/template-sales.csv")
+async def export_template_sales(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    content = database.get_csv_template_sales()
+    return Response(
+        content=content.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=plantilla_ventas_modelo.csv"}
+    )
+
+@app.post("/api/import/stock")
+async def import_stock_api(request: Request, file: Optional[UploadFile] = None, csv_text: Optional[str] = Form("")):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    
+    content = ""
+    if file and file.filename:
+        file_bytes = await file.read()
+        content = file_bytes.decode("utf-8", errors="ignore")
+    elif csv_text and csv_text.strip():
+        content = csv_text.strip()
+    
+    if not content:
+        msg = urllib.parse.quote("⚠️ No se proporcionó ningún archivo ni texto CSV.")
+        return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+    
+    res = database.import_free_stock_csv(content)
+    if res.get("success"):
+        msg = urllib.parse.quote(f"✅ Se importaron con éxito {res['imported']} cuenta(s) al stock libre ({res['skipped']} omitidas).")
+    else:
+        msg = urllib.parse.quote(f"❌ Error al importar: {res.get('error')}")
+    return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+
+@app.post("/api/import/sales")
+async def import_sales_api(request: Request, file: Optional[UploadFile] = None, csv_text: Optional[str] = Form("")):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    
+    content = ""
+    if file and file.filename:
+        file_bytes = await file.read()
+        content = file_bytes.decode("utf-8", errors="ignore")
+    elif csv_text and csv_text.strip():
+        content = csv_text.strip()
+    
+    if not content:
+        msg = urllib.parse.quote("⚠️ No se proporcionó ningún archivo ni texto CSV.")
+        return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+    
+    res = database.import_sales_csv(content)
+    if res.get("success"):
+        msg = urllib.parse.quote(f"✅ Se migraron con éxito {res['imported']} venta(s) y cliente(s) ({res['skipped']} omitidas).")
+    else:
+        msg = urllib.parse.quote(f"❌ Error al importar: {res.get('error')}")
+    return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+
+@app.post("/api/trigger-backup")
+async def trigger_backup_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    from telegram_bot import send_full_backup_to_telegram
+    await send_full_backup_to_telegram()
+    msg = urllib.parse.quote("📲 Copia de seguridad enviada exitosamente a tu Telegram.")
+    return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.6.0"}
+    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.7.0"}
 
 if __name__ == "__main__":
     import uvicorn

@@ -14,7 +14,7 @@ from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 import pyotp
 
 import database
-from telegram_bot import send_telegram_message, format_and_send_alert
+from telegram_bot import send_telegram_message, format_and_send_alert, start_telegram_polling, stop_telegram_polling
 from scheduler import start_scheduler, stop_scheduler, check_and_send_alerts
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -644,9 +644,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"Usuario administrador '{admin_user}' sincronizado con éxito.")
 
     start_scheduler()
-    logger.info("Aplicación y tareas programadas iniciadas.")
+    start_telegram_polling()
+    logger.info("Aplicación, tareas programadas y Telegram Polling interactivo iniciados.")
     async with mcp_app.lifespan(app):
         yield
+    stop_telegram_polling()
     stop_scheduler()
     logger.info("Aplicación detenida.")
 
@@ -1364,7 +1366,7 @@ async def check_now_api(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-screens", "version": "2.4.0"}
+    return {"status": "ok", "service": "streaming-crm-interactive-bot", "version": "2.5.0"}
 
 if __name__ == "__main__":
     import uvicorn

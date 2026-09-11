@@ -1,45 +1,137 @@
 import os
 import re
 import httpx
+import asyncio
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
+
+import database
 
 logger = logging.getLogger("telegram_bot")
+
+_polling_task: Optional[asyncio.Task] = None
+_polling_active: bool = False
 
 def get_telegram_config():
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     return token, chat_id
 
-async def send_telegram_message(text: str, parse_mode: str = "HTML") -> bool:
-    """Envía un mensaje a través del bot de Telegram configurado."""
-    token, chat_id = get_telegram_config()
+async def send_telegram_message(
+    text: str,
+    parse_mode: str = "HTML",
+    reply_markup: Optional[Dict[str, Any]] = None,
+    chat_id: Optional[str] = None
+) -> bool:
+    """Envía un mensaje con soporte para botones inline (reply_markup)."""
+    token, default_chat_id = get_telegram_config()
+    target_chat = chat_id or default_chat_id
     
-    if not token or not chat_id:
+    if not token or not target_chat:
         logger.warning("Telegram Bot Token o Chat ID no configurados.")
         return False
         
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
+    payload: Dict[str, Any] = {
+        "chat_id": target_chat,
         "text": text,
         "parse_mode": parse_mode,
         "disable_web_page_preview": True
     }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
     
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(url, json=payload)
             data = response.json()
             if response.status_code == 200 and data.get("ok"):
-                logger.info(f"Mensaje de Telegram enviado con éxito a {chat_id}")
                 return True
             else:
-                logger.error(f"Error de Telegram API: {data.get('description', response.text)}")
+                logger.error(f"Error de Telegram API (sendMessage): {data.get('description', response.text)}")
                 return False
     except Exception as e:
         logger.error(f"Excepción al enviar mensaje de Telegram: {e}")
         return False
+
+async def edit_telegram_message(
+    chat_id: str,
+    message_id: int,
+    text: str,
+    parse_mode: str = "HTML",
+    reply_markup: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Edita el texto y botones de un mensaje existente en Telegram."""
+    token, _ = get_telegram_config()
+    if not token:
+        return False
+    url = f"https://api.telegram.org/bot{token}/editMessageText"
+    payload: Dict[str, Any] = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": parse_mode,
+        "disable_web_page_preview": True
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(url, json=payload)
+            data = res.json()
+            return bool(res.status_code == 200 and data.get("ok"))
+    except Exception as e:
+        logger.error(f"Error al editar mensaje de Telegram: {e}")
+        return False
+
+async def answer_callback_query(callback_query_id: str, text: str = "", show_alert: bool = False) -> bool:
+    """Responde a un callback de botón en Telegram para cerrar el estado de carga o mostrar popup."""
+    token, _ = get_telegram_config()
+    if not token:
+        return False
+    url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+    payload = {
+        "callback_query_id": callback_query_id,
+        "text": text,
+        "show_alert": show_alert
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            res = await client.post(url, json=payload)
+            return res.status_code == 200
+    except Exception as e:
+        logger.error(f"Error al responder callback query: {e}")
+        return False
+
+def get_main_menu_keyboard() -> Dict[str, Any]:
+    """Teclado inline del menú principal."""
+    return {
+        "inline_keyboard": [
+            [
+                {"text": "📊 Balance Financiero", "callback_data": "menu_balance"},
+                {"text": "⏳ Por Cobrar (7d)", "callback_data": "menu_cobros"}
+            ],
+            [
+                {"text": "📦 Stock Libre", "callback_data": "menu_stock"},
+                {"text": "📺 Pantallas", "callback_data": "menu_screens"}
+            ],
+            [
+                {"text": "🚨 Cuentas Caídas", "callback_data": "menu_fallen"},
+                {"text": "🔍 Escanear Ahora", "callback_data": "menu_scan"}
+            ]
+        ]
+    }
+
+def get_alert_keyboard(account_id: int, wa_url: str = "") -> Dict[str, Any]:
+    """Botones para las alertas de vencimiento."""
+    kb = []
+    if wa_url:
+        kb.append([{"text": "💬 Cobrar por WhatsApp (1 Clic)", "url": wa_url}])
+    kb.append([
+        {"text": "💵 Pagó (Renovar 30d)", "callback_data": f"pay_{account_id}"},
+        {"text": "🚨 Marcar Caída", "callback_data": f"fall_{account_id}"}
+    ])
+    return {"inline_keyboard": kb}
 
 async def format_and_send_alert(account: Dict[str, Any]) -> bool:
     """Formatea una alerta de vencimiento para cuentas de streaming con datos del cliente."""
@@ -105,7 +197,289 @@ async def format_and_send_alert(account: Dict[str, Any]) -> bool:
         logger.error(f"Error generando link de WhatsApp en alerta: {e}")
 
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("<i>🔔 Toca el enlace para abrir WhatsApp con el mensaje ya redactado.</i>")
+    lines.append("<i>👇 Gestiona esta suscripción con los botones:</i>")
     
     message_text = "\n".join(lines)
-    return await send_telegram_message(message_text)
+    reply_markup = get_alert_keyboard(account["id"], wa_url)
+    return await send_telegram_message(message_text, reply_markup=reply_markup)
+
+# ==========================================
+# Despachadores de Mensajes y Callbacks
+# ==========================================
+async def handle_telegram_message(msg: Dict[str, Any]):
+    """Procesa mensajes entrantes y comandos del chat administrativo."""
+    _, authorized_chat = get_telegram_config()
+    chat_id = str(msg.get("chat", {}).get("id", ""))
+    
+    # Filtro de seguridad
+    if authorized_chat and chat_id != authorized_chat:
+        logger.warning(f"Mensaje ignorado de usuario no autorizado ID: {chat_id}")
+        return
+
+    text = (msg.get("text") or "").strip()
+    cmd = text.lower()
+
+    if cmd in ("/start", "/menu", "/ayuda", "menu"):
+        menu_text = (
+            "🤖 <b>Streaming CRM - Panel de Control Telegram</b>\n\n"
+            "Bienvenido al panel rápido. Selecciona una acción para gestionar tu negocio:"
+        )
+        await send_telegram_message(menu_text, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif cmd in ("/balance", "balance"):
+        b = database.get_financial_balance()
+        txt = (
+            f"📊 <b>BALANCE FINANCIERO ({b['period']}):</b>\n\n"
+            f"💰 <b>Ingresos Cobrados:</b> ${b['collected_income']:.2f} USD ({b['transactions_count']} cobros)\n"
+            f"📉 <b>Costo Proveedores:</b> ${b['collected_costs']:.2f} USD\n"
+            f"💵 <b>GANANCIA NETA:</b> +${b['collected_profit']:.2f} USD\n\n"
+            f"⏳ <b>Por Cobrar (7d):</b> ${b['pending_receivables_7d']:.2f} USD ({b['pending_accounts_count']} cuentas)\n"
+            f"🎯 <b>Proyección Mensual:</b> +${b['projected_monthly_profit']:.2f} USD\n"
+            f"📱 Total Suscripciones Activas: {b['active_subscriptions_total']}"
+        )
+        await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif cmd in ("/stock", "stock"):
+        stock = database.get_free_stock()
+        if not stock:
+            txt = "📦 <b>Stock Libre:</b> No tienes cuentas libres en stock actualmente."
+        else:
+            lines = [f"📦 <b>STOCK LIBRE ({len(stock)} disponibles):</b>\n"]
+            for s in stock[:15]:
+                perf = f" ({s['profile_name']})" if s.get('profile_name') else ""
+                lines.append(f"• <b>{s['platform']}</b>{perf}: <code>{s['email']}</code>")
+            if len(stock) > 15:
+                lines.append(f"\n<i>... y {len(stock) - 15} más en el panel web.</i>")
+            txt = "\n".join(lines)
+        await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif cmd in ("/escanear", "/scan"):
+        from scheduler import check_and_send_alerts
+        sent = await check_and_send_alerts()
+        await send_telegram_message(f"🔍 Escaneo completado. Se enviaron {sent} alerta(s).", chat_id=chat_id)
+
+async def handle_telegram_callback(query: Dict[str, Any]):
+    """Procesa pulsaciones de botones inline."""
+    _, authorized_chat = get_telegram_config()
+    query_id = query.get("id")
+    chat_id = str(query.get("message", {}).get("chat", {}).get("id", ""))
+    data = query.get("data", "")
+
+    if authorized_chat and chat_id != authorized_chat:
+        await answer_callback_query(query_id, "No autorizado", show_alert=True)
+        return
+
+    # 1. Menú Principal
+    if data == "menu_balance":
+        await answer_callback_query(query_id)
+        b = database.get_financial_balance()
+        txt = (
+            f"📊 <b>BALANCE FINANCIERO ({b['period']}):</b>\n\n"
+            f"💰 <b>Ingresos Cobrados:</b> ${b['collected_income']:.2f} USD\n"
+            f"📉 <b>Costo Proveedores:</b> ${b['collected_costs']:.2f} USD\n"
+            f"💵 <b>GANANCIA NETA:</b> +${b['collected_profit']:.2f} USD\n\n"
+            f"⏳ <b>Por Cobrar (7d):</b> ${b['pending_receivables_7d']:.2f} USD ({b['pending_accounts_count']} cuentas)\n"
+            f"🎯 <b>Proyección Mensual:</b> +${b['projected_monthly_profit']:.2f} USD"
+        )
+        await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data == "menu_cobros":
+        await answer_callback_query(query_id)
+        b = database.get_financial_balance()
+        pending = b.get("pending_accounts", [])
+        if not pending:
+            await send_telegram_message("🎉 ¡Al día! No hay cuentas por cobrar en los próximos 7 días.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = [f"⏳ <b>CUENTAS POR COBRAR ({len(pending)}):</b>\n"]
+            for p in pending[:8]:
+                d_str = "HOY" if p['days_remaining'] == 0 else f"en {p['days_remaining']}d"
+                lines.append(f"• <b>{p['client']}</b> - {p['platform']}: <b>${p['price']:.2f} USD</b> ({d_str})")
+            txt = "\n".join(lines)
+            await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data == "menu_stock":
+        await answer_callback_query(query_id)
+        stock = database.get_free_stock()
+        if not stock:
+            await send_telegram_message("📦 No hay cuentas libres en stock actualmente.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = [f"📦 <b>STOCK DISPONIBLE ({len(stock)} cuentas libres):</b>\n"]
+            for s in stock[:10]:
+                perf = f" ({s['profile_name']})" if s.get('profile_name') else ""
+                lines.append(f"• <b>{s['platform']}</b>{perf}: <code>{s['email']}</code>")
+            txt = "\n".join(lines)
+            await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data == "menu_screens":
+        await answer_callback_query(query_id)
+        screens = database.get_shared_screens_overview()
+        if not screens:
+            await send_telegram_message("📺 No hay cuentas registradas con pantallas múltiples.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = [f"📺 <b>PANTALLAS COMPARTIDAS ({len(screens)} Cuentas Madre):</b>\n"]
+            for s in screens[:5]:
+                lines.append(f"• <b>{s['platform']}</b>: <code>{s['email']}</code>\n  Ocupación: {s['occupied_count']}/{s['total_profiles']} ({s['free_count']} libres)")
+            txt = "\n".join(lines)
+            await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data == "menu_fallen":
+        await answer_callback_query(query_id)
+        fallen = database.get_fallen_accounts()
+        if not fallen:
+            await send_telegram_message("🎉 ¡Excelente! No hay cuentas caídas reportadas.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            for f in fallen[:3]:
+                f_id = f["id"]
+                c_name = f.get("client_name") or "Sin cliente"
+                msg = (
+                    f"🚨 <b>Cuenta Caída Pendiente:</b>\n"
+                    f"• {f['platform']}: <code>{f['email']}</code>\n"
+                    f"• Cliente: {c_name}\n"
+                    f"• Detalle: {f.get('notes') or '-'}"
+                )
+                kb = {"inline_keyboard": [[{"text": "🔄 Reemplazar Automáticamente", "callback_data": f"repl_{f_id}"}]]}
+                await send_telegram_message(msg, reply_markup=kb, chat_id=chat_id)
+
+    elif data == "menu_scan":
+        await answer_callback_query(query_id, "Iniciando escaneo...", show_alert=False)
+        from scheduler import check_and_send_alerts
+        sent = await check_and_send_alerts()
+        await send_telegram_message(f"🔍 Escaneo completado. Se enviaron {sent} alerta(s).", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    # 2. Acciones de Cuenta (Cobro y Caída)
+    elif data.startswith("pay_"):
+        acc_id = data.split("_")[1]
+        res = database.register_customer_payment(email_or_id=acc_id, payment_method="Telegram Bot")
+        if res.get("success"):
+            await answer_callback_query(query_id, f"✅ ¡Cobro registrado! Vence el {res['new_expiry']}", show_alert=True)
+            wa_data = database.generate_whatsapp_message(acc_id, message_type="entrega")
+            wa_link = wa_data.get("wa_link", "")
+            kb = None
+            if wa_link:
+                kb = {"inline_keyboard": [[{"text": "📲 Enviar Recibo por WhatsApp", "url": wa_link}]]}
+            await send_telegram_message(
+                f"💵 <b>¡Cobro Registrado y Renovado con Éxito!</b>\n\n"
+                f"• Cliente: <b>{res['client_name']}</b>\n"
+                f"• Servicio: {res['platform']} ({res['email']})\n"
+                f"• Cobrado: +${res['amount']:.2f} USD\n"
+                f"• Ganancia Neta: +${res['profit']:.2f} USD\n"
+                f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (30 días extendidos)",
+                reply_markup=kb,
+                chat_id=chat_id
+            )
+        else:
+            await answer_callback_query(query_id, f"Error: {res.get('error')}", show_alert=True)
+
+    elif data.startswith("fall_"):
+        acc_id = data.split("_")[1]
+        acc = database.mark_account_fallen(acc_id, reason="Reportada desde botón de Telegram")
+        if acc:
+            await answer_callback_query(query_id, "Cuenta marcada como caída.", show_alert=True)
+            kb = {"inline_keyboard": [[{"text": "🔄 Reemplazar por una libre de inmediato", "callback_data": f"repl_{acc_id}"}]]}
+            await send_telegram_message(
+                f"🚨 <b>Cuenta marcada como CAÍDA:</b>\n"
+                f"• {acc['platform']}: <code>{acc['email']}</code>\n"
+                f"• Cliente: {acc.get('client_name') or 'Cliente'}\n\n"
+                f"¿Deseas buscar un reemplazo libre y asignárselo ahora?",
+                reply_markup=kb,
+                chat_id=chat_id
+            )
+        else:
+            await answer_callback_query(query_id, "No se encontró la cuenta", show_alert=True)
+
+    elif data.startswith("repl_"):
+        acc_id = data.split("_")[1]
+        res = database.replace_fallen_account(acc_id)
+        if res and res.get("success"):
+            new_a = res["new_account"]
+            client_name = new_a.get("client_name") or "Cliente"
+            wa_data = database.generate_whatsapp_message(new_a, message_type="reemplazo")
+            wa_url = wa_data.get("wa_link", "")
+            await answer_callback_query(query_id, "¡Reemplazo exitoso realizado!", show_alert=True)
+            kb = None
+            if wa_url:
+                kb = {"inline_keyboard": [[{"text": "📲 Enviar Nueva Cuenta por WhatsApp", "url": wa_url}]]}
+            await send_telegram_message(
+                f"🎉 <b>REEMPLAZO REALIZADO CON ÉXITO:</b>\n\n"
+                f"👤 <b>Cliente:</b> {client_name}\n"
+                f"📺 <b>Plataforma:</b> {new_a['platform']}\n"
+                f"✨ <b>NUEVAS CREDENCIALES:</b>\n"
+                f"• Correo: <code>{new_a['email']}</code>\n"
+                f"• Clave: <code>{new_a['password']}</code>" + (f"\n• Perfil: {new_a['profile_name']}" if new_a.get('profile_name') else "") + (f" [PIN: {new_a['profile_pin']}]" if new_a.get('profile_pin') else "") + "\n"
+                f"📅 Mantiene vencimiento: <code>{new_a['expiry_date']}</code>",
+                reply_markup=kb,
+                chat_id=chat_id
+            )
+        else:
+            await answer_callback_query(query_id, "No hay stock libre disponible para esa plataforma.", show_alert=True)
+
+# ==========================================
+# Motor de Long Polling Asíncrono
+# ==========================================
+async def telegram_polling_loop():
+    """Bucle de recepción de eventos en tiempo real mediante long polling."""
+    global _polling_active
+    token, chat_id = get_telegram_config()
+    if not token:
+        logger.warning("Telegram Bot Token no configurado. Polling desactivado.")
+        return
+
+    logger.info("Iniciando Telegram Long Polling interactivo...")
+    
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            await client.post(f"https://api.telegram.org/bot{token}/deleteWebhook", json={"drop_pending_updates": False})
+    except Exception as e:
+        logger.warning(f"Error al limpiar webhook previo: {e}")
+
+    offset = 0
+    _polling_active = True
+
+    while _polling_active:
+        try:
+            url = f"https://api.telegram.org/bot{token}/getUpdates"
+            payload = {
+                "offset": offset,
+                "timeout": 15,
+                "allowed_updates": ["message", "callback_query"]
+            }
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                res = await client.post(url, json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    if data.get("ok"):
+                        updates = data.get("result", [])
+                        for u in updates:
+                            offset = u["update_id"] + 1
+                            if "message" in u:
+                                asyncio.create_task(handle_telegram_message(u["message"]))
+                            elif "callback_query" in u:
+                                asyncio.create_task(handle_telegram_callback(u["callback_query"]))
+                elif res.status_code == 409:
+                    logger.warning("Conflicto de Telegram (otra instancia activa). Reintentando en 5s...")
+                    await asyncio.sleep(5)
+                else:
+                    await asyncio.sleep(2)
+        except httpx.TimeoutException:
+            continue
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error en telegram polling loop: {e}")
+            await asyncio.sleep(3)
+
+def start_telegram_polling():
+    """Inicia el long polling en segundo plano."""
+    global _polling_task, _polling_active
+    if _polling_task is None or _polling_task.done():
+        _polling_active = True
+        _polling_task = asyncio.create_task(telegram_polling_loop())
+        logger.info("Tarea de Telegram Polling iniciada.")
+
+def stop_telegram_polling():
+    """Detiene el long polling."""
+    global _polling_task, _polling_active
+    _polling_active = False
+    if _polling_task and not _polling_task.done():
+        _polling_task.cancel()
+        logger.info("Tarea de Telegram Polling cancelada.")

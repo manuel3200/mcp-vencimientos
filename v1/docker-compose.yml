@@ -6,24 +6,18 @@ services:
     container_name: gemini-mcp-vencimientos
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      # Puerto 8002 en tu servidor (host) mapeado al 8000 del contenedor
+      - "8002:8000"
     environment:
-      # Token del bot creado con @BotFather en Telegram
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
-      # Tu ID numérico de Telegram
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
-      # Días de anticipación para la alerta (por defecto 2 días antes)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
       - DAYS_BEFORE_ALERT=${DAYS_BEFORE_ALERT:-2}
-      # Hora del día para ejecutar la revisión automática (0 a 23 hs)
       - ALERT_HOUR=${ALERT_HOUR:-9}
       - ALERT_MINUTE=${ALERT_MINUTE:-0}
-      # Zona horaria
       - TIMEZONE=${TIMEZONE:-America/Argentina/Buenos_Aires}
-      # Configuración interna
       - DATA_DIR=/app/data
       - PORT=8000
     volumes:
-      # Volumen persistente para la base de datos SQLite (no se borra al reiniciar)
       - mcp_data:/app/data
 
 volumes:

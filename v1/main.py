@@ -138,12 +138,51 @@ def consultar_cuentas_por_cobrar(dias_anticipacion: int = 7) -> str:
     ]
     for p in pending:
         d_txt = "HOY" if p['days_remaining'] == 0 else (f"en {p['days_remaining']}d" if p['days_remaining'] > 0 else f"VENCIDA hace {abs(p['days_remaining'])}d")
+        wa_data = database.generate_whatsapp_message(p['email'], message_type="cobro")
+        wa_url = wa_data.get('wa_link', '')
+        wa_line = f"\n  📲 Link WhatsApp (1 Clic): {wa_url}" if wa_url else ""
         lines.append(
             f"• <b>{p['client']}</b> - {p['platform']} ({p['email']})\n"
             f"  A cobrar: <b>${p['price']:.2f} USD</b> | Vence: {d_txt}\n"
             f"  Contacto: WhatsApp: {p.get('whatsapp') or '-'} | Telegram: {p.get('telegram') or '-'}"
+            f"{wa_line}"
         )
     return "\n".join(lines)
+
+@mcp.tool()
+def generar_mensaje_whatsapp(
+    correo_o_id: str,
+    tipo_mensaje: str = "entrega",
+    metodos_pago: str = ""
+) -> str:
+    """Genera plantillas profesionales y enlaces directos de 1 clic para WhatsApp (wa.me):
+    - correo_o_id: Correo o ID de la cuenta/cliente.
+    - tipo_mensaje: 'entrega' (datos de acceso y reglas de uso), 'cobro' (recordatorio de pago y vencimiento) o 'reemplazo' (reposición de cuenta caída).
+    - metodos_pago: (Opcional) Texto con métodos de pago si se desea personalizar.
+    """
+    res = database.generate_whatsapp_message(
+        account_or_id=correo_o_id,
+        message_type=tipo_mensaje,
+        payment_methods=metodos_pago
+    )
+    if not res.get("success"):
+        return f"❌ Error: {res.get('error')}"
+
+    tipo_nombre = {
+        "entrega": "ENTREGA DE SERVICIO",
+        "cobro": "RECORDATORIO DE COBRO Y RENOVACIÓN",
+        "reemplazo": "REPOSICIÓN DE CUENTA CAÍDA"
+    }.get(res['message_type'], res['message_type'].upper())
+
+    return (
+        f"💬 <b>MENSAJE LISTO PARA WHATSAPP ({tipo_nombre}):</b>\n\n"
+        f"{res['message_text']}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📲 <b>ENLACE DIRECTO (1 CLIC):</b>\n"
+        f"{res['wa_link']}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👉 Haz clic en el enlace para abrir WhatsApp con el mensaje ya redactado y listo para enviar."
+    )
 
 # --- Herramientas de Carga y Gestión ---
 @mcp.tool()
@@ -238,6 +277,10 @@ def vender_o_asignar_servicio(
             cost=costo,
             notes=notas
         )
+        wa_data = database.generate_whatsapp_message(acc, message_type="entrega")
+        wa_url = wa_data.get("wa_link", "")
+        wa_section = f"\n\n📲 <b>WhatsApp de Entrega Listo (1 Clic):</b>\n{wa_url}" if wa_url else ""
+
         return (
             f"✅ Venta registrada exitosamente para {acc['client_name']} ({acc['client_code']}):\n"
             f"• Plataforma: {acc['platform']}" + (f" (Perfil: {acc['profile_name']})" if acc.get('profile_name') else "") + "\n"
@@ -247,6 +290,7 @@ def vender_o_asignar_servicio(
             f"• Precio: {acc.get('price') or '-'} | Costo prov: {acc.get('cost') or '-'}\n"
             f"• Tipo: {'👔 Revendedor' if acc.get('client_type') == 'revendedor' else '👤 Consumidor Final'}\n"
             f"• Contacto: WhatsApp: {acc.get('whatsapp') or '-'} | Telegram: {acc.get('telegram') or '-'}"
+            f"{wa_section}"
         )
     except Exception as e:
         return f"❌ Error al registrar venta: {str(e)}"
@@ -350,6 +394,10 @@ def reemplazar_cuenta_caida(correo_o_id: str) -> str:
     old_acc = res["old_account"]
     client_name = new_acc.get("client_name") or "Cliente"
 
+    wa_data = database.generate_whatsapp_message(new_acc, message_type="reemplazo")
+    wa_url = wa_data.get("wa_link", "")
+    wa_section = f"\n\n📲 <b>WhatsApp de Reemplazo Listo (1 Clic):</b>\n{wa_url}" if wa_url else ""
+
     return (
         f"🎉 REEMPLAZO EXITOSO REALIZADO:\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -362,6 +410,7 @@ def reemplazar_cuenta_caida(correo_o_id: str) -> str:
         f"📅 <b>Mantiene vencimiento:</b> <code>{new_acc['expiry_date']}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👉 Copia estos datos y envíaselos a {client_name}."
+        f"{wa_section}"
     )
 
 @mcp.tool()
@@ -731,6 +780,11 @@ async def dashboard(request: Request):
         perf = f"<br><small style='color:#94a3b8;'>Perf: {a['profile_name']}</small>" if a.get("profile_name") else ""
         pin = f"<small style='color:#94a3b8;'>PIN: {a['profile_pin']}</small>" if a.get("profile_pin") else ""
 
+        wa_cobro = database.generate_whatsapp_message(a, message_type="cobro")
+        wa_link_cobro = wa_cobro.get("wa_link", "#")
+        wa_entrega = database.generate_whatsapp_message(a, message_type="entrega")
+        wa_link_entrega = wa_entrega.get("wa_link", "#")
+
         active_rows += f"""
         <tr>
             <td><strong>{client_tag}</strong><br><small style="color:#64748b;">{a.get('client_code') or ''}</small></td>
@@ -740,15 +794,17 @@ async def dashboard(request: Request):
             <td><code>{a['expiry_date']}</code></td>
             <td><span class="badge {badge}">{badge_txt}</span></td>
             <td><strong>{a.get('price') or '-'}</strong></td>
-            <td>
+            <td style="white-space: nowrap;">
+                <a href="{wa_link_cobro}" target="_blank" class="btn-action" style="background:#15803d;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con mensaje de cobro listo">💬 Cobro</a>
+                <a href="{wa_link_entrega}" target="_blank" class="btn-action" style="background:#0284c7;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con credenciales listas">📩 Datos</a>
                 <form action="/api/collect-payment/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Registrar cobro y renovar 30 días para {a['client_name']}?');">
-                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;" title="Registrar cobro y renovar">💵 Cobrar</button>
+                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Registrar cobro y renovar">💵 Pagó</button>
                 </form>
                 <form action="/api/mark-fallen/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Marcar {a['email']} como caída?');">
-                    <button type="submit" class="btn-action btn-warn" title="Reportar Caída">🚨</button>
+                    <button type="submit" class="btn-action btn-warn" style="padding:4px 7px;border-radius:5px;font-size:0.75rem;" title="Reportar Caída">🚨</button>
                 </form>
                 <form action="/api/delete-account/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar cuenta?');">
-                    <button type="submit" class="btn-action" style="color:#ef4444;" title="Eliminar">🗑️</button>
+                    <button type="submit" class="btn-action" style="color:#ef4444;padding:4px 7px;border-radius:5px;font-size:0.75rem;" title="Eliminar">🗑️</button>
                 </form>
             </td>
         </tr>
@@ -1025,6 +1081,9 @@ async def collect_payment_api(account_id: int, request: Request):
         raise HTTPException(status_code=401)
     res = database.register_customer_payment(email_or_id=str(account_id), payment_method="Panel Web")
     if res.get("success"):
+        wa_data = database.generate_whatsapp_message(str(account_id), message_type="entrega")
+        wa_url = wa_data.get("wa_link", "")
+        wa_link_html = f"\n\n📲 <a href=\"{wa_url}\"><b>👉 ENVIAR COMPROBANTE Y DATOS POR WHATSAPP (1 Clic)</b></a>" if wa_url else ""
         await send_telegram_message(
             f"💵 <b>Cobro y Renovación Registrados</b>\n\n"
             f"• Cliente: {res['client_name']}\n"
@@ -1032,6 +1091,7 @@ async def collect_payment_api(account_id: int, request: Request):
             f"• Monto cobrado: ${res['amount']:.2f} USD\n"
             f"• Ganancia Neta: +${res['profit']:.2f} USD\n"
             f"• Próximo vencimiento: {res['new_expiry']}"
+            f"{wa_link_html}"
         )
     return RedirectResponse(url="/", status_code=302)
 
@@ -1051,8 +1111,16 @@ async def auto_replace_api(account_id: int, request: Request):
     res = database.replace_fallen_account(str(account_id))
     if res and res.get("success"):
         new_a = res["new_account"]
-        msg = f"✅ Reemplazo exitoso para {new_a.get('client_name')}: {new_a['platform']} -> {new_a['email']}"
-        await send_telegram_message(f"🔄 <b>Reemplazo de Cuenta</b>\n\n{msg}")
+        wa_data = database.generate_whatsapp_message(new_a, message_type="reemplazo")
+        wa_url = wa_data.get("wa_link", "")
+        wa_link_html = f"\n\n📲 <a href=\"{wa_url}\"><b>👉 ENVIAR NUEVA CUENTA POR WHATSAPP (1 Clic)</b></a>" if wa_url else ""
+        msg = (
+            f"✅ Reemplazo exitoso para <b>{new_a.get('client_name')}</b>:\n"
+            f"• Plataforma: {new_a['platform']}\n"
+            f"• Nueva cuenta: <code>{new_a['email']}</code>\n"
+            f"• Clave: <code>{new_a['password']}</code>"
+        )
+        await send_telegram_message(f"🔄 <b>Reemplazo de Cuenta</b>\n\n{msg}{wa_link_html}")
     return RedirectResponse(url="/", status_code=302)
 
 @app.post("/api/delete-account/{account_id}")
@@ -1081,7 +1149,7 @@ async def check_now_api(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-finance", "version": "2.2.0"}
+    return {"status": "ok", "service": "streaming-crm-whatsapp", "version": "2.3.0"}
 
 if __name__ == "__main__":
     import uvicorn

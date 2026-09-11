@@ -4,6 +4,7 @@ import sqlite3
 import hashlib
 import secrets
 import time
+import urllib.parse
 from datetime import datetime, date, timedelta
 from typing import List, Dict, Any, Optional, Tuple, Union
 
@@ -766,3 +767,154 @@ def get_recent_transactions(limit: int = 15) -> List[Dict[str, Any]]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+# ==========================================
+# 6. Módulo de Mensajes y Enlaces de WhatsApp (Paso 2)
+# ==========================================
+def get_account_detail(email_or_id: Union[str, int]) -> Optional[Dict[str, Any]]:
+    """Obtiene el detalle completo de una cuenta y su cliente asociado."""
+    conn = get_connection()
+    q = str(email_or_id).strip()
+    try:
+        row = conn.execute("""
+            SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+            FROM streaming_accounts a
+            LEFT JOIN clients c ON a.client_id = c.id
+            WHERE lower(a.email) LIKE lower(?) OR a.id = ?
+            ORDER BY a.id DESC LIMIT 1
+        """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        today = date.today()
+        try:
+            exp = datetime.strptime(d["expiry_date"], "%Y-%m-%d").date()
+            d["days_remaining"] = (exp - today).days
+        except Exception:
+            d["days_remaining"] = None
+        return d
+    finally:
+        conn.close()
+
+def clean_whatsapp_phone(phone: str) -> str:
+    """Limpia y estandariza un número telefónico para el protocolo wa.me."""
+    if not phone:
+        return ""
+    digits = re.sub(r'\D', '', str(phone))
+    if not digits:
+        return ""
+    # Manejo de números de Argentina si vienen en formato local (10 dígitos)
+    if len(digits) == 10:
+        if digits.startswith("15"):
+            digits = "11" + digits[2:]
+        digits = "549" + digits
+    elif len(digits) == 12 and digits.startswith("54") and not digits.startswith("549"):
+        digits = "549" + digits[2:]
+    return digits
+
+def generate_whatsapp_message(
+    account_or_id: Union[int, str, Dict[str, Any]],
+    message_type: str = "entrega",
+    payment_methods: str = ""
+) -> Dict[str, Any]:
+    """Genera plantillas profesionales y enlaces directos con 1 clic para WhatsApp (wa.me)."""
+    if isinstance(account_or_id, dict):
+        acc = account_or_id
+    else:
+        acc = get_account_detail(account_or_id)
+        if not acc:
+            return {"success": False, "error": f"No se encontró la cuenta o servicio '{account_or_id}'"}
+
+    client_name = acc.get("client_name") or "Estimado/a"
+    platform = acc.get("platform") or "Streaming"
+    email = acc.get("email") or ""
+    password = acc.get("password") or ""
+    profile = acc.get("profile_name") or ""
+    pin = acc.get("profile_pin") or ""
+    expiry = acc.get("expiry_date") or ""
+    price = acc.get("price") or ""
+    raw_phone = acc.get("whatsapp") or ""
+    clean_phone = clean_whatsapp_phone(raw_phone)
+    days_rem = acc.get("days_remaining")
+
+    m_type = message_type.strip().lower()
+
+    if m_type in ("cobro", "recordatorio", "vencimiento"):
+        days_str = ""
+        if days_rem is not None:
+            if days_rem == 0:
+                days_str = " (¡Vence HOY!)"
+            elif days_rem > 0:
+                days_str = f" (vence en {days_rem} días)"
+            else:
+                days_str = f" (vencida hace {abs(days_rem)} días)"
+
+        default_pm = (
+            "• Transferencia Bancaria / CVU / CBU\n"
+            "• Mercado Pago\n"
+            "• Binance USDT / Cripto"
+        )
+        pm_text = payment_methods.strip() if payment_methods else default_pm
+
+        msg = (
+            f"👋 *¡Hola {client_name}!* Esperamos que estés disfrutando tu suscripción.\n\n"
+            f"Te recordamos que tu servicio está próximo a vencer:\n"
+            f"📺 *Servicio:* {platform}\n"
+            f"📧 *Cuenta:* `{email}`\n"
+            f"📅 *Vencimiento:* {expiry}{days_str}\n"
+            f"💰 *Monto a Renovar:* {price or 'Consultar valor'}\n\n"
+            f"💳 *Métodos de Pago:*\n{pm_text}\n\n"
+            f"Una vez abonado, por favor envíanos tu comprobante por aquí para renovarte inmediatamente sin cortes. ¡Muchas gracias! 🙌"
+        )
+    elif m_type in ("reemplazo", "soporte", "caida"):
+        profile_line = f"\n👤 *Perfil:* {profile}" if profile else ""
+        pin_line = f"\n🔒 *PIN de Perfil:* {pin}" if pin else ""
+        msg = (
+            f"🛠️ *¡Hola {client_name}!* Te informamos que hemos reactivado tu servicio.\n\n"
+            f"✨ *Nuevos Datos de Acceso:*\n"
+            f"📺 *Servicio:* {platform}\n"
+            f"📧 *Nuevo Correo:* `{email}`\n"
+            f"🔑 *Nueva Contraseña:* `{password}`"
+            f"{profile_line}"
+            f"{pin_line}\n"
+            f"📅 *Mantiene Vencimiento:* {expiry}\n\n"
+            f"📌 *Recomendación:* Recuerda utilizar únicamente el perfil asignado y no modificar la clave.\n\n"
+            f"¡Ya puedes continuar disfrutando de tu contenido! 🍿🚀"
+        )
+    else:  # "entrega", "bienvenida", "activacion"
+        profile_line = f"\n👤 *Perfil Asignado:* {profile}" if profile else ""
+        pin_line = f"\n🔒 *PIN:* {pin}" if pin else ""
+        price_line = f"\n💰 *Valor:* {price}" if price else ""
+        msg = (
+            f"🍿 *¡Hola {client_name}!* Aquí tienes los datos de acceso a tu suscripción:\n\n"
+            f"📺 *Servicio:* {platform}\n"
+            f"📧 *Usuario/Correo:* `{email}`\n"
+            f"🔑 *Contraseña:* `{password}`"
+            f"{profile_line}"
+            f"{pin_line}\n"
+            f"📅 *Vencimiento:* {expiry}"
+            f"{price_line}\n\n"
+            f"⚠️ *Reglas de Uso Importantes:*\n"
+            f"• No cambiar correo ni contraseña.\n"
+            f"• Utilizar únicamente el perfil asignado.\n"
+            f"• No ingresar en más dispositivos de los permitidos.\n\n"
+            f"¡Que lo disfrutes al máximo! Si tienes alguna duda, estamos a tu disposición ✨"
+        )
+
+    encoded_text = urllib.parse.quote(msg)
+    if clean_phone:
+        wa_url = f"https://wa.me/{clean_phone}?text={encoded_text}"
+    else:
+        wa_url = f"https://api.whatsapp.com/send?text={encoded_text}"
+
+    return {
+        "success": True,
+        "client_name": client_name,
+        "platform": platform,
+        "email": email,
+        "whatsapp": raw_phone,
+        "clean_phone": clean_phone,
+        "message_type": m_type,
+        "message_text": msg,
+        "wa_link": wa_url
+    }

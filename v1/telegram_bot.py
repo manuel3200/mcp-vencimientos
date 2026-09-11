@@ -93,8 +93,19 @@ async def format_and_send_alert(account: Dict[str, Any]) -> bool:
     if price:
         lines.append(f"💰 <b>A cobrar:</b> {price}")
 
+    # Enlace de 1 Clic para cobrar por WhatsApp
+    try:
+        from database import generate_whatsapp_message
+        wa_data = generate_whatsapp_message(account, message_type="cobro")
+        wa_url = wa_data.get("wa_link")
+        if wa_url:
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append(f"📲 <a href=\"{wa_url}\"><b>👉 ENVIAR RECORDATORIO POR WHATSAPP (1 Clic)</b></a>")
+    except Exception as e:
+        logger.error(f"Error generando link de WhatsApp en alerta: {e}")
+
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
-    lines.append("<i>🔔 Avisa a tu cliente para cobrar la renovación</i>")
+    lines.append("<i>🔔 Toca el enlace para abrir WhatsApp con el mensaje ya redactado.</i>")
     
     message_text = "\n".join(lines)
     return await send_telegram_message(message_text)

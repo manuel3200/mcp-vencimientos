@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Datos locales / SQLite
+data/
+*.db
+*.sqlite3
+
+# Variables de entorno secretas
+.env
+.env.local
+
+# Docker & IDE
+.idea/
+.vscode/
+*.swp

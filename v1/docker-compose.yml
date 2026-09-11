@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  gemini-mcp-vencimientos:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: gemini-mcp-vencimientos:latest
+    container_name: gemini-mcp-vencimientos
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Token de tu bot creado con @BotFather en Telegram
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      # Tu ID numérico de Telegram (obtenible con @userinfobot)
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      # Días de anticipación para la alerta (por defecto 2 días antes)
+      - DAYS_BEFORE_ALERT=${DAYS_BEFORE_ALERT:-2}
+      # Hora del día para ejecutar la revisión automática (0 a 23 hs)
+      - ALERT_HOUR=${ALERT_HOUR:-9}
+      - ALERT_MINUTE=${ALERT_MINUTE:-0}
+      # Zona horaria (ej: America/Argentina/Buenos_Aires, America/Bogota, America/Mexico_City)
+      - TIMEZONE=${TIMEZONE:-America/Argentina/Buenos_Aires}
+      # Directorio de datos persistentes
+      - DATA_DIR=/app/data
+      - PORT=8000
+    volumes:
+      # Volumen persistente para la base de datos SQLite (no se borra al reiniciar)
+      - mcp_data:/app/data
+
+volumes:
+  mcp_data:
+    name: gemini_mcp_data

@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+*.db
+*.sqlite3
+
+# Secretos
+.env
+.env.*
+
+# Data persistente
+data/
+v1/data/

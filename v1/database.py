@@ -110,6 +110,76 @@ def format_ars(val: Union[float, int, str, None], include_symbol: bool = True) -
     return formatted
 
 # ==========================================
+# Plantillas Predeterminadas de WhatsApp
+# ==========================================
+DEFAULT_WHATSAPP_TEMPLATES = {
+    "cobro": {
+        "title": "🔔 Cobro / Recordatorio Individual",
+        "description": "Mensaje enviado para recordar el vencimiento de una suscripción individual.",
+        "content": (
+            "👋 *¡Hola {cliente}!* Esperamos que estés disfrutando tu suscripción.\n\n"
+            "Te recordamos que tu servicio está próximo a vencer:\n"
+            "📺 *Servicio:* {plataforma}\n"
+            "📧 *Cuenta:* `{email}`\n"
+            "📅 *Vencimiento:* {vencimiento}{dias_restantes}\n"
+            "💰 *Monto a Renovar:* {monto}\n\n"
+            "💳 *Métodos de Pago:*\n"
+            "{metodos_pago}\n\n"
+            "Una vez abonado, por favor envíanos tu comprobante por aquí para renovarte inmediatamente sin cortes. ¡Muchas gracias! 🙌"
+        )
+    },
+    "cobro_consolidado": {
+        "title": "🧾 Cobro Consolidado (Multicuentas)",
+        "description": "Mensaje unificado para clientes con 2 o más servicios activos.",
+        "content": (
+            "👋 *¡Hola {cliente}!* Esperamos que estés muy bien.\n\n"
+            "Te compartimos el resumen consolidado de tus suscripciones activas:\n\n"
+            "📺 *Servicios Activos:*\n"
+            "{servicios_lista}\n\n"
+            "💰 *TOTAL CONSOLIDADO A RENOVAR:* {monto}\n\n"
+            "💳 *Métodos de Pago:*\n"
+            "{metodos_pago}\n\n"
+            "Una vez realizado el abono, por favor envíanos tu comprobante por aquí para mantener tus perfiles 100% activos y sin cortes. ¡Muchas gracias! 🙌"
+        )
+    },
+    "entrega": {
+        "title": "🍿 Entrega de Credenciales y Perfil",
+        "description": "Mensaje enviado al entregar una nueva cuenta o suscripción vendida.",
+        "content": (
+            "🍿 *¡Hola {cliente}!* Aquí tienes los datos de acceso a tu suscripción:\n\n"
+            "📺 *Servicio:* {plataforma}\n"
+            "📧 *Usuario/Correo:* `{email}`\n"
+            "🔑 *Contraseña:* `{password}`\n"
+            "👤 *Perfil Asignado:* {perfil}\n"
+            "🔒 *PIN de Perfil:* {pin}\n"
+            "📅 *Vencimiento:* {vencimiento}\n"
+            "💰 *Valor:* {monto}\n\n"
+            "⚠️ *Reglas de Uso Importantes:*\n"
+            "• No cambiar correo ni contraseña.\n"
+            "• Utilizar únicamente el perfil asignado.\n"
+            "• No ingresar en más dispositivos de los permitidos.\n\n"
+            "¡Que lo disfrutes al máximo! Si tienes alguna duda, estamos a tu disposición ✨"
+        )
+    },
+    "reemplazo": {
+        "title": "🛠️ Reemplazo por Reactivación o Caída",
+        "description": "Mensaje para enviar nuevas credenciales cuando una cuenta reportada se reactiva.",
+        "content": (
+            "🛠️ *¡Hola {cliente}!* Te informamos que hemos reactivado tu servicio.\n\n"
+            "✨ *Nuevos Datos de Acceso:*\n"
+            "📺 *Servicio:* {plataforma}\n"
+            "📧 *Nuevo Correo:* `{email}`\n"
+            "🔑 *Nueva Contraseña:* `{password}`\n"
+            "👤 *Perfil:* {perfil}\n"
+            "🔒 *PIN de Perfil:* {pin}\n"
+            "📅 *Mantiene Vencimiento:* {vencimiento}\n\n"
+            "📌 *Recomendación:* Recuerda utilizar únicamente el perfil asignado y no modificar la clave.\n\n"
+            "¡Ya puedes continuar disfrutando de tu contenido! 🍿🚀"
+        )
+    }
+}
+
+# ==========================================
 # Inicialización y Esquema Relacional
 # ==========================================
 def init_db():
@@ -284,6 +354,39 @@ def init_db():
                             INSERT INTO combo_items (combo_id, platform, service_type)
                             VALUES (?, ?, ?)
                         """, (cid, it_plat, it_stype))
+
+            # 9. Configuración de Métodos de Cobro y CBU
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS payment_settings (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    alias_mp TEXT DEFAULT '',
+                    cvu_cbu TEXT DEFAULT '',
+                    account_holder TEXT DEFAULT '',
+                    bank_name TEXT DEFAULT 'Mercado Pago / Transferencia Bancaria',
+                    usdt_address TEXT DEFAULT '',
+                    extra_instructions TEXT DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("INSERT OR IGNORE INTO payment_settings (id) VALUES (1)")
+
+            # 10. Plantillas Personalizables de WhatsApp
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS whatsapp_templates (
+                    template_key TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    description TEXT DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Sembrado de plantillas base si faltan
+            for t_key, t_data in DEFAULT_WHATSAPP_TEMPLATES.items():
+                conn.execute("""
+                    INSERT OR IGNORE INTO whatsapp_templates (template_key, title, content, description)
+                    VALUES (?, ?, ?, ?)
+                """, (t_key, t_data["title"], t_data["content"], t_data["description"]))
     finally:
         conn.close()
 
@@ -978,6 +1081,160 @@ def clean_whatsapp_phone(phone: str) -> str:
         digits = "549" + digits[2:]
     return digits
 
+# ==========================================
+# 6. Gestión de Plantillas de WhatsApp y Datos de Pago (Paso 3)
+# ==========================================
+def get_payment_settings() -> Dict[str, Any]:
+    """Obtiene la configuración actual de medios de cobro y datos bancarios."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM payment_settings WHERE id = 1").fetchone()
+        if not row:
+            conn.execute("INSERT OR IGNORE INTO payment_settings (id) VALUES (1)")
+            conn.commit()
+            row = conn.execute("SELECT * FROM payment_settings WHERE id = 1").fetchone()
+        return dict(row) if row else {}
+    finally:
+        conn.close()
+
+def save_payment_settings(
+    alias_mp: str = "",
+    cvu_cbu: str = "",
+    account_holder: str = "",
+    bank_name: str = "",
+    usdt_address: str = "",
+    extra_instructions: str = ""
+) -> bool:
+    """Guarda o actualiza los datos bancarios y métodos de cobro."""
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO payment_settings (id, alias_mp, cvu_cbu, account_holder, bank_name, usdt_address, extra_instructions, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    alias_mp = excluded.alias_mp,
+                    cvu_cbu = excluded.cvu_cbu,
+                    account_holder = excluded.account_holder,
+                    bank_name = excluded.bank_name,
+                    usdt_address = excluded.usdt_address,
+                    extra_instructions = excluded.extra_instructions,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (alias_mp.strip(), cvu_cbu.strip(), account_holder.strip(), bank_name.strip(), usdt_address.strip(), extra_instructions.strip()))
+            return True
+    finally:
+        conn.close()
+
+def get_formatted_payment_methods(settings: Optional[Dict[str, Any]] = None) -> str:
+    """Devuelve el bloque de métodos de pago con los datos bancarios formateados para WhatsApp."""
+    s = settings or get_payment_settings()
+    alias = s.get("alias_mp", "").strip()
+    cbu = s.get("cvu_cbu", "").strip()
+    holder = s.get("account_holder", "").strip()
+    bank = s.get("bank_name", "").strip() or "Mercado Pago / Transferencia"
+    usdt = s.get("usdt_address", "").strip()
+    extra = s.get("extra_instructions", "").strip()
+
+    if alias or cbu or holder:
+        lines = [f"• *{bank}*"]
+        if alias:
+            lines.append(f"  👉 *Alias:* `{alias}`")
+        if cbu:
+            lines.append(f"  👉 *CVU/CBU:* `{cbu}`")
+        if holder:
+            lines.append(f"  👤 *Titular:* {holder}")
+        if usdt:
+            lines.append(f"• *Cripto / USDT:* `{usdt}`")
+        if extra:
+            lines.append(f"• {extra}")
+        return "\n".join(lines)
+
+    return (
+        "• Transferencia Bancaria / CVU / CBU\n"
+        "• Mercado Pago\n"
+        "• Binance USDT / Cripto"
+    )
+
+def get_whatsapp_templates() -> Dict[str, Dict[str, Any]]:
+    """Devuelve todas las plantillas registradas combinando base de datos y predeterminadas."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM whatsapp_templates ORDER BY template_key ASC").fetchall()
+        result = {}
+        for r in rows:
+            result[r["template_key"]] = dict(r)
+        
+        for k, def_data in DEFAULT_WHATSAPP_TEMPLATES.items():
+            if k not in result:
+                result[k] = {
+                    "template_key": k,
+                    "title": def_data["title"],
+                    "content": def_data["content"],
+                    "description": def_data["description"]
+                }
+        return result
+    finally:
+        conn.close()
+
+def get_whatsapp_template(template_key: str) -> Dict[str, Any]:
+    """Obtiene una plantilla individual por su clave."""
+    conn = get_connection()
+    k = template_key.strip().lower()
+    try:
+        row = conn.execute("SELECT * FROM whatsapp_templates WHERE template_key = ?", (k,)).fetchone()
+        if row:
+            return dict(row)
+        if k in DEFAULT_WHATSAPP_TEMPLATES:
+            d = DEFAULT_WHATSAPP_TEMPLATES[k]
+            return {"template_key": k, "title": d["title"], "content": d["content"], "description": d["description"]}
+        return {"template_key": k, "title": k.title(), "content": "", "description": ""}
+    finally:
+        conn.close()
+
+def save_whatsapp_template(template_key: str, content: str, title: str = "", description: str = "") -> bool:
+    """Guarda o actualiza una plantilla de WhatsApp."""
+    conn = get_connection()
+    k = template_key.strip().lower()
+    final_title = title.strip() or DEFAULT_WHATSAPP_TEMPLATES.get(k, {}).get("title", k.title())
+    final_desc = description.strip() or DEFAULT_WHATSAPP_TEMPLATES.get(k, {}).get("description", "")
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO whatsapp_templates (template_key, title, content, description, updated_at)
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(template_key) DO UPDATE SET
+                    title = excluded.title,
+                    content = excluded.content,
+                    description = excluded.description,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (k, final_title, content.strip(), final_desc))
+            return True
+    finally:
+        conn.close()
+
+def reset_whatsapp_template(template_key: str) -> bool:
+    """Restaura una plantilla a su valor predeterminado del sistema."""
+    k = template_key.strip().lower()
+    if k not in DEFAULT_WHATSAPP_TEMPLATES:
+        return False
+    d = DEFAULT_WHATSAPP_TEMPLATES[k]
+    return save_whatsapp_template(k, d["content"], d["title"], d["description"])
+
+def render_dynamic_template(template_str: str, context: Dict[str, Any]) -> str:
+    """Reemplaza etiquetas dinámicas {tag} en la plantilla de WhatsApp sin fallar si faltan variables."""
+    out = template_str
+    for key, val in context.items():
+        placeholder = f"{{{key}}}"
+        out = out.replace(placeholder, str(val) if val is not None else "")
+    
+    out_lines = []
+    for line in out.split("\n"):
+        if line.strip() in ("👤 *Perfil:*", "👤 *Perfil Asignado:*", "🔒 *PIN:*", "🔒 *PIN de Perfil:*", "💰 *Valor:*", "💰 *Monto a Renovar:*"):
+            continue
+        out_lines.append(line)
+    
+    return "\n".join(out_lines).strip()
+
 def generate_whatsapp_message(
     account_or_id: Union[int, str, Dict[str, Any]],
     message_type: str = "entrega",
@@ -1006,66 +1263,50 @@ def generate_whatsapp_message(
     m_type = message_type.strip().lower()
 
     if m_type in ("cobro", "recordatorio", "vencimiento"):
-        days_str = ""
-        if days_rem is not None:
-            if days_rem == 0:
-                days_str = " (¡Vence HOY!)"
-            elif days_rem > 0:
-                days_str = f" (vence en {days_rem} días)"
-            else:
-                days_str = f" (vencida hace {abs(days_rem)} días)"
-
-        default_pm = (
-            "• Transferencia Bancaria / CVU / CBU\n"
-            "• Mercado Pago\n"
-            "• Binance USDT / Cripto"
-        )
-        pm_text = payment_methods.strip() if payment_methods else default_pm
-
-        msg = (
-            f"👋 *¡Hola {client_name}!* Esperamos que estés disfrutando tu suscripción.\n\n"
-            f"Te recordamos que tu servicio está próximo a vencer:\n"
-            f"📺 *Servicio:* {platform}\n"
-            f"📧 *Cuenta:* `{email}`\n"
-            f"📅 *Vencimiento:* {expiry}{days_str}\n"
-            f"💰 *Monto a Renovar:* {price or 'Consultar valor'}\n\n"
-            f"💳 *Métodos de Pago:*\n{pm_text}\n\n"
-            f"Una vez abonado, por favor envíanos tu comprobante por aquí para renovarte inmediatamente sin cortes. ¡Muchas gracias! 🙌"
-        )
+        tpl_key = "cobro"
     elif m_type in ("reemplazo", "soporte", "caida"):
-        profile_line = f"\n👤 *Perfil:* {profile}" if profile else ""
-        pin_line = f"\n🔒 *PIN de Perfil:* {pin}" if pin else ""
-        msg = (
-            f"🛠️ *¡Hola {client_name}!* Te informamos que hemos reactivado tu servicio.\n\n"
-            f"✨ *Nuevos Datos de Acceso:*\n"
-            f"📺 *Servicio:* {platform}\n"
-            f"📧 *Nuevo Correo:* `{email}`\n"
-            f"🔑 *Nueva Contraseña:* `{password}`"
-            f"{profile_line}"
-            f"{pin_line}\n"
-            f"📅 *Mantiene Vencimiento:* {expiry}\n\n"
-            f"📌 *Recomendación:* Recuerda utilizar únicamente el perfil asignado y no modificar la clave.\n\n"
-            f"¡Ya puedes continuar disfrutando de tu contenido! 🍿🚀"
-        )
-    else:  # "entrega", "bienvenida", "activacion"
-        profile_line = f"\n👤 *Perfil Asignado:* {profile}" if profile else ""
-        pin_line = f"\n🔒 *PIN:* {pin}" if pin else ""
-        price_line = f"\n💰 *Valor:* {price}" if price else ""
-        msg = (
-            f"🍿 *¡Hola {client_name}!* Aquí tienes los datos de acceso a tu suscripción:\n\n"
-            f"📺 *Servicio:* {platform}\n"
-            f"📧 *Usuario/Correo:* `{email}`\n"
-            f"🔑 *Contraseña:* `{password}`"
-            f"{profile_line}"
-            f"{pin_line}\n"
-            f"📅 *Vencimiento:* {expiry}"
-            f"{price_line}\n\n"
-            f"⚠️ *Reglas de Uso Importantes:*\n"
-            f"• No cambiar correo ni contraseña.\n"
-            f"• Utilizar únicamente el perfil asignado.\n"
-            f"• No ingresar en más dispositivos de los permitidos.\n\n"
-            f"¡Que lo disfrutes al máximo! Si tienes alguna duda, estamos a tu disposición ✨"
-        )
+        tpl_key = "reemplazo"
+    else:
+        tpl_key = "entrega"
+
+    tpl = get_whatsapp_template(tpl_key)
+    tpl_content = tpl.get("content") or DEFAULT_WHATSAPP_TEMPLATES.get(tpl_key, {}).get("content", "")
+
+    # Días restantes formato
+    days_str = ""
+    if days_rem is not None:
+        if days_rem == 0:
+            days_str = " (¡Vence HOY!)"
+        elif days_rem == 1:
+            days_str = " (vence mañana)"
+        elif days_rem > 0:
+            days_str = f" (vence en {days_rem} días)"
+        else:
+            days_str = f" (vencida hace {abs(days_rem)} días)"
+
+    pm_text = payment_methods.strip() if payment_methods else get_formatted_payment_methods()
+    p_settings = get_payment_settings()
+    price_str = price or format_ars(acc.get("price")) or "Consultar valor"
+
+    context = {
+        "cliente": client_name,
+        "plataforma": platform,
+        "email": email,
+        "password": password,
+        "perfil": profile,
+        "pin": pin,
+        "vencimiento": expiry,
+        "dias_restantes": days_str,
+        "monto": price_str,
+        "metodos_pago": pm_text,
+        "alias_mp": p_settings.get("alias_mp", ""),
+        "cbu": p_settings.get("cvu_cbu", ""),
+        "titular": p_settings.get("account_holder", ""),
+        "banco": p_settings.get("bank_name", ""),
+        "usdt": p_settings.get("usdt_address", "")
+    }
+
+    msg = render_dynamic_template(tpl_content, context)
 
     encoded_text = urllib.parse.quote(msg)
     if clean_phone:
@@ -1086,7 +1327,7 @@ def generate_whatsapp_message(
     }
 
 # ==========================================
-# 6. Ficha 360° del Cliente y Cobro Consolidado
+# 7. Ficha 360° del Cliente y Cobro Consolidado
 # ==========================================
 def generate_consolidated_billing_whatsapp(
     client_id_or_dict: Union[str, int, Dict[str, Any]],
@@ -1131,21 +1372,26 @@ def generate_consolidated_billing_whatsapp(
 
     services_text = "\n".join(services_lines)
 
-    default_pm = (
-        "• Transferencia Bancaria / CVU / CBU\n"
-        "• Mercado Pago\n"
-        "• Binance USDT / Cripto"
-    )
-    pm_text = payment_methods.strip() if payment_methods else default_pm
+    pm_text = payment_methods.strip() if payment_methods else get_formatted_payment_methods()
+    p_settings = get_payment_settings()
 
-    msg = (
-        f"👋 *¡Hola {client_name}!* Esperamos que estés muy bien.\n\n"
-        f"Te compartimos el resumen consolidado de tus suscripciones activas ({len(active_accounts)}):\n\n"
-        f"{services_text}\n\n"
-        f"💰 *TOTAL CONSOLIDADO A RENOVAR:* {format_ars(total_amount)}\n\n"
-        f"💳 *Métodos de Pago:*\n{pm_text}\n\n"
-        f"Una vez realizado el abono, por favor envíanos tu comprobante por aquí para mantener tus perfiles 100% activos y sin cortes. ¡Muchas gracias! 🙌"
-    )
+    tpl = get_whatsapp_template("cobro_consolidado")
+    tpl_content = tpl.get("content") or DEFAULT_WHATSAPP_TEMPLATES.get("cobro_consolidado", {}).get("content", "")
+
+    context = {
+        "cliente": client_name,
+        "servicios_lista": services_text,
+        "monto": format_ars(total_amount),
+        "metodos_pago": pm_text,
+        "cuentas_cantidad": len(active_accounts),
+        "alias_mp": p_settings.get("alias_mp", ""),
+        "cbu": p_settings.get("cvu_cbu", ""),
+        "titular": p_settings.get("account_holder", ""),
+        "banco": p_settings.get("bank_name", ""),
+        "usdt": p_settings.get("usdt_address", "")
+    }
+
+    msg = render_dynamic_template(tpl_content, context)
 
     encoded_text = urllib.parse.quote(msg)
     if clean_phone:

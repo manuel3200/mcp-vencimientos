@@ -190,7 +190,10 @@ def get_main_menu_keyboard() -> Dict[str, Any]:
                 {"text": "🚨 Cuentas Caídas", "callback_data": "menu_fallen"}
             ],
             [
-                {"text": "🔍 Escanear Ahora", "callback_data": "menu_scan"},
+                {"text": "💳 Datos de Cobro & CBU", "callback_data": "menu_datos_pago"},
+                {"text": "🔍 Escanear Ahora", "callback_data": "menu_scan"}
+            ],
+            [
                 {"text": "💾 Descargar Backup CSV", "callback_data": "menu_backup"}
             ]
         ]
@@ -541,6 +544,27 @@ async def handle_telegram_message(msg: Dict[str, Any]):
     elif cmd in ("/backup", "backup", "/exportar", "exportar"):
         await send_full_backup_to_telegram(chat_id=chat_id)
 
+    elif cmd in ("/datos_pago", "/cbu", "/alias", "datos_pago", "cbu", "alias", "/pago", "pago", "/pagos", "pagos"):
+        s = database.get_payment_settings()
+        pm_block = database.get_formatted_payment_methods()
+        txt = (
+            "💳 <b>DATOS DE COBRO CONFIGURADOS (1 TOQUE PARA COPIAR):</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Alias Mercado Pago:</b> <code>{s.get('alias_mp') or 'No configurado'}</code>\n"
+            f"• <b>CBU / CVU:</b> <code>{s.get('cvu_cbu') or 'No configurado'}</code>\n"
+            f"• <b>Titular:</b> <b>{s.get('account_holder') or 'No configurado'}</b>\n"
+            f"• <b>Banco / Entidad:</b> {s.get('bank_name') or 'Mercado Pago'}\n"
+        )
+        if s.get("usdt_address"):
+            txt += f"• <b>USDT / Cripto:</b> <code>{s.get('usdt_address')}</code>\n"
+        txt += (
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📋 <b>Bloque formateado que se envía al cliente:</b>\n\n"
+            f"{pm_block}\n\n"
+            "<i>💡 Toca sobre cualquier número o Alias en recuadro para copiarlo al instante.</i>"
+        )
+        await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
 async def handle_telegram_callback(query: Dict[str, Any]):
     """Procesa pulsaciones de botones inline."""
     _, authorized_chat = get_telegram_config()
@@ -647,6 +671,33 @@ async def handle_telegram_callback(query: Dict[str, Any]):
             "Bienvenido al panel rápido. Selecciona una acción para gestionar tu negocio:"
         )
         await send_telegram_message(menu_text, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data == "menu_datos_pago":
+        await answer_callback_query(query_id)
+        s = database.get_payment_settings()
+        pm_block = database.get_formatted_payment_methods()
+        txt = (
+            "💳 <b>DATOS DE COBRO CONFIGURADOS (1 TOQUE PARA COPIAR):</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Alias Mercado Pago:</b> <code>{s.get('alias_mp') or 'No configurado'}</code>\n"
+            f"• <b>CBU / CVU:</b> <code>{s.get('cvu_cbu') or 'No configurado'}</code>\n"
+            f"• <b>Titular:</b> <b>{s.get('account_holder') or 'No configurado'}</b>\n"
+            f"• <b>Banco / Entidad:</b> {s.get('bank_name') or 'Mercado Pago'}\n"
+        )
+        if s.get("usdt_address"):
+            txt += f"• <b>USDT / Cripto:</b> <code>{s.get('usdt_address')}</code>\n"
+        txt += (
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "📋 <b>Bloque formateado para el cliente:</b>\n\n"
+            f"{pm_block}\n\n"
+            "<i>💡 Toca sobre cualquier número o Alias en recuadro para copiarlo al instante.</i>"
+        )
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔙 Volver al Menú", "callback_data": "menu_main"}]
+            ]
+        }
+        await send_telegram_message(txt, reply_markup=kb, chat_id=chat_id)
 
     elif data == "menu_stock":
         await answer_callback_query(query_id)

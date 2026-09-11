@@ -935,6 +935,100 @@ def vender_combo(
         f"📲 <b>WhatsApp de Entrega Listo (1 Clic):</b>\n{res['wa_link']}"
     )
 
+@mcp.tool()
+def consultar_plantillas_whatsapp() -> str:
+    """Lista todas las plantillas de mensajes de WhatsApp configuradas en el sistema (cobro individual, cobro consolidado, entrega de accesos y reemplazo por caída)."""
+    templates = database.get_whatsapp_templates()
+    lines = ["📝 <b>PLANTILLAS DE WHATSAPP CONFIGURADAS:</b>\n"]
+    for k, t in templates.items():
+        lines.append(
+            f"🔹 <b>{t['title']}</b> (Clave: <code>{k}</code>)\n"
+            f"  Descripción: {t.get('description') or 'Sin descripción'}\n"
+            f"  Última modificación: {t.get('updated_at') or 'Predeterminada'}\n"
+            f"  Contenido:\n<pre>{t['content']}</pre>\n"
+        )
+    return "\n".join(lines)
+
+@mcp.tool()
+def guardar_plantilla_whatsapp(
+    clave: str,
+    contenido: str,
+    titulo: str = "",
+    descripcion: str = ""
+) -> str:
+    """Modifica y guarda una plantilla de WhatsApp del sistema.
+    - clave: 'cobro', 'cobro_consolidado', 'entrega' o 'reemplazo'.
+    - contenido: Texto del mensaje con etiquetas dinámicas {cliente}, {plataforma}, {email}, {password}, {perfil}, {pin}, {vencimiento}, {monto}, {metodos_pago}, etc.
+    - titulo: Título descriptivo opcional de la plantilla.
+    - descripcion: Breve detalle opcional sobre el uso de la plantilla.
+    """
+    ok = database.save_whatsapp_template(clave, contenido, title=titulo, description=descripcion)
+    if not ok:
+        return f"❌ No se pudo guardar la plantilla con clave '{clave}'."
+    return f"✅ Plantilla '{clave}' actualizada correctamente con éxito. Se aplicará a todos los mensajes generados a partir de ahora."
+
+@mcp.tool()
+def restaurar_plantilla_whatsapp(clave: str) -> str:
+    """Restaura una plantilla de WhatsApp a su texto predeterminado original de fábrica.
+    - clave: 'cobro', 'cobro_consolidado', 'entrega' o 'reemplazo'.
+    """
+    ok = database.reset_whatsapp_template(clave)
+    if not ok:
+        return f"❌ Clave '{clave}' no reconocida o error al restaurar."
+    return f"🔄 Plantilla '{clave}' restaurada exitosamente a sus valores originales de fábrica."
+
+@mcp.tool()
+def consultar_datos_pago() -> str:
+    """Consulta la configuración actual de datos de cobro bancarios (Alias Mercado Pago, CBU/CVU, Titular, Banco y USDT)."""
+    s = database.get_payment_settings()
+    pm_block = database.get_formatted_payment_methods()
+    return (
+        f"💳 <b>DATOS DE COBRO CONFIGURADOS (ARS / USDT):</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Alias MP:</b> <code>{s.get('alias_mp') or 'No configurado'}</code>\n"
+        f"• <b>CBU / CVU:</b> <code>{s.get('cvu_cbu') or 'No configurado'}</code>\n"
+        f"• <b>Titular:</b> <b>{s.get('account_holder') or 'No configurado'}</b>\n"
+        f"• <b>Banco / Entidad:</b> {s.get('bank_name') or 'Mercado Pago'}\n"
+        f"• <b>USDT / Cripto:</b> <code>{s.get('usdt_address') or 'No configurado'}</code>\n"
+        f"• <b>Instrucciones:</b> {s.get('extra_instructions') or 'Enviar comprobante por WhatsApp'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"<b>Bloque formateado que se inserta en {{metodos_pago}}:</b>\n\n{pm_block}"
+    )
+
+@mcp.tool()
+def configurar_datos_pago(
+    alias_mp: str = "",
+    cvu_cbu: str = "",
+    titular: str = "",
+    banco: str = "Mercado Pago / Transferencia Bancaria",
+    usdt: str = "",
+    instrucciones_extra: str = ""
+) -> str:
+    """Actualiza los datos de cobro bancarios (Alias Mercado Pago, CBU, Titular, etc.) para que se inserten automáticamente en los mensajes de WhatsApp.
+    - alias_mp: Alias de Mercado Pago o billetera virtual (ej: juan.streaming.mp).
+    - cvu_cbu: Número de 22 dígitos CBU/CVU.
+    - titular: Nombre completo del titular de la cuenta receptora.
+    - banco: Nombre de la entidad financiera (ej: Mercado Pago, Banco Galicia, Brubank).
+    - usdt: Dirección de Binance Pay o red TRC20/BEP20 (opcional).
+    - instrucciones_extra: Instrucciones de pago adicionales (ej: 'Enviar comprobante').
+    """
+    res = database.save_payment_settings(
+        alias_mp=alias_mp,
+        cvu_cbu=cvu_cbu,
+        account_holder=titular,
+        bank_name=banco,
+        usdt_address=usdt,
+        extra_instructions=instrucciones_extra
+    )
+    return (
+        f"✅ DATOS DE COBRO ACTUALIZADOS EXITOSAMENTE:\n"
+        f"• Alias MP: <code>{res.get('alias_mp')}</code>\n"
+        f"• CBU/CVU: <code>{res.get('cvu_cbu')}</code>\n"
+        f"• Titular: {res.get('account_holder')}\n"
+        f"• Banco: {res.get('bank_name')}\n"
+        f"🎉 Ya están disponibles e integrados en todas las plantillas de WhatsApp mediante la etiqueta {{metodos_pago}}."
+    )
+
 
 
 # ==========================================
@@ -1207,6 +1301,9 @@ async def dashboard(request: Request):
     combos_list = database.get_combos()
     all_clients_list = database.list_all_clients()
     client_select_options = "".join([f'<option value="{c["id"]}">{c["name"]} ({c.get("client_code") or ""})</option>' for c in all_clients_list])
+    payment_settings = database.get_payment_settings()
+    whatsapp_templates = database.get_whatsapp_templates()
+    formatted_payment_preview = database.get_formatted_payment_methods()
 
     msg_raw = request.query_params.get("msg", "")
     wa_param = request.query_params.get("wa", "")
@@ -1236,6 +1333,12 @@ async def dashboard(request: Request):
             msg_text = "✅ Combo promocional guardado correctamente."
         elif msg_raw == "combo_deleted":
             msg_text = "🗑️ Combo promocional eliminado."
+        elif msg_raw == "payment_settings_saved":
+            msg_text = "✅ Datos de cobro (CBU / Alias / MP) actualizados correctamente."
+        elif msg_raw == "template_saved":
+            msg_text = "✅ Plantilla de WhatsApp guardada con éxito."
+        elif msg_raw == "template_reset":
+            msg_text = "🔄 Plantilla restaurada a los valores predeterminados de fábrica."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -1590,6 +1693,74 @@ async def dashboard(request: Request):
             .btn-logout {{ background: #1e293b; color: #cbd5e1; text-decoration: none; padding: 8px 14px; border-radius: 8px; font-size: 0.85rem; }}
             .btn-logout:hover {{ background: #334155; color: #fff; }}
             .endpoint-banner {{ background: #0369a1; color: white; padding: 12px 18px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-top: 15px; font-size: 0.9rem; }}
+
+            /* Plantillas WhatsApp & Preview */
+            .template-chip {{
+                background: #1e293b;
+                border: 1px solid #38bdf8;
+                color: #38bdf8;
+                padding: 5px 10px;
+                border-radius: 6px;
+                font-size: 0.78rem;
+                font-family: monospace;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                display: inline-block;
+                user-select: none;
+            }}
+            .template-chip:hover {{
+                background: #0284c7;
+                color: #ffffff;
+                border-color: #0284c7;
+            }}
+            .wa-preview-card {{
+                background: #0b141a;
+                border: 1px solid #222e35;
+                border-radius: 12px;
+                padding: 16px;
+                display: flex;
+                flex-direction: column;
+                min-height: 280px;
+                background-image: radial-gradient(#1f2c34 1px, transparent 1px);
+                background-size: 16px 16px;
+            }}
+            .wa-bubble {{
+                background: #005c4b;
+                color: #e9edef;
+                padding: 12px 14px;
+                border-radius: 8px 8px 0 8px;
+                font-size: 0.84rem;
+                line-height: 1.45;
+                max-width: 95%;
+                align-self: flex-end;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+                white-space: pre-wrap;
+                word-break: break-word;
+            }}
+            .wa-bubble-time {{
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                gap: 4px;
+                font-size: 0.65rem;
+                color: #8696a0;
+                margin-top: 5px;
+            }}
+            .tpl-subtab-btn {{
+                background: #1e293b;
+                border: 1px solid #334155;
+                color: #94a3b8;
+                padding: 8px 14px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 0.85rem;
+                font-weight: 600;
+            }}
+            .tpl-subtab-btn.active {{
+                background: #0284c7;
+                border-color: #0284c7;
+                color: #ffffff;
+            }}
         </style>
         <script>
             function showTab(tabId) {{
@@ -1756,11 +1927,121 @@ async def dashboard(request: Request):
                     r.style.display = txt.includes(q) ? '' : 'none';
                 }});
             }}
+
+            let currentTemplateKey = 'cobro';
+            let cachedTemplates = {{}};
+            let cachedPaymentSettings = {{}};
+            let cachedFormattedPayment = '';
+
+            async function loadTemplatesManager() {{
+                try {{
+                    const res = await fetch('/api/templates/json');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    cachedTemplates = data.templates || {{}};
+                    cachedPaymentSettings = data.payment_settings || {{}};
+                    cachedFormattedPayment = data.formatted_payment_methods || '';
+                    switchTemplateTab(currentTemplateKey);
+                }} catch (e) {{
+                    console.error("Error cargando plantillas:", e);
+                }}
+            }}
+
+            function switchTemplateTab(key) {{
+                currentTemplateKey = key;
+                document.querySelectorAll('.tpl-subtab-btn').forEach(b => b.classList.remove('active'));
+                const activeBtn = document.getElementById('tpl-btn-' + key);
+                if (activeBtn) activeBtn.classList.add('active');
+
+                const tpl = cachedTemplates[key];
+                if (!tpl) return;
+
+                const keyInput = document.getElementById('editor-template-key');
+                if (keyInput) keyInput.value = key;
+                const titleInput = document.getElementById('editor-template-title');
+                if (titleInput) titleInput.value = tpl.title || '';
+                const descInput = document.getElementById('editor-template-desc');
+                if (descInput) descInput.value = tpl.description || '';
+
+                const titleDisp = document.getElementById('editor-title-display');
+                if (titleDisp) titleDisp.innerText = tpl.title || key;
+                const descDisp = document.getElementById('editor-desc-display');
+                if (descDisp) descDisp.innerText = tpl.description || '';
+
+                const contentArea = document.getElementById('editor-content');
+                if (contentArea) contentArea.value = tpl.content || '';
+
+                const resetForm = document.getElementById('form-reset-template');
+                if (resetForm) resetForm.action = '/api/templates/reset/' + key;
+
+                updateTemplatePreview();
+            }}
+
+            function insertTemplateTag(tag) {{
+                const area = document.getElementById('editor-content');
+                if (!area) return;
+                const start = area.selectionStart;
+                const end = area.selectionEnd;
+                const text = area.value;
+                area.value = text.substring(0, start) + tag + text.substring(end);
+                area.selectionStart = area.selectionEnd = start + tag.length;
+                area.focus();
+                updateTemplatePreview();
+            }}
+
+            function updateTemplatePreview() {{
+                const area = document.getElementById('editor-content');
+                const previewEl = document.getElementById('wa-preview-text');
+                if (!area || !previewEl) return;
+                const rawText = area.value;
+
+                const sampleContext = {{
+                    "cliente": "Lucas Martínez",
+                    "plataforma": "Netflix 4K",
+                    "email": "netflix.ultra4k@gmail.com",
+                    "password": "Password2026*",
+                    "perfil": "Perfil 2",
+                    "pin": "4421",
+                    "vencimiento": "2026-10-15",
+                    "dias_restantes": " (vence en 2 días)",
+                    "monto": "$ 5.500 ARS",
+                    "servicios_lista": "• Netflix 4K (Perfil 2) - Vence: 2026-10-15 ($ 5.500 ARS)\\n• Disney+ Premium (ESPN) - Vence: 2026-10-18 ($ 4.000 ARS)",
+                    "metodos_pago": cachedFormattedPayment || "• Mercado Pago (Alias): mi.alias.mp\\n• CBU/CVU: 0000003100012345678901\\n• Titular: Juan Ortiz\\n• Banco: Mercado Pago",
+                    "alias_mp": (cachedPaymentSettings && cachedPaymentSettings.alias_mp) || "mi.alias.mp",
+                    "cbu": (cachedPaymentSettings && cachedPaymentSettings.cvu_cbu) || "0000003100012345678901",
+                    "titular": (cachedPaymentSettings && cachedPaymentSettings.account_holder) || "Juan Ortiz",
+                    "banco": (cachedPaymentSettings && cachedPaymentSettings.bank_name) || "Mercado Pago",
+                    "usdt": (cachedPaymentSettings && cachedPaymentSettings.usdt_address) || "TYD2...BinanceUSDT",
+                    "cuentas_cantidad": "2"
+                }};
+
+                let rendered = rawText;
+                for (const [k, v] of Object.entries(sampleContext)) {{
+                    rendered = rendered.split('{{' + k + '}}').join(v || '');
+                }}
+
+                const cleanLines = rendered.split('\\n').filter(line => {{
+                    const t = line.trim();
+                    return !(t === '👤 *Perfil:*' || t === '👤 *Perfil Asignado:*' || t === '🔒 *PIN:*' || t === '🔒 *PIN de Perfil:*');
+                }});
+                rendered = cleanLines.join('\\n');
+
+                let formatted = rendered
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/\\*(.*?)\\*/g, "<strong>$1</strong>")
+                    .replace(/`(.*?)`/g, "<code style='background:rgba(255,255,255,0.12);padding:2px 4px;border-radius:3px;'>$1</code>");
+
+                previewEl.innerHTML = formatted;
+            }}
+
             window.addEventListener('DOMContentLoaded', () => {{
                 const hash = window.location.hash.replace('#', '');
                 if (hash && document.getElementById(hash)) {{
                     showTab(hash);
                 }}
+                loadTemplatesManager();
             }});
         </script>
     </head>
@@ -1826,6 +2107,7 @@ async def dashboard(request: Request):
                     <button id="btn-tab-screens" class="tab-btn" onclick="showTab('tab-screens')">📺 Pantallas ({len(screens_overview)})</button>
                     <button id="btn-tab-catalog" class="tab-btn" onclick="showTab('tab-catalog')">🏷️ Precios & Combos ({len(catalog_items)}/{len(combos_list)})</button>
                     <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({len(transactions)})</button>
+                    <button id="btn-tab-templates" class="tab-btn" onclick="showTab('tab-templates')">💬 Plantillas WhatsApp</button>
                     <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
                     <button id="btn-tab-backup" class="tab-btn" onclick="showTab('tab-backup')">📁 Excel & Backups</button>
@@ -2095,6 +2377,147 @@ async def dashboard(request: Request):
                         </div>
                     </div>
                 </div>
+
+                <!-- Pestaña 💬 Plantillas WhatsApp y Datos de Cobro -->
+                <div id="tab-templates" class="tab-content" style="display:none;">
+                    <!-- 1. Configuración de Cobro y CBU -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #1e293b; padding-bottom:10px;">
+                            <div>
+                                <h3 style="margin:0; color:#38bdf8; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+                                    💳 Configuración de Datos de Cobro (CBU / Alias / MP)
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Estos datos se inyectarán en tus mensajes en la etiqueta <code>{{metodos_pago}}</code> o en sus variables individuales.
+                                </p>
+                            </div>
+                        </div>
+
+                        <form action="/api/settings/payment" method="POST">
+                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:16px;">
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Alias Mercado Pago / Billetera</label>
+                                    <input type="text" name="alias_mp" value="{payment_settings.get('alias_mp', '')}" placeholder="ej: juan.streaming.mp" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">CBU / CVU Bancario (22 dígitos)</label>
+                                    <input type="text" name="cvu_cbu" value="{payment_settings.get('cvu_cbu', '')}" placeholder="ej: 0000003100012345678901" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Titular de la Cuenta</label>
+                                    <input type="text" name="account_holder" value="{payment_settings.get('account_holder', '')}" placeholder="ej: Juan Manuel Ortiz" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Banco / Entidad Receptora</label>
+                                    <input type="text" name="bank_name" value="{payment_settings.get('bank_name', 'Mercado Pago / Transferencia Bancaria')}" placeholder="ej: Mercado Pago / Banco Galicia" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Binance Pay / USDT Address (Opcional)</label>
+                                    <input type="text" name="usdt_address" value="{payment_settings.get('usdt_address', '')}" placeholder="ej: Binance Pay ID o red TRC20" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Instrucciones Adicionales</label>
+                                    <input type="text" name="extra_instructions" value="{payment_settings.get('extra_instructions', '')}" placeholder="ej: Enviar comprobante por WhatsApp" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                                <button type="submit" class="btn" style="background:#059669; padding:9px 18px; font-weight:bold;">
+                                    💾 Guardar Datos de Cobro
+                                </button>
+                                <span style="font-size:0.8rem; color:#94a3b8;">
+                                    Última actualización: <strong>{payment_settings.get('updated_at', 'Predeterminado')}</strong>
+                                </span>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- 2. Editor de Plantillas de WhatsApp -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <h3 id="editor-title-display" style="margin:0; color:#38bdf8; font-size:1.15rem;">
+                                    Cobro / Recordatorio Individual
+                                </h3>
+                                <p id="editor-desc-display" style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Plantilla enviada cuando vence una suscripción individual.
+                                </p>
+                            </div>
+                            <!-- Selector de Plantillas -->
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <button type="button" id="tpl-btn-cobro" class="tpl-subtab-btn active" onclick="switchTemplateTab('cobro')">🔔 Cobro Individual</button>
+                                <button type="button" id="tpl-btn-cobro_consolidado" class="tpl-subtab-btn" onclick="switchTemplateTab('cobro_consolidado')">🧾 Cobro Consolidado</button>
+                                <button type="button" id="tpl-btn-entrega" class="tpl-subtab-btn" onclick="switchTemplateTab('entrega')">🍿 Entrega de Accesos</button>
+                                <button type="button" id="tpl-btn-reemplazo" class="tpl-subtab-btn" onclick="switchTemplateTab('reemplazo')">🛠️ Reemplazo por Caída</button>
+                            </div>
+                        </div>
+
+                        <!-- Barra de Etiquetas Dinámicas (Chips interactivos) -->
+                        <div style="margin-bottom:14px; background:#161e2e; border:1px solid #334155; border-radius:8px; padding:12px;">
+                            <div style="font-size:0.8rem; color:#cbd5e1; margin-bottom:8px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                <span>🏷️ Etiquetas Dinámicas (Haz clic para insertar en la posición del cursor):</span>
+                            </div>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{cliente}}')">+ {{cliente}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{plataforma}}')">+ {{plataforma}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{email}}')">+ {{email}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{password}}')">+ {{password}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{perfil}}')">+ {{perfil}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{pin}}')">+ {{pin}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{vencimiento}}')">+ {{vencimiento}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{dias_restantes}}')">+ {{dias_restantes}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{monto}}')">+ {{monto}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{metodos_pago}}')" style="border-color:#10b981; color:#10b981;">+ {{metodos_pago}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{alias_mp}}')">+ {{alias_mp}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{cbu}}')">+ {{cbu}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{titular}}')">+ {{titular}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{banco}}')">+ {{banco}}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{{servicios_lista}}')" style="border-color:#f59e0b; color:#f59e0b;">+ {{servicios_lista}}</button>
+                            </div>
+                        </div>
+
+                        <!-- Editor a 2 Columnas: Textarea y Vista Previa WhatsApp -->
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap:20px; align-items:start;">
+                            <!-- Columna 1: Editor Formulario -->
+                            <div>
+                                <form action="/api/templates/save" method="POST" id="form-save-template">
+                                    <input type="hidden" name="template_key" id="editor-template-key" value="cobro">
+                                    <input type="hidden" name="title" id="editor-template-title" value="">
+                                    <input type="hidden" name="description" id="editor-template-desc" value="">
+                                    <textarea name="content" id="editor-content" rows="18" oninput="updateTemplatePreview()" placeholder="Escribe el texto de la plantilla aquí..." style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#f8fafc; border-radius:8px; padding:12px; font-family:monospace; font-size:0.85rem; line-height:1.5; resize:vertical;"></textarea>
+                                    <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; align-items:center;">
+                                        <button type="submit" class="btn" style="background:#059669; padding:10px 20px; font-weight:bold; font-size:0.9rem;">
+                                            💾 Guardar Cambios en Plantilla
+                                        </button>
+                                        <button type="submit" form="form-reset-template" class="btn btn-warn" style="padding:10px 14px; font-size:0.85rem;" onclick="return confirm('¿Restaurar esta plantilla a los textos predeterminados de fábrica?')">
+                                            🔄 Restaurar Predeterminada
+                                        </button>
+                                    </div>
+                                </form>
+                                <form id="form-reset-template" action="/api/templates/reset/cobro" method="POST" style="display:none;"></form>
+                            </div>
+
+                            <!-- Columna 2: Vista Previa en Vivo WhatsApp -->
+                            <div>
+                                <div class="wa-preview-card">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #222e35; padding-bottom:8px;">
+                                        <span style="color:#aebac1; font-size:0.85rem; font-weight:600;">💬 Vista Previa en Vivo (Estilo WhatsApp)</span>
+                                        <span style="background:#1f2c34; color:#25d366; font-size:0.75rem; padding:3px 8px; border-radius:12px; font-weight:bold;">● Simulación</span>
+                                    </div>
+                                    <div class="wa-bubble">
+                                        <div id="wa-preview-text">Cargando vista previa...</div>
+                                        <div class="wa-bubble-time">
+                                            <span>19:45</span>
+                                            <span style="color:#53bdeb;">✓✓</span>
+                                        </div>
+                                    </div>
+                                    <div style="margin-top:14px; font-size:0.75rem; color:#8696a0; text-align:center;">
+                                        💡 Las variables se sustituirán automáticamente con los datos reales de cada cuenta y cliente al enviar el mensaje.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -2242,6 +2665,67 @@ async def api_get_client_360(client_id: str, request: Request):
     if not profile:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return profile
+
+@app.get("/api/templates/json")
+async def api_get_templates_json(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    return {
+        "templates": database.get_whatsapp_templates(),
+        "payment_settings": database.get_payment_settings(),
+        "formatted_payment_methods": database.get_formatted_payment_methods()
+    }
+
+@app.post("/api/settings/payment")
+async def api_save_payment_settings(
+    request: Request,
+    alias_mp: str = Form(""),
+    cvu_cbu: str = Form(""),
+    account_holder: str = Form(""),
+    bank_name: str = Form(""),
+    usdt_address: str = Form(""),
+    extra_instructions: str = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.save_payment_settings(
+        alias_mp=alias_mp,
+        cvu_cbu=cvu_cbu,
+        account_holder=account_holder,
+        bank_name=bank_name,
+        usdt_address=usdt_address,
+        extra_instructions=extra_instructions
+    )
+    return RedirectResponse(url="/?msg=payment_settings_saved#tab-templates", status_code=302)
+
+@app.post("/api/templates/save")
+async def api_save_template(
+    request: Request,
+    template_key: str = Form(...),
+    content: str = Form(...),
+    title: str = Form(""),
+    description: str = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.save_whatsapp_template(
+        template_key=template_key,
+        content=content,
+        title=title,
+        description=description
+    )
+    return RedirectResponse(url="/?msg=template_saved#tab-templates", status_code=302)
+
+@app.post("/api/templates/reset/{template_key}")
+async def api_reset_template(template_key: str, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.reset_whatsapp_template(template_key)
+    return RedirectResponse(url="/?msg=template_reset#tab-templates", status_code=302)
 
 @app.post("/api/collect-payment/{account_id}")
 async def collect_payment_api(account_id: int, request: Request):

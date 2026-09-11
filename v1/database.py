@@ -1,7 +1,10 @@
 import os
 import sqlite3
+import hashlib
+import secrets
+import time
 from datetime import datetime, date
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 DB_DIR = os.getenv("DATA_DIR", "/app/data")
 DB_PATH = os.path.join(DB_DIR, "services.db")
@@ -12,11 +15,33 @@ def get_connection() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
+# ==========================================
+# Criptografía de contraseñas (PBKDF2-SHA256)
+# ==========================================
+def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
+    if salt is None:
+        salt = secrets.token_hex(16)
+    key = hashlib.pbkdf2_hmac(
+        'sha256',
+        password.encode('utf-8'),
+        salt.encode('utf-8'),
+        100000
+    )
+    return key.hex(), salt
+
+def verify_password(password: str, stored_hash: str, salt: str) -> bool:
+    computed_hash, _ = hash_password(password, salt)
+    return secrets.compare_digest(computed_hash, stored_hash)
+
+# ==========================================
+# Inicialización y Esquema
+# ==========================================
 def init_db():
-    """Inicializa la base de datos y crea la tabla si no existe."""
+    """Inicializa la base de datos y crea las tablas necesarias."""
     conn = get_connection()
     try:
         with conn:
+            # Tabla de servicios
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS services (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,12 +55,102 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+            # Tabla de usuarios administradores
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS admin_users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    username TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    salt TEXT NOT NULL,
+                    totp_secret TEXT DEFAULT '',
+                    telegram_otp TEXT DEFAULT '',
+                    telegram_otp_expiry REAL DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
     finally:
         conn.close()
 
+# ==========================================
+# Gestión de Usuarios y 2FA
+# ==========================================
+def create_or_update_admin(username: str, password: str, totp_secret: str = ""):
+    """Crea o actualiza la contraseña de un usuario administrador."""
+    p_hash, salt = hash_password(password)
+    conn = get_connection()
+    try:
+        with conn:
+            existing = conn.execute("SELECT id, totp_secret FROM admin_users WHERE username = ?", (username,)).fetchone()
+            if existing:
+                secret_to_use = totp_secret if totp_secret else existing["totp_secret"]
+                conn.execute("""
+                    UPDATE admin_users 
+                    SET password_hash = ?, salt = ?, totp_secret = ?
+                    WHERE username = ?
+                """, (p_hash, salt, secret_to_use, username))
+            else:
+                conn.execute("""
+                    INSERT INTO admin_users (username, password_hash, salt, totp_secret)
+                    VALUES (?, ?, ?, ?)
+                """, (username, p_hash, salt, totp_secret))
+    finally:
+        conn.close()
+
+def get_admin_user(username: str) -> Optional[Dict[str, Any]]:
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM admin_users WHERE username = ?", (username,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+def verify_admin_credentials(username: str, password: str) -> bool:
+    user = get_admin_user(username)
+    if not user:
+        return False
+    return verify_password(password, user["password_hash"], user["salt"])
+
+def set_telegram_otp(username: str, otp: str, duration_seconds: int = 300):
+    """Guarda un OTP temporal de Telegram con expiración (por defecto 5 minutos)."""
+    expiry = time.time() + duration_seconds
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                UPDATE admin_users 
+                SET telegram_otp = ?, telegram_otp_expiry = ?
+                WHERE username = ?
+            """, (otp, expiry, username))
+    finally:
+        conn.close()
+
+def verify_telegram_otp(username: str, otp: str) -> bool:
+    """Verifica si el OTP de Telegram es correcto y no ha expirado."""
+    user = get_admin_user(username)
+    if not user:
+        return False
+    stored_otp = user.get("telegram_otp")
+    expiry = user.get("telegram_otp_expiry", 0)
+    
+    if not stored_otp or time.time() > expiry:
+        return False
+        
+    if secrets.compare_digest(stored_otp, otp.strip()):
+        # Limpiar el OTP usado para que sea de un solo uso
+        conn = get_connection()
+        try:
+            with conn:
+                conn.execute("UPDATE admin_users SET telegram_otp = '', telegram_otp_expiry = 0 WHERE username = ?", (username,))
+        finally:
+            conn.close()
+        return True
+    return False
+
+# ==========================================
+# Gestión de Servicios
+# ==========================================
 def add_service(name: str, expiry_date: str, category: str = "Servicio", 
                 recurrence: str = "mensual", cost: str = "", notes: str = "") -> Dict[str, Any]:
-    """Registra un nuevo servicio o suscripción."""
     conn = get_connection()
     try:
         with conn:
@@ -44,14 +159,12 @@ def add_service(name: str, expiry_date: str, category: str = "Servicio",
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (name.strip(), category.strip(), expiry_date.strip(), recurrence.strip(), cost.strip(), notes.strip()))
             service_id = cursor.lastrowid
-            
             row = conn.execute("SELECT * FROM services WHERE id = ?", (service_id,)).fetchone()
             return dict(row)
     finally:
         conn.close()
 
 def list_services() -> List[Dict[str, Any]]:
-    """Obtiene todos los servicios ordenados por fecha de vencimiento."""
     conn = get_connection()
     try:
         rows = conn.execute("SELECT * FROM services ORDER BY expiry_date ASC").fetchall()
@@ -78,7 +191,6 @@ def list_services() -> List[Dict[str, Any]]:
         conn.close()
 
 def get_expiring_services(days_window: int = 2) -> List[Dict[str, Any]]:
-    """Devuelve los servicios que vencen en los próximos `days_window` días o ya vencidos."""
     all_svcs = list_services()
     expiring = []
     for s in all_svcs:
@@ -88,7 +200,6 @@ def get_expiring_services(days_window: int = 2) -> List[Dict[str, Any]]:
     return expiring
 
 def delete_service(service_id: int) -> bool:
-    """Elimina un servicio por su ID."""
     conn = get_connection()
     try:
         with conn:
@@ -98,7 +209,6 @@ def delete_service(service_id: int) -> bool:
         conn.close()
 
 def update_service_date(service_id: int, new_expiry_date: str) -> bool:
-    """Actualiza la fecha de vencimiento de un servicio (ej. tras renovar)."""
     conn = get_connection()
     try:
         with conn:
@@ -112,7 +222,6 @@ def update_service_date(service_id: int, new_expiry_date: str) -> bool:
         conn.close()
 
 def mark_alert_sent(service_id: int, alert_date: str):
-    """Marca la fecha en que se envió la última alerta para evitar duplicados en el mismo día."""
     conn = get_connection()
     try:
         with conn:

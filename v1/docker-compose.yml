@@ -6,11 +6,17 @@ services:
     container_name: gemini-mcp-vencimientos
     restart: unless-stopped
     ports:
-      # Puerto 8002 en tu servidor (host) mapeado al 8000 del contenedor
+      # Puerto 8002 en tu servidor Oracle mapeado al contenedor
       - "8002:8000"
     environment:
+      # Credenciales del Bot de Telegram
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      # Credenciales de acceso al Panel Web (2FA obligatorio)
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-}
+      # Configuración de alertas
       - DAYS_BEFORE_ALERT=${DAYS_BEFORE_ALERT:-2}
       - ALERT_HOUR=${ALERT_HOUR:-9}
       - ALERT_MINUTE=${ALERT_MINUTE:-0}
@@ -18,6 +24,7 @@ services:
       - DATA_DIR=/app/data
       - PORT=8000
     volumes:
+      # Volumen persistente para la base de datos SQLite y usuarios
       - mcp_data:/app/data
 
 volumes:

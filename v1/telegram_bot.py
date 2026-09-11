@@ -178,33 +178,108 @@ def get_main_menu_keyboard() -> Dict[str, Any]:
                 {"text": "⏳ Por Cobrar (7d)", "callback_data": "menu_cobros"}
             ],
             [
-                {"text": "🏷️ Precios ARS", "callback_data": "menu_catalog"},
-                {"text": "📦 Combos Activos", "callback_data": "menu_combos"}
+                {"text": "👤 Ficha de Cliente", "callback_data": "menu_client_prompt"},
+                {"text": "🏷️ Precios ARS", "callback_data": "menu_catalog"}
             ],
             [
-                {"text": "📦 Stock & Alertas", "callback_data": "menu_stock"},
+                {"text": "📦 Combos Activos", "callback_data": "menu_combos"},
                 {"text": "📺 Pantallas", "callback_data": "menu_screens"}
             ],
             [
-                {"text": "🚨 Cuentas Caídas", "callback_data": "menu_fallen"},
-                {"text": "🔍 Escanear Ahora", "callback_data": "menu_scan"}
+                {"text": "📦 Stock & Alertas", "callback_data": "menu_stock"},
+                {"text": "🚨 Cuentas Caídas", "callback_data": "menu_fallen"}
             ],
             [
+                {"text": "🔍 Escanear Ahora", "callback_data": "menu_scan"},
                 {"text": "💾 Descargar Backup CSV", "callback_data": "menu_backup"}
             ]
         ]
     }
 
-def get_alert_keyboard(account_id: int, wa_url: str = "") -> Dict[str, Any]:
+def get_alert_keyboard(account_id: int, wa_url: str = "", client_id: Optional[int] = None, wa_consolidated_url: str = "", multiple_count: int = 0) -> Dict[str, Any]:
     """Botones para las alertas de vencimiento."""
     kb = []
+    if wa_consolidated_url and multiple_count > 1:
+        kb.append([{"text": f"🧾 Cobro Consolidado ({multiple_count} servicios - 1 Clic)", "url": wa_consolidated_url}])
     if wa_url:
         kb.append([{"text": "💬 Cobrar por WhatsApp (1 Clic)", "url": wa_url}])
-    kb.append([
+    
+    actions_row = [
         {"text": "💵 Pagó (Renovar 30d)", "callback_data": f"pay_{account_id}"},
         {"text": "🚨 Marcar Caída", "callback_data": f"fall_{account_id}"}
-    ])
+    ]
+    kb.append(actions_row)
+
+    if client_id:
+        kb.append([{"text": "👤 Ver Ficha 360° del Cliente", "callback_data": f"client_{client_id}"}])
+
     return {"inline_keyboard": kb}
+
+def format_client_360_telegram(profile: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Genera el texto HTML formateado y el teclado interactivo para la Ficha 360° en Telegram."""
+    c = profile["client"]
+    health = profile["health_status"]
+    kpis = profile["financial_kpis"]
+    act = profile.get("active_accounts", [])
+    billing = profile.get("consolidated_billing", {})
+
+    lines = [
+        f"👤 <b>FICHA 360°: {c['name']}</b> (<code>{c['client_code']}</code>)",
+        f"• Tipo: {c['client_type_label']}",
+        f"• Estado de Salud: <b>{health['label']}</b>",
+        f"• Diagnóstico: <i>{health['summary']}</i>",
+        "──────────────────────"
+    ]
+
+    # Contacto
+    contact_parts = []
+    if c.get("whatsapp"):
+        clean_num = c.get("clean_whatsapp") or re.sub(r'\D', '', c['whatsapp'])
+        contact_parts.append(f"📱 <a href=\"https://wa.me/{clean_num}\">{c['whatsapp']}</a>")
+    if c.get("telegram"):
+        clean_tg = c['telegram'].lstrip('@')
+        contact_parts.append(f"💬 <a href=\"https://t.me/{clean_tg}\">@{clean_tg}</a>")
+    if contact_parts:
+        lines.append("📞 " + " | ".join(contact_parts))
+    if c.get("notes"):
+        lines.append(f"📝 <i>Notas: {c['notes']}</i>")
+
+    lines.append("──────────────────────")
+    lines.append("💰 <b>MÉTRICAS & LTV (Pesos Argentinos):</b>")
+    lines.append(f"• Total Facturado (LTV): <b>{kpis['ltv_formatted']}</b> ({kpis['payments_count']} cobros)")
+    lines.append(f"• Ganancia Neta Real: <b>{kpis['total_profit_formatted']}</b>")
+    lines.append(f"• Gasto Mensual Activo: <b>{kpis['monthly_committed_spend_formatted']}</b>")
+    if kpis.get("last_payment"):
+        lp = kpis["last_payment"]
+        dt = str(lp.get("created_at", ""))[:10]
+        lines.append(f"• Último Cobro: {lp['amount_formatted']} ({dt}) vía {lp.get('payment_method')}")
+
+    lines.append("──────────────────────")
+    lines.append(f"📺 <b>SUSCRIPCIONES ACTIVAS ({len(act)}):</b>")
+    if not act:
+        lines.append("<i>(No posee suscripciones activas asignadas actualmente)</i>")
+    else:
+        for a in act:
+            perf = f" (Perf: {a['profile_name']})" if a.get("profile_name") else ""
+            pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
+            lines.append(
+                f"• <b>{a['platform']}</b>{perf}: <code>{a['email']}</code>{pin}\n"
+                f"  Vence: <code>{a.get('expiry_date')}</code> ({a.get('days_label')}) | Cobro: <b>{a.get('price_formatted')}</b>"
+            )
+
+    # Teclado Inline
+    kb = []
+    if billing.get("success") and billing.get("wa_link"):
+        kb.append([{"text": f"📲 Cobro Consolidado WhatsApp ({billing['accounts_count']} servicios)", "url": billing["wa_link"]}])
+    elif c.get("clean_whatsapp"):
+        kb.append([{"text": "💬 Abrir Chat de WhatsApp", "url": f"https://wa.me/{c['clean_whatsapp']}"}])
+
+    if len(act) == 1:
+        kb.append([{"text": f"💵 Cobrar {act[0]['platform']} (Renovar 30d)", "callback_data": f"pay_{act[0]['id']}"}])
+
+    kb.append([{"text": "🔙 Menú Principal", "callback_data": "menu_main"}])
+
+    return "\n".join(lines), {"inline_keyboard": kb}
 
 async def format_and_send_alert(account: Dict[str, Any]) -> bool:
     """Formatea una alerta de vencimiento para cuentas de streaming con datos del cliente."""
@@ -221,6 +296,7 @@ async def format_and_send_alert(account: Dict[str, Any]) -> bool:
     expiry = account.get("expiry_date", "")
     price = account.get("price", "")
     days = account.get("days_remaining", 0)
+    client_id = account.get("client_id")
     
     if days is not None and days < 0:
         icon = "🚨"
@@ -259,21 +335,43 @@ async def format_and_send_alert(account: Dict[str, Any]) -> bool:
         lines.append(f"💰 <b>A cobrar:</b> {price}")
 
     # Enlace de 1 Clic para cobrar por WhatsApp
+    wa_url = ""
     try:
         from database import generate_whatsapp_message
         wa_data = generate_whatsapp_message(account, message_type="cobro")
-        wa_url = wa_data.get("wa_link")
+        wa_url = wa_data.get("wa_link", "")
         if wa_url:
             lines.append("━━━━━━━━━━━━━━━━━━━━━━")
             lines.append(f"📲 <a href=\"{wa_url}\"><b>👉 ENVIAR RECORDATORIO POR WHATSAPP (1 Clic)</b></a>")
     except Exception as e:
         logger.error(f"Error generando link de WhatsApp en alerta: {e}")
 
+    # Chequear si el cliente tiene múltiples servicios para cobro consolidado
+    wa_consolidated_url = ""
+    multiple_count = 0
+    if client_id:
+        try:
+            profile = database.get_client_360_profile(client_id)
+            if profile and profile.get("consolidated_billing", {}).get("success"):
+                billing = profile["consolidated_billing"]
+                multiple_count = billing.get("accounts_count", 0)
+                if multiple_count > 1:
+                    wa_consolidated_url = billing.get("wa_link", "")
+                    lines.append(f"🧾 <i>Este cliente tiene {multiple_count} servicios activos (Total: {billing.get('total_amount_formatted')}).</i>")
+        except Exception as e:
+            logger.error(f"Error calculando cobro consolidado en alerta: {e}")
+
     lines.append("━━━━━━━━━━━━━━━━━━━━━━")
     lines.append("<i>👇 Gestiona esta suscripción con los botones:</i>")
     
     message_text = "\n".join(lines)
-    reply_markup = get_alert_keyboard(account["id"], wa_url)
+    reply_markup = get_alert_keyboard(
+        account["id"], 
+        wa_url=wa_url, 
+        client_id=client_id, 
+        wa_consolidated_url=wa_consolidated_url, 
+        multiple_count=multiple_count
+    )
     return await send_telegram_message(message_text, reply_markup=reply_markup)
 
 async def format_and_send_stock_alert(chat_id: str = "") -> bool:
@@ -414,6 +512,32 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         else:
             await send_telegram_message("No hay cuentas activas registradas para enviar alerta.", chat_id=chat_id)
 
+    elif cmd.startswith("/cliente") or cmd.startswith("/ficha") or cmd.startswith("/buscar"):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            msg_prompt = (
+                "👤 <b>CONSULTA DE FICHA 360° DE CLIENTE</b>\n\n"
+                "Para consultar el perfil completo, salud de pagos, LTV en ARS y suscripciones activas, escribe el comando seguido de su nombre, código o WhatsApp:\n\n"
+                "👉 <code>/cliente Juan</code>\n"
+                "👉 <code>/cliente CLI-001</code>\n"
+                "👉 <code>/cliente 54911...</code>\n"
+                "👉 <code>/cliente @usuario</code>"
+            )
+            await send_telegram_message(msg_prompt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            query_val = parts[1].strip()
+            profile = database.get_client_360_profile(query_val)
+            if not profile:
+                await send_telegram_message(
+                    f"❌ No se encontró ningún cliente que coincida con '<b>{query_val}</b>'.\n\n"
+                    f"Verifica el nombre, número de WhatsApp o código e inténtalo nuevamente.",
+                    reply_markup=get_main_menu_keyboard(),
+                    chat_id=chat_id
+                )
+            else:
+                card_text, kb = format_client_360_telegram(profile)
+                await send_telegram_message(card_text, reply_markup=kb, chat_id=chat_id)
+
     elif cmd in ("/backup", "backup", "/exportar", "exportar"):
         await send_full_backup_to_telegram(chat_id=chat_id)
 
@@ -493,6 +617,28 @@ async def handle_telegram_callback(query: Dict[str, Any]):
                     f"   💰 Final: <b>{cb['price_final_formatted']}</b> | 👔 Rev: <b>{cb['price_reseller_formatted']}</b>\n"
                 )
             await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data == "menu_client_prompt":
+        await answer_callback_query(query_id)
+        msg_prompt = (
+            "👤 <b>CONSULTAR FICHA 360° DE CLIENTE</b>\n\n"
+            "Escribe en el chat el comando <code>/cliente</code> seguido del nombre, teléfono o @telegram.\n\n"
+            "Ejemplo:\n"
+            "👉 <code>/cliente Lucas</code>\n"
+            "👉 <code>/cliente CLI-002</code>\n"
+            "👉 <code>/cliente 54911...</code>"
+        )
+        await send_telegram_message(msg_prompt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data.startswith("client_"):
+        await answer_callback_query(query_id)
+        client_id_val = data.replace("client_", "").strip()
+        profile = database.get_client_360_profile(client_id_val)
+        if not profile:
+            await send_telegram_message("❌ No se encontró la ficha del cliente.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            card_text, kb = format_client_360_telegram(profile)
+            await send_telegram_message(card_text, reply_markup=kb, chat_id=chat_id)
 
     elif data == "menu_main":
         await answer_callback_query(query_id)

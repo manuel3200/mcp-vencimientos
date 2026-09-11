@@ -418,20 +418,22 @@ def find_or_create_client(
     finally:
         conn.close()
 
-def search_client(query: str) -> Optional[Dict[str, Any]]:
+def search_client(query: Union[str, int]) -> Optional[Dict[str, Any]]:
     conn = get_connection()
-    q = query.strip()
+    q = str(query).strip()
     clean_q = q.replace(" ", "").replace("-", "")
+    client_id = int(q) if q.isdigit() else -1
     try:
         with conn:
             row = conn.execute("""
                 SELECT * FROM clients 
-                WHERE lower(name) LIKE lower(?)
+                WHERE id = ?
+                OR lower(name) LIKE lower(?)
                 OR lower(client_code) = lower(?)
                 OR lower(telegram) = lower(?)
                 OR replace(replace(whatsapp, ' ', ''), '-', '') LIKE ?
                 ORDER BY id ASC LIMIT 1
-            """, (f"%{q}%", q, f"@{q.lstrip('@')}", f"%{clean_q}%")).fetchone()
+            """, (client_id, f"%{q}%", q, f"@{q.lstrip('@')}", f"%{clean_q}%")).fetchone()
             
             if not row:
                 return None
@@ -1082,6 +1084,272 @@ def generate_whatsapp_message(
         "message_text": msg,
         "wa_link": wa_url
     }
+
+# ==========================================
+# 6. Ficha 360° del Cliente y Cobro Consolidado
+# ==========================================
+def generate_consolidated_billing_whatsapp(
+    client_id_or_dict: Union[str, int, Dict[str, Any]],
+    payment_methods: str = ""
+) -> Dict[str, Any]:
+    """Genera un mensaje agrupado de cobro y enlace de 1 clic (wa.me) para clientes con 1 o más servicios."""
+    if isinstance(client_id_or_dict, dict) and "client" in client_id_or_dict:
+        profile = client_id_or_dict
+    else:
+        profile = get_client_360_profile(client_id_or_dict)
+
+    if not profile or not profile.get("client"):
+        return {"success": False, "error": "No se encontró el cliente especificado."}
+
+    client = profile["client"]
+    client_name = client.get("name") or "Estimado/a"
+    raw_phone = client.get("whatsapp") or ""
+    clean_phone = client.get("clean_whatsapp") or clean_whatsapp_phone(raw_phone)
+    active_accounts = profile.get("active_accounts", [])
+
+    if not active_accounts:
+        return {
+            "success": False,
+            "client_name": client_name,
+            "whatsapp": raw_phone,
+            "clean_phone": clean_phone,
+            "error": "El cliente no tiene suscripciones activas registradas actualmente."
+        }
+
+    total_amount = sum(a.get("price_num", 0.0) for a in active_accounts)
+
+    services_lines = []
+    for a in active_accounts:
+        plat = a.get("platform", "Servicio")
+        perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
+        pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
+        vence = a.get("expiry_date") or "-"
+        d_lbl = a.get("days_label", "")
+        d_str = f" ({d_lbl})" if d_lbl else ""
+        price_str = a.get("price_formatted") or format_ars(a.get("price"))
+        services_lines.append(f"• *{plat}*{perf}: `{a.get('email')}`\n  Vence: {vence}{d_str} | Valor: {price_str}")
+
+    services_text = "\n".join(services_lines)
+
+    default_pm = (
+        "• Transferencia Bancaria / CVU / CBU\n"
+        "• Mercado Pago\n"
+        "• Binance USDT / Cripto"
+    )
+    pm_text = payment_methods.strip() if payment_methods else default_pm
+
+    msg = (
+        f"👋 *¡Hola {client_name}!* Esperamos que estés muy bien.\n\n"
+        f"Te compartimos el resumen consolidado de tus suscripciones activas ({len(active_accounts)}):\n\n"
+        f"{services_text}\n\n"
+        f"💰 *TOTAL CONSOLIDADO A RENOVAR:* {format_ars(total_amount)}\n\n"
+        f"💳 *Métodos de Pago:*\n{pm_text}\n\n"
+        f"Una vez realizado el abono, por favor envíanos tu comprobante por aquí para mantener tus perfiles 100% activos y sin cortes. ¡Muchas gracias! 🙌"
+    )
+
+    encoded_text = urllib.parse.quote(msg)
+    if clean_phone:
+        wa_url = f"https://wa.me/{clean_phone}?text={encoded_text}"
+    else:
+        wa_url = f"https://api.whatsapp.com/send?text={encoded_text}"
+
+    return {
+        "success": True,
+        "client_name": client_name,
+        "whatsapp": raw_phone,
+        "clean_phone": clean_phone,
+        "accounts_count": len(active_accounts),
+        "total_amount": total_amount,
+        "total_amount_formatted": format_ars(total_amount),
+        "message_text": msg,
+        "wa_link": wa_url
+    }
+
+def get_client_360_profile(query_or_id: Union[str, int]) -> Optional[Dict[str, Any]]:
+    """Obtiene la Ficha 360° completa de un cliente: salud, LTV en ARS, cuentas activas, historial de pagos y cobro consolidado."""
+    conn = get_connection()
+    try:
+        with conn:
+            client_row = None
+            q = str(query_or_id).strip()
+            if isinstance(query_or_id, int) or q.isdigit():
+                client_row = conn.execute("SELECT * FROM clients WHERE id = ?", (int(q),)).fetchone()
+
+            if not client_row:
+                clean_q = q.replace(" ", "").replace("-", "")
+                client_row = conn.execute("""
+                    SELECT * FROM clients
+                    WHERE lower(name) LIKE lower(?)
+                    OR lower(client_code) = lower(?)
+                    OR lower(telegram) = lower(?)
+                    OR replace(replace(whatsapp, ' ', ''), '-', '') LIKE ?
+                    ORDER BY id ASC LIMIT 1
+                """, (f"%{q}%", q, f"@{q.lstrip('@')}", f"%{clean_q}%")).fetchone()
+
+            if not client_row:
+                return None
+
+            client = dict(client_row)
+            client_id = client["id"]
+            client["clean_whatsapp"] = clean_whatsapp_phone(client.get("whatsapp", ""))
+            client["client_type_label"] = "👔 Revendedor" if "revend" in (client.get("client_type") or "").lower() else "👤 Consumidor Final"
+
+            # 2. Cuentas asociadas
+            acc_rows = conn.execute("""
+                SELECT * FROM streaming_accounts
+                WHERE client_id = ?
+                ORDER BY expiry_date ASC
+            """, (client_id,)).fetchall()
+
+            active_accounts = []
+            past_accounts = []
+            has_debt = False
+            has_expiring_soon = False
+
+            for r in acc_rows:
+                a = dict(r)
+                price_num = parse_money(a.get("price"))
+                cost_num = parse_money(a.get("cost"))
+                a["price_num"] = price_num
+                a["cost_num"] = cost_num
+                a["price_formatted"] = format_ars(price_num)
+                a["cost_formatted"] = format_ars(cost_num)
+
+                days_rem = None
+                days_lbl = "Sin fecha"
+                badge_class = "badge-ok"
+                if a.get("expiry_date"):
+                    try:
+                        exp = datetime.strptime(a["expiry_date"], "%Y-%m-%d").date()
+                        diff = (exp - date.today()).days
+                        days_rem = diff
+                        if diff < 0:
+                            days_lbl = f"Vencida hace {abs(diff)}d"
+                            badge_class = "badge-danger"
+                            has_debt = True
+                        elif diff == 0:
+                            days_lbl = "¡Vence HOY!"
+                            badge_class = "badge-warn"
+                            has_expiring_soon = True
+                        elif diff == 1:
+                            days_lbl = "Vence mañana"
+                            badge_class = "badge-warn"
+                            has_expiring_soon = True
+                        elif diff == 2:
+                            days_lbl = "Vence en 2 días"
+                            badge_class = "badge-warn"
+                            has_expiring_soon = True
+                        else:
+                            days_lbl = f"Vence en {diff} días"
+                            badge_class = "badge-ok"
+                    except Exception:
+                        pass
+
+                a["days_remaining"] = days_rem
+                a["days_label"] = days_lbl
+                a["badge_class"] = badge_class
+
+                if a.get("payment_status") == "pendiente":
+                    has_debt = True
+
+                # Generar links individuales
+                wa_cobro = generate_whatsapp_message(a, message_type="cobro")
+                a["wa_cobro_link"] = wa_cobro.get("wa_link", "")
+                wa_entrega = generate_whatsapp_message(a, message_type="entrega")
+                a["wa_entrega_link"] = wa_entrega.get("wa_link", "")
+
+                if a.get("status") in ("ocupada", "vencida", "caida"):
+                    active_accounts.append(a)
+                else:
+                    past_accounts.append(a)
+
+            # 3. Historial de Pagos y LTV
+            pay_rows = conn.execute("""
+                SELECT p.*, a.platform as account_platform, a.email as account_email
+                FROM payments p
+                LEFT JOIN streaming_accounts a ON p.account_id = a.id
+                WHERE p.client_id = ?
+                ORDER BY p.created_at DESC
+            """, (client_id,)).fetchall()
+
+            payments = []
+            ltv_amount = 0.0
+            total_profit = 0.0
+            total_cost = 0.0
+
+            for pr in pay_rows:
+                p = dict(pr)
+                amt = float(p.get("amount") or 0.0)
+                prof = float(p.get("profit") or 0.0)
+                cst = float(p.get("cost") or 0.0)
+                ltv_amount += amt
+                total_profit += prof
+                total_cost += cst
+
+                p["amount_formatted"] = format_ars(amt)
+                p["profit_formatted"] = f"+{format_ars(prof)}" if prof >= 0 else format_ars(prof)
+                p["cost_formatted"] = format_ars(cst)
+                payments.append(p)
+
+            monthly_spend = sum(a["price_num"] for a in active_accounts)
+
+            # 4. Semáforo de Salud
+            if has_debt:
+                health = {
+                    "code": "moroso",
+                    "label": "🔴 Con Deuda / Vencido",
+                    "badge_class": "badge-danger",
+                    "summary": "Tiene servicios vencidos o cobros pendientes."
+                }
+            elif has_expiring_soon:
+                health = {
+                    "code": "por_vencer",
+                    "label": "🟡 Por Vencer (Próximas 48hs)",
+                    "badge_class": "badge-warn",
+                    "summary": "Tiene servicios próximos a vencer."
+                }
+            elif active_accounts:
+                health = {
+                    "code": "al_dia",
+                    "label": "🟢 Al Día",
+                    "badge_class": "badge-ok",
+                    "summary": "Todas sus suscripciones activas están al día."
+                }
+            else:
+                health = {
+                    "code": "sin_servicios",
+                    "label": "⚪ Sin Servicios Activos",
+                    "badge_class": "badge-secondary",
+                    "summary": "No tiene servicios activos en este momento."
+                }
+
+            profile_data = {
+                "client": client,
+                "health_status": health,
+                "financial_kpis": {
+                    "ltv_amount": ltv_amount,
+                    "ltv_formatted": format_ars(ltv_amount),
+                    "total_profit": total_profit,
+                    "total_profit_formatted": f"+{format_ars(total_profit)}" if total_profit >= 0 else format_ars(total_profit),
+                    "total_cost": total_cost,
+                    "total_cost_formatted": format_ars(total_cost),
+                    "payments_count": len(payments),
+                    "monthly_committed_spend": monthly_spend,
+                    "monthly_committed_spend_formatted": format_ars(monthly_spend),
+                    "last_payment": payments[0] if payments else None
+                },
+                "active_accounts": active_accounts,
+                "past_accounts": past_accounts,
+                "payments_history": payments[:20]
+            }
+
+            # 5. Cobro consolidado
+            billing = generate_consolidated_billing_whatsapp(profile_data)
+            profile_data["consolidated_billing"] = billing
+
+            return profile_data
+    finally:
+        conn.close()
 
 # ==========================================
 # 7. Gestión de Pantallas Compartidas (Paso 3)

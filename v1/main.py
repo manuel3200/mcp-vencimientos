@@ -461,6 +461,68 @@ def buscar_cliente(query: str) -> str:
     return "\n".join(lines)
 
 @mcp.tool()
+def consultar_ficha_cliente(cliente: str) -> str:
+    """Consulta la Ficha 360° integral de un cliente: salud de pagos, LTV en ARS, ganancia neta generada, suscripciones activas y link de cobro consolidado."""
+    profile = database.get_client_360_profile(cliente)
+    if not profile:
+        return f"❌ No se encontró ningún cliente con '{cliente}'."
+
+    c = profile["client"]
+    health = profile["health_status"]
+    kpis = profile["financial_kpis"]
+    act = profile["active_accounts"]
+    billing = profile["consolidated_billing"]
+
+    lines = [
+        f"👤 <b>FICHA 360°: {c['name']}</b> ({c['client_code']})",
+        f"• Tipo: {c['client_type_label']}",
+        f"• Estado: {health['label']} ({health['summary']})",
+        f"• Contacto: WhatsApp: {c.get('whatsapp') or '-'} | Telegram: {c.get('telegram') or '-'}",
+        f"• Notas: {c.get('notes') or '-'}",
+        "",
+        "💰 <b>MÉTRICAS FINANCIERAS (ARS):</b>",
+        f"• LTV (Total Cobrado Histórico): {kpis['ltv_formatted']} ({kpis['payments_count']} cobros)",
+        f"• Ganancia Neta Real Acumulada: {kpis['total_profit_formatted']}",
+        f"• Facturación Mensual Activa: {kpis['monthly_committed_spend_formatted']}",
+    ]
+    if kpis.get("last_payment"):
+        lp = kpis["last_payment"]
+        lines.append(f"• Último Pago: {lp['amount_formatted']} ({str(lp.get('created_at', ''))[:10]}) vía {lp.get('payment_method')}")
+
+    lines.append(f"\n📺 <b>SUSCRIPCIONES ACTIVAS ({len(act)}):</b>")
+    if not act:
+        lines.append("  (No tiene servicios activos actualmente)")
+    else:
+        for a in act:
+            perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
+            pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
+            lines.append(
+                f"  • {a['platform']}{perf}: {a['email']} | Clave: {a['password']}{pin}\n"
+                f"    Vence: {a.get('expiry_date')} ({a.get('days_label')}) | Cobro: {a.get('price_formatted')}"
+            )
+
+    if billing.get("success") and billing.get("wa_link"):
+        lines.append("\n📲 <b>COBRO CONSOLIDADO WHATSAPP (1 Clic):</b>")
+        lines.append(f"• Total a Cobrar: {billing['total_amount_formatted']}")
+        lines.append(f"• Enlace directo: {billing['wa_link']}")
+
+    return "\n".join(lines)
+
+@mcp.tool()
+def generar_cobro_consolidado_whatsapp(cliente: str, metodos_pago: str = "") -> str:
+    """Genera el mensaje y enlace de 1 clic para cobrar todas las suscripciones activas de un cliente vía WhatsApp."""
+    res = database.generate_consolidated_billing_whatsapp(cliente, payment_methods=metodos_pago)
+    if not res.get("success"):
+        return f"❌ {res.get('error', 'Error generando cobro consolidado')}"
+
+    return (
+        f"📲 <b>Cobro Consolidado WhatsApp para {res['client_name']}:</b>\n\n"
+        f"💰 <b>Total Consolidado:</b> {res['total_amount_formatted']} ({res['accounts_count']} cuentas)\n"
+        f"🔗 <b>Enlace de 1 Clic (wa.me):</b> {res['wa_link']}\n\n"
+        f"💬 <b>Texto del Mensaje:</b>\n{res['message_text']}"
+    )
+
+@mcp.tool()
 def marcar_cuenta_caida(correo_o_id: str, motivo: str = "Suscripción caída") -> str:
     """Marca una cuenta o perfil como 'caida' para colocarla en la lista de reclamos."""
     acc = database.mark_account_fallen(correo_o_id, reason=motivo)
@@ -1143,6 +1205,8 @@ async def dashboard(request: Request):
     transactions = database.get_recent_transactions(limit=15)
     catalog_items = database.get_price_catalog()
     combos_list = database.get_combos()
+    all_clients_list = database.list_all_clients()
+    client_select_options = "".join([f'<option value="{c["id"]}">{c["name"]} ({c.get("client_code") or ""})</option>' for c in all_clients_list])
 
     msg_raw = request.query_params.get("msg", "")
     wa_param = request.query_params.get("wa", "")
@@ -1181,7 +1245,7 @@ async def dashboard(request: Request):
         </div>
         """
 
-    # 1. Filas de Cuentas Activas con botón de Cobrar
+    # 1. Filas de Cuentas Activas con botón de Cobrar y Ficha 360
     active_rows = ""
     for a in active_accounts:
         days = a.get("days_remaining")
@@ -1199,6 +1263,9 @@ async def dashboard(request: Request):
         tg_clean = a.get("telegram", "").lstrip("@")
         tg_link = f'<a href="https://t.me/{tg_clean}" target="_blank" style="color: #38bdf8;">@{tg_clean}</a>' if tg_clean else '-'
         client_tag = f"👔 {a.get('client_name')}" if "revend" in (a.get("client_type") or "").lower() else f"👤 {a.get('client_name')}"
+        client_id_val = a.get("client_id")
+        client_click = f'onclick="openClient360Modal({client_id_val})" style="cursor:pointer;color:#38bdf8;text-decoration:underline;" title="Ver Ficha 360° del Cliente"' if client_id_val else ''
+        btn_360 = f'<button type="button" onclick="openClient360Modal({client_id_val})" class="btn-action" style="background:#1e293b;border:1px solid #38bdf8;color:#38bdf8;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Ver Ficha 360°">👤 360°</button>' if client_id_val else ''
 
         perf = f"<br><small style='color:#94a3b8;'>Perf: {a['profile_name']}</small>" if a.get("profile_name") else ""
         pin = f"<small style='color:#94a3b8;'>PIN: {a['profile_pin']}</small>" if a.get("profile_pin") else ""
@@ -1210,7 +1277,7 @@ async def dashboard(request: Request):
 
         active_rows += f"""
         <tr>
-            <td><strong>{client_tag}</strong><br><small style="color:#64748b;">{a.get('client_code') or ''}</small></td>
+            <td><strong {client_click}>{client_tag}</strong><br><small style="color:#64748b;">{a.get('client_code') or ''}</small></td>
             <td>{wa_link}<br>{tg_link}</td>
             <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{a['platform']}</span>{perf}</td>
             <td><code>{a['email']}</code><br><code>{a['password']}</code> {pin}</td>
@@ -1218,6 +1285,7 @@ async def dashboard(request: Request):
             <td><span class="badge {badge}">{badge_txt}</span></td>
             <td><strong>{a.get('price') or '-'}</strong></td>
             <td style="white-space: nowrap;">
+                {btn_360}
                 <a href="{wa_link_cobro}" target="_blank" class="btn-action" style="background:#15803d;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con mensaje de cobro listo">💬 Cobro</a>
                 <a href="{wa_link_entrega}" target="_blank" class="btn-action" style="background:#0284c7;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con credenciales listas">📩 Datos</a>
                 <form action="/api/collect-payment/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Registrar cobro y renovar 30 días para {a['client_name']}?');">
@@ -1540,6 +1608,154 @@ async def dashboard(request: Request):
             function closeSellComboModal() {{
                 document.getElementById('modal-sell-combo').style.display = 'none';
             }}
+            async function openClient360Modal(clientId) {{
+                const modal = document.getElementById('modal-client-360');
+                if (!modal) return;
+                modal.style.display = 'flex';
+                document.getElementById('m360-name').innerText = 'Cargando perfil...';
+                
+                try {{
+                    const res = await fetch('/api/client/360/' + encodeURIComponent(clientId));
+                    if (!res.ok) {{
+                        alert('No se pudo cargar la información del cliente.');
+                        closeClient360Modal();
+                        return;
+                    }}
+                    const data = await res.json();
+                    const c = data.client;
+                    const health = data.health_status;
+                    const kpis = data.financial_kpis;
+                    const billing = data.consolidated_billing;
+                    const act = data.active_accounts || [];
+                    const pays = data.payments_history || [];
+
+                    document.getElementById('m360-name').innerText = c.name;
+                    document.getElementById('m360-code').innerText = 'Código: ' + (c.client_code || '-');
+                    
+                    const typeBadge = document.getElementById('m360-type-badge');
+                    typeBadge.innerText = c.client_type_label || 'Cliente';
+                    typeBadge.style.background = c.client_type === 'revendedor' ? '#7c3aed' : '#0284c7';
+
+                    const healthBadge = document.getElementById('m360-health-badge');
+                    healthBadge.innerText = health.label;
+                    healthBadge.className = 'badge ' + (health.badge_class || 'badge-ok');
+                    document.getElementById('m360-health-summary').innerText = health.summary || '';
+
+                    // Contactos
+                    const waLink = document.getElementById('m360-wa-link');
+                    if (c.clean_whatsapp) {{
+                        waLink.href = 'https://wa.me/' + c.clean_whatsapp;
+                        waLink.innerText = c.whatsapp || c.clean_whatsapp;
+                        document.getElementById('m360-wa-wrap').style.display = 'inline';
+                    }} else {{
+                        document.getElementById('m360-wa-wrap').style.display = 'none';
+                    }}
+
+                    const tgLink = document.getElementById('m360-tg-link');
+                    if (c.telegram) {{
+                        const tgUser = c.telegram.replace('@', '');
+                        tgLink.href = 'https://t.me/' + tgUser;
+                        tgLink.innerText = '@' + tgUser;
+                        document.getElementById('m360-tg-wrap').style.display = 'inline';
+                    }} else {{
+                        document.getElementById('m360-tg-wrap').style.display = 'none';
+                    }}
+
+                    // KPIs
+                    document.getElementById('m360-ltv').innerText = kpis.ltv_formatted || '$ 0 ARS';
+                    document.getElementById('m360-payments-count').innerText = (kpis.payments_count || 0) + ' cobros';
+                    document.getElementById('m360-profit').innerText = kpis.total_profit_formatted || '$ 0 ARS';
+                    document.getElementById('m360-monthly').innerText = kpis.monthly_committed_spend_formatted || '$ 0 ARS';
+                    document.getElementById('m360-accounts-count').innerText = act.length + ' servicio(s)';
+
+                    // Cobro consolidado
+                    const consBox = document.getElementById('m360-consolidated-box');
+                    const consBtn = document.getElementById('m360-consolidated-btn');
+                    if (billing && billing.success && billing.wa_link) {{
+                        consBox.style.display = 'flex';
+                        consBtn.href = billing.wa_link;
+                        document.getElementById('m360-consolidated-desc').innerText = 
+                            'Total a renovar: ' + billing.total_amount_formatted + ' (' + billing.accounts_count + ' suscripciones)';
+                    }} else {{
+                        consBox.style.display = 'none';
+                    }}
+
+                    // Tabla de cuentas activas
+                    let accHtml = '<table style="width:100%;font-size:0.8rem;border-collapse:collapse;">';
+                    accHtml += '<thead><tr style="border-bottom:1px solid #334155;text-align:left;color:#94a3b8;">' +
+                        '<th style="padding:6px 8px;">Servicio</th>' +
+                        '<th style="padding:6px 8px;">Cuenta / Perfil</th>' +
+                        '<th style="padding:6px 8px;">Vence</th>' +
+                        '<th style="padding:6px 8px;">Estado</th>' +
+                        '<th style="padding:6px 8px;">Precio</th>' +
+                        '<th style="padding:6px 8px;">WhatsApp</th></tr></thead><tbody>';
+
+                    if (act.length === 0) {{
+                        accHtml += '<tr><td colspan="6" style="text-align:center;padding:12px;color:#64748b;">No posee suscripciones activas en este momento.</td></tr>';
+                    }} else {{
+                        act.forEach(a => {{
+                            const perf = a.profile_name ? (' (Perf: ' + a.profile_name + ')') : '';
+                            const pin = a.profile_pin ? (' [PIN: ' + a.profile_pin + ']') : '';
+                            const cobroBtn = a.wa_cobro_link ? ('<a href="' + a.wa_cobro_link + '" target="_blank" class="btn-action" style="background:#15803d;color:#fff;text-decoration:none;padding:3px 6px;border-radius:4px;font-size:0.75rem;margin-right:4px;">💬 Cobro</a>') : '';
+                            const entregaBtn = a.wa_entrega_link ? ('<a href="' + a.wa_entrega_link + '" target="_blank" class="btn-action" style="background:#0284c7;color:#fff;text-decoration:none;padding:3px 6px;border-radius:4px;font-size:0.75rem;">📩 Datos</a>') : '';
+                            accHtml += '<tr style="border-bottom:1px solid #1e293b;">' +
+                                '<td style="padding:6px 8px;"><strong>' + a.platform + '</strong></td>' +
+                                '<td style="padding:6px 8px;"><code>' + a.email + '</code>' + perf + pin + '</td>' +
+                                '<td style="padding:6px 8px;">' + (a.expiry_date || '-') + '</td>' +
+                                '<td style="padding:6px 8px;"><span class="badge ' + (a.badge_class || '') + '">' + a.days_label + '</span></td>' +
+                                '<td style="padding:6px 8px;"><strong>' + (a.price_formatted || a.price || '-') + '</strong></td>' +
+                                '<td style="padding:6px 8px;white-space:nowrap;">' + cobroBtn + entregaBtn + '</td></tr>';
+                        }});
+                    }}
+                    accHtml += '</tbody></table>';
+                    document.getElementById('m360-accounts-table-wrap').innerHTML = accHtml;
+
+                    // Tabla de pagos
+                    let payHtml = '<table style="width:100%;font-size:0.8rem;border-collapse:collapse;">';
+                    payHtml += '<thead><tr style="border-bottom:1px solid #334155;text-align:left;color:#94a3b8;">' +
+                        '<th style="padding:6px 8px;">Fecha</th>' +
+                        '<th style="padding:6px 8px;">Monto (ARS)</th>' +
+                        '<th style="padding:6px 8px;">Ganancia</th>' +
+                        '<th style="padding:6px 8px;">Método</th>' +
+                        '<th style="padding:6px 8px;">Detalle</th></tr></thead><tbody>';
+
+                    if (pays.length === 0) {{
+                        payHtml += '<tr><td colspan="5" style="text-align:center;padding:12px;color:#64748b;">Aún no se registraron pagos previos para este cliente.</td></tr>';
+                    }} else {{
+                        pays.forEach(p => {{
+                            const dStr = p.created_at ? p.created_at.substring(0, 16) : '-';
+                            payHtml += '<tr style="border-bottom:1px solid #1e293b;">' +
+                                '<td style="padding:6px 8px;color:#94a3b8;">' + dStr + '</td>' +
+                                '<td style="padding:6px 8px;"><strong style="color:#38bdf8;">' + p.amount_formatted + '</strong></td>' +
+                                '<td style="padding:6px 8px;color:#34d399;">' + p.profit_formatted + '</td>' +
+                                '<td style="padding:6px 8px;">' + (p.payment_method || 'Transferencia') + '</td>' +
+                                '<td style="padding:6px 8px;color:#cbd5e1;">' + (p.notes || (p.account_platform ? ('Renovación ' + p.account_platform) : '-')) + '</td>' +
+                                '</tr>';
+                        }});
+                    }}
+                    payHtml += '</tbody></table>';
+                    document.getElementById('m360-payments-table-wrap').innerHTML = payHtml;
+
+                }} catch (err) {{
+                    console.error(err);
+                    alert('Error al consultar datos del cliente.');
+                    closeClient360Modal();
+                }}
+            }}
+
+            function closeClient360Modal() {{
+                const modal = document.getElementById('modal-client-360');
+                if (modal) modal.style.display = 'none';
+            }}
+
+            function filterActiveTable() {{
+                const q = (document.getElementById('filter-active-table').value || '').toLowerCase();
+                const rows = document.querySelectorAll('#tab-active tbody tr');
+                rows.forEach(r => {{
+                    const txt = r.innerText.toLowerCase();
+                    r.style.display = txt.includes(q) ? '' : 'none';
+                }});
+            }}
             window.addEventListener('DOMContentLoaded', () => {{
                 const hash = window.location.hash.replace('#', '');
                 if (hash && document.getElementById(hash)) {{
@@ -1616,6 +1832,15 @@ async def dashboard(request: Request):
                 </div>
 
                 <div id="tab-active" class="tab-content" style="display:block;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:12px; flex-wrap:wrap;">
+                        <input type="text" id="filter-active-table" onkeyup="filterActiveTable()" placeholder="🔍 Filtrar por cliente, servicio, correo, WhatsApp..." style="flex:1; min-width:240px; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 12px; font-size:0.85rem;">
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <select onchange="if(this.value) openClient360Modal(this.value); this.value='';" style="background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 12px; font-size:0.85rem;">
+                                <option value="">👤 Abrir Ficha 360° de...</option>
+                                {client_select_options}
+                            </select>
+                        </div>
+                    </div>
                     <table>
                         <thead>
                             <tr>
@@ -1930,12 +2155,94 @@ async def dashboard(request: Request):
                 </form>
             </div>
         </div>
+
+        <!-- Modal Ficha 360° del Cliente -->
+        <div id="modal-client-360" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:14px;padding:22px;width:100%;max-width:760px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.7);max-height:90vh;overflow-y:auto;box-sizing:border-box;">
+                <!-- Header del Modal -->
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;border-bottom:1px solid #334155;padding-bottom:12px;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                            <h2 id="m360-name" style="margin:0;color:#f8fafc;font-size:1.3rem;">Cargando perfil...</h2>
+                            <span id="m360-type-badge" class="badge" style="background:#0284c7;color:#fff;">Tipo</span>
+                            <span id="m360-health-badge" class="badge">Estado</span>
+                        </div>
+                        <div style="display:flex;gap:14px;margin-top:6px;font-size:0.8rem;color:#94a3b8;flex-wrap:wrap;">
+                            <span id="m360-code">Código: -</span>
+                            <span id="m360-wa-wrap">WhatsApp: <a id="m360-wa-link" href="#" target="_blank" style="color:#22c55e;">-</a></span>
+                            <span id="m360-tg-wrap">Telegram: <a id="m360-tg-link" href="#" target="_blank" style="color:#38bdf8;">-</a></span>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeClient360Modal()" style="background:none;border:none;color:#94a3b8;font-size:1.5rem;cursor:pointer;padding:0 6px;">✕</button>
+                </div>
+
+                <!-- Botón Destacado: Cobro Consolidado WhatsApp (1 Clic) -->
+                <div id="m360-consolidated-box" style="background:linear-gradient(90deg, #064e3b, #047857);border:1px solid #059669;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                    <div>
+                        <div style="font-weight:bold;color:#ecfdf5;font-size:0.95rem;">📲 Cobro Consolidado WhatsApp (1 Clic)</div>
+                        <div id="m360-consolidated-desc" style="font-size:0.8rem;color:#a7f3d0;margin-top:2px;">Envía un recordatorio único agrupando todas sus suscripciones en ARS.</div>
+                    </div>
+                    <a id="m360-consolidated-btn" href="#" target="_blank" class="btn" style="background:#10b981;color:#022c22;font-weight:bold;padding:8px 14px;text-decoration:none;border-radius:7px;display:inline-block;white-space:nowrap;">
+                        💬 Enviar Cobro Consolidado
+                    </a>
+                </div>
+
+                <!-- Grid de KPIs Financieros -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:16px;">
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">LTV (Total Cobrado)</span>
+                        <strong id="m360-ltv" style="font-size:1.1rem;color:#38bdf8;">$ 0 ARS</strong>
+                        <small id="m360-payments-count" style="display:block;font-size:0.7rem;color:#64748b;">0 pagos</small>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Ganancia Neta Real</span>
+                        <strong id="m360-profit" style="font-size:1.1rem;color:#34d399;">$ 0 ARS</strong>
+                        <small style="display:block;font-size:0.7rem;color:#64748b;">margen neto</small>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Facturación Mensual</span>
+                        <strong id="m360-monthly" style="font-size:1.1rem;color:#facc15;">$ 0 ARS</strong>
+                        <small style="display:block;font-size:0.7rem;color:#64748b;">por mes</small>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Suscripciones Activas</span>
+                        <strong id="m360-accounts-count" style="font-size:1.1rem;color:#e2e8f0;">0</strong>
+                        <small id="m360-health-summary" style="display:block;font-size:0.7rem;color:#94a3b8;">-</small>
+                    </div>
+                </div>
+
+                <!-- Secciones: Cuentas Activas e Historial -->
+                <div style="margin-bottom:16px;">
+                    <h4 style="margin:0 0 8px 0;font-size:0.9rem;color:#e2e8f0;">📺 Suscripciones Activas</h4>
+                    <div id="m360-accounts-table-wrap" style="overflow-x:auto;"></div>
+                </div>
+
+                <div>
+                    <h4 style="margin:14px 0 8px 0;font-size:0.9rem;color:#e2e8f0;">💵 Historial de Pagos Anteriores</h4>
+                    <div id="m360-payments-table-wrap" style="overflow-x:auto;"></div>
+                </div>
+
+                <div style="display:flex;justify-content:flex-end;margin-top:16px;border-top:1px solid #334155;padding-top:12px;">
+                    <button type="button" onclick="closeClient360Modal()" class="btn" style="background:#475569;padding:8px 16px;">Cerrar Ficha</button>
+                </div>
+            </div>
+        </div>
     </body>
     </html>
     """
     return html
 
 # Acciones Rápidas de API
+@app.get("/api/client/360/{client_id}")
+async def api_get_client_360(client_id: str, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    profile = database.get_client_360_profile(client_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return profile
+
 @app.post("/api/collect-payment/{account_id}")
 async def collect_payment_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))

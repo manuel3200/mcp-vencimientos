@@ -1,13 +1,15 @@
 import os
 import re
+import json
 import secrets
 import logging
 from contextlib import asynccontextmanager
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 from fastapi import FastAPI, Request, Response, Form, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastmcp import FastMCP
+from pydantic import BaseModel, Field
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 import pyotp
 
@@ -49,9 +51,87 @@ def verify_preauth_cookie(cookie: Optional[str]) -> Optional[str]:
         return None
 
 # ==========================================
+# Modelos Pydantic para Carga en Lote
+# ==========================================
+class ItemCuentaLote(BaseModel):
+    plataforma: str = Field(description="Plataforma (Netflix, Disney+, Max, etc.)")
+    correo: str = Field(description="Correo o usuario de la cuenta")
+    contrasena: str = Field(description="Contraseña de la cuenta")
+    fecha_vencimiento: str = Field(description="Fecha de vencimiento formato YYYY-MM-DD")
+    precio: str = Field(default="", description="Precio cobrado al cliente")
+    recurrencia: str = Field(default="mensual", description="mensual, trimestral, anual, unico")
+    perfil: str = Field(default="", description="Nombre de perfil si aplica")
+    pin: str = Field(default="", description="PIN del perfil si aplica")
+
+# ==========================================
 # 1. Herramientas FastMCP para Gemini Spark
 # ==========================================
 mcp = FastMCP("Streaming CRM & Expiry Bot")
+
+@mcp.tool()
+def registrar_ventas_en_lote(
+    cliente: str,
+    cuentas: Union[List[ItemCuentaLote], List[Dict[str, Any]], str],
+    whatsapp: str = "",
+    telegram: str = "",
+    tipo_cliente: str = "consumidor_final"
+) -> str:
+    """Registra múltiples ventas de cuentas/perfiles a un cliente en UNA SOLA OPERACIÓN masiva.
+    Permite cargar 10, 20 o 30 cuentas de una sola vez para que el usuario solo tenga que dar permiso ('Allow') 1 sola vez.
+    - cliente: Nombre o alias del cliente (ej. 'Matías').
+    - cuentas: Lista de cuentas con plataforma, correo, contrasena, fecha_vencimiento, precio, recurrencia, perfil, pin.
+    - whatsapp: Teléfono del cliente.
+    - telegram: Usuario de Telegram (@usuario).
+    - tipo_cliente: 'revendedor' o 'consumidor_final'.
+    """
+    # Manejar si Gemini lo envía como string JSON
+    lista_items = cuentas
+    if isinstance(cuentas, str):
+        try:
+            lista_items = json.loads(cuentas)
+        except Exception:
+            lista_items = []
+
+    cargadas = 0
+    errores = 0
+
+    for item in lista_items:
+        try:
+            if isinstance(item, ItemCuentaLote):
+                c_dict = item.model_dump()
+            elif isinstance(item, dict):
+                c_dict = item
+            else:
+                continue
+
+            database.assign_or_sell_account(
+                client_name=cliente,
+                platform=c_dict.get("plataforma", "Streaming"),
+                email=c_dict.get("correo", ""),
+                password=c_dict.get("contrasena", ""),
+                expiry_date=c_dict.get("fecha_vencimiento", ""),
+                whatsapp=whatsapp,
+                telegram=telegram,
+                client_type=tipo_cliente,
+                profile_name=c_dict.get("perfil", ""),
+                profile_pin=c_dict.get("pin", ""),
+                recurrence=c_dict.get("recurrencia", "mensual"),
+                price=c_dict.get("precio", "")
+            )
+            cargadas += 1
+        except Exception as e:
+            logger.error(f"Error cargando cuenta individual: {e}")
+            errores += 1
+
+    tipo_badge = "👔 Revendedor" if "revend" in tipo_cliente.lower() else "👤 Consumidor Final"
+    return (
+        f"🎉 CARGA MASIVA COMPLETADA:\n"
+        f"• Cliente: {cliente} ({tipo_badge})\n"
+        f"• WhatsApp: {whatsapp or '-'} | Telegram: {telegram or '-'}\n"
+        f"• Total de cuentas registradas con éxito: {cargadas}\n"
+        + (f"• Errores: {errores}\n" if errores > 0 else "")
+        + "Todas las cuentas ya están disponibles en el panel y programadas para alerta 2 días antes."
+    )
 
 @mcp.tool()
 def vender_o_asignar_servicio(
@@ -69,20 +149,7 @@ def vender_o_asignar_servicio(
     recurrencia: str = "mensual",
     notas: str = ""
 ) -> str:
-    """Registra una venta o asignación de una cuenta o perfil de streaming a un cliente.
-    - cliente: Nombre o alias del cliente (ej. 'Maik', 'Carlos').
-    - plataforma: Nombre del servicio (ej. 'Netflix', 'Disney+', 'Max', 'Prime', 'Spotify').
-    - correo: Correo o usuario de la cuenta.
-    - contrasena: Contraseña de la cuenta.
-    - fecha_vencimiento: Formato 'YYYY-MM-DD' (ej. '2026-10-15').
-    - whatsapp: Número de WhatsApp con código de país (ej. '+5491122334455').
-    - telegram: Usuario de Telegram (ej. '@maik_stream').
-    - tipo_cliente: 'revendedor' o 'consumidor_final'.
-    - perfil: Nombre o número de perfil si es venta de pantalla (ej. 'Perfil 2').
-    - pin: PIN del perfil si aplica.
-    - precio: Precio cobrado al cliente (ej. '$10 USD', '15000 ARS').
-    - recurrencia: 'mensual', 'trimestral', 'anual', 'unico'.
-    """
+    """Registra una venta o asignación individual de cuenta o perfil de streaming a un cliente."""
     try:
         acc = database.assign_or_sell_account(
             client_name=cliente,
@@ -147,10 +214,7 @@ def buscar_cliente(query: str) -> str:
 
 @mcp.tool()
 def marcar_cuenta_caida(correo_o_id: str, motivo: str = "Suscripción caída") -> str:
-    """Marca una cuenta o perfil como 'caida' para colocarla en la lista de reclamos.
-    - correo_o_id: Correo o ID de la cuenta que presentó fallas.
-    - motivo: Motivo del reporte (ej. 'suscripción caída', 'clave cambiada', 'pantalla bloqueada').
-    """
+    """Marca una cuenta o perfil como 'caida' para colocarla en la lista de reclamos."""
     acc = database.mark_account_fallen(correo_o_id, reason=motivo)
     if not acc:
         return f"❌ No se encontró ninguna cuenta activa con el identificador '{correo_o_id}'."
@@ -175,14 +239,7 @@ def agregar_stock_libre(
     costo: str = "",
     notas: str = ""
 ) -> str:
-    """Agrega una cuenta o perfil libre al inventario disponible para la venta o reemplazo.
-    - plataforma: Nombre del servicio (ej. 'Netflix', 'Disney+', 'Max', 'Spotify').
-    - correo: Correo o usuario de la cuenta.
-    - contrasena: Contraseña de la cuenta.
-    - perfil: Nombre de perfil si es pantalla individual.
-    - pin: PIN si aplica.
-    - costo: Costo que te cobró tu proveedor.
-    """
+    """Agrega una cuenta o perfil libre al inventario disponible para la venta o reemplazo."""
     try:
         acc = database.add_free_account(
             platform=plataforma,
@@ -205,11 +262,7 @@ def agregar_stock_libre(
 
 @mcp.tool()
 def reemplazar_cuenta_caida(correo_o_id: str) -> str:
-    """Reemplazo inteligente de cuenta:
-    Identifica la plataforma de la cuenta caída, busca automáticamente una cuenta libre
-    de la misma plataforma en stock, se la asigna al cliente conservando la fecha de
-    vencimiento y te entrega las nuevas credenciales listas para enviar.
-    """
+    """Reemplazo inteligente de cuenta por una libre de la misma plataforma."""
     res = database.replace_fallen_account(correo_o_id)
     if not res:
         return f"❌ No se encontró ninguna cuenta caída o activa con '{correo_o_id}'."
@@ -219,7 +272,7 @@ def reemplazar_cuenta_caida(correo_o_id: str) -> str:
         return (
             f"⚠️ NO HAY STOCK DISPONIBLE:\n"
             f"No se encontraron cuentas libres de la plataforma '{old.get('platform')}' en el inventario.\n"
-            f"La cuenta {old.get('email')} permanece marcada como caída. Por favor agrega una cuenta libre primero."
+            f"La cuenta {old.get('email')} permanece marcada como caída."
         )
 
     new_acc = res["new_account"]
@@ -237,7 +290,7 @@ def reemplazar_cuenta_caida(correo_o_id: str) -> str:
         f"• Contraseña: <code>{new_acc['password']}</code>" + (f"\n• Perfil: {new_acc['profile_name']}" if new_acc.get("profile_name") else "") + (f" [PIN: {new_acc['profile_pin']}]" if new_acc.get("profile_pin") else "") + "\n"
         f"📅 <b>Mantiene vencimiento:</b> <code>{new_acc['expiry_date']}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👉 Copia estos datos y envíaselos a {client_name} por WhatsApp/Telegram."
+        f"👉 Copia estos datos y envíaselos a {client_name}."
     )
 
 @mcp.tool()
@@ -258,7 +311,7 @@ def consultar_stock_libre(plataforma: str = "") -> str:
 
 @mcp.tool()
 def consultar_cuentas_caidas() -> str:
-    """Lista todas las cuentas marcadas como caídas pendientes de reclamo o solución."""
+    """Lista todas las cuentas marcadas como caídas pendientes de reclamo."""
     fallen = database.get_fallen_accounts()
     if not fallen:
         return "🎉 ¡Excelente! No hay ninguna cuenta caída actualmente."
@@ -275,9 +328,7 @@ def consultar_cuentas_caidas() -> str:
 
 @mcp.tool()
 def renovar_suscripcion(correo_o_id: str, nueva_fecha_vencimiento: str) -> str:
-    """Extiende o renueva la fecha de vencimiento de una cuenta tras recibir el pago del cliente.
-    - nueva_fecha_vencimiento: Formato 'YYYY-MM-DD'.
-    """
+    """Extiende o renueva la fecha de vencimiento de una cuenta tras recibir el pago."""
     ok = database.renew_account(correo_o_id, nueva_fecha_vencimiento)
     if ok:
         return f"✅ Cuenta '{correo_o_id}' renovada exitosamente hasta el {nueva_fecha_vencimiento}."
@@ -359,7 +410,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Gemini Streaming CRM & MCP Bot",
     description="Servidor MCP para Gemini Spark y CRM de Streaming con 2FA",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
@@ -593,10 +644,8 @@ async def dashboard(request: Request):
     active_accounts = database.get_active_accounts()
     free_stock = database.get_free_stock()
     fallen_accounts = database.get_fallen_accounts()
-    all_clients = database.list_all_clients()
     expiring_soon = database.get_expiring_streaming_accounts(days_window=3)
 
-    # 1. Filas de Cuentas Activas
     active_rows = ""
     for a in active_accounts:
         days = a.get("days_remaining")
@@ -640,7 +689,6 @@ async def dashboard(request: Request):
     if not active_rows:
         active_rows = "<tr><td colspan='8' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas activas asignadas actualmente.</td></tr>"
 
-    # 2. Filas de Stock Libre
     stock_rows = ""
     for s in free_stock:
         perf = f" (Perf: {s['profile_name']})" if s.get("profile_name") else ""
@@ -662,7 +710,6 @@ async def dashboard(request: Request):
     if not stock_rows:
         stock_rows = "<tr><td colspan='6' style='text-align:center;color:#64748b;padding:20px;'>No hay cuentas libres en stock. Agrega cuentas o pídeselo a Gemini.</td></tr>"
 
-    # 3. Filas de Cuentas Caídas
     fallen_rows = ""
     for f in fallen_accounts:
         client_name = f.get("client_name") or "Sin cliente asignado"
@@ -848,7 +895,6 @@ async def dashboard(request: Request):
     """
     return html
 
-# Acciones Rápidas de API para el Dashboard
 @app.post("/api/mark-fallen/{account_id}")
 async def mark_fallen_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
@@ -895,7 +941,7 @@ async def check_now_api(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-mcp", "version": "2.0.0"}
+    return {"status": "ok", "service": "streaming-crm-mcp", "version": "2.1.0"}
 
 if __name__ == "__main__":
     import uvicorn

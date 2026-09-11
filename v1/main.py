@@ -184,6 +184,137 @@ def generar_mensaje_whatsapp(
         f"👉 Haz clic en el enlace para abrir WhatsApp con el mensaje ya redactado y listo para enviar."
     )
 
+# --- Herramientas de Pantallas Compartidas y Perfiles (Paso 3) ---
+@mcp.tool()
+def crear_cuenta_con_pantallas(
+    plataforma: str,
+    correo: str,
+    contrasena: str,
+    cantidad_pantallas: int = 4,
+    pines: str = "",
+    costo_total: str = "",
+    notas: str = ""
+) -> str:
+    """Crea una cuenta madre en stock y genera automáticamente sus N pantallas/perfiles libres para la venta:
+    - plataforma: Netflix, Disney+, Max, Prime Video, etc.
+    - correo: Correo de la cuenta madre.
+    - contrasena: Contraseña de la cuenta.
+    - cantidad_pantallas: Cantidad de perfiles permitidos (por defecto 4).
+    - pines: (Opcional) PINes individuales separados por coma o espacio (ej: '1111, 2222, 3333, 4444').
+    - costo_total: (Opcional) Lo que te costó la cuenta al proveedor.
+    """
+    res = database.create_master_account_with_profiles(
+        platform=plataforma,
+        email=correo,
+        password=contrasena,
+        profile_count=cantidad_pantallas,
+        pins=pines,
+        cost=costo_total,
+        notes=notas
+    )
+    p_names = [f"• {p['profile_name']}" + (f" [PIN: {p['profile_pin']}]" if p.get('profile_pin') else "") for p in res]
+    return (
+        f"✅ CUENTA MADRE CON PANTALLAS CREADA:\n"
+        f"• Plataforma: {plataforma.title()}\n"
+        f"• Correo: {correo}\n"
+        f"• Clave: {contrasena}\n"
+        f"• Total de pantallas libres disponibles: {len(res)}\n"
+        + "\n".join(p_names) + "\n"
+        f"🎉 Todas las pantallas están listas en inventario para ser asignadas a clientes individualmente."
+    )
+
+@mcp.tool()
+def vender_perfil_compartido(
+    cliente: str,
+    plataforma: str,
+    fecha_vencimiento: str,
+    whatsapp: str = "",
+    telegram: str = "",
+    tipo_cliente: str = "consumidor_final",
+    precio: str = "",
+    notas: str = ""
+) -> str:
+    """Asigna automáticamente el próximo perfil libre disponible de una cuenta madre al cliente:
+    - cliente: Nombre o alias del cliente (ej: Carlos, Maik).
+    - plataforma: Netflix, Disney+, Max, etc.
+    - fecha_vencimiento: Formato YYYY-MM-DD.
+    - whatsapp / telegram: Datos de contacto.
+    - precio: Precio de venta del perfil individual.
+    """
+    acc = database.assign_next_free_profile(
+        client_name=cliente,
+        platform=plataforma,
+        expiry_date=fecha_vencimiento,
+        whatsapp=whatsapp,
+        telegram=telegram,
+        client_type=tipo_cliente,
+        price=precio,
+        notes=notes
+    )
+    if not acc:
+        return f"⚠️ No hay perfiles libres disponibles para la plataforma '{plataforma}'. Agrega stock o crea una cuenta madre."
+
+    wa = database.generate_whatsapp_message(acc, message_type="entrega")
+    wa_url = wa.get("wa_link", "")
+
+    return (
+        f"🎉 PERFIL INDIVIDUAL ASIGNADO CON ÉXITO:\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Cliente:</b> {acc['client_name']} ({acc.get('client_code') or ''})\n"
+        f"📺 <b>Plataforma:</b> {acc['platform']} - <b>{acc['profile_name']}</b>\n"
+        f"📧 <b>Correo Madre:</b> <code>{acc['email']}</code>\n"
+        f"🔑 <b>Contraseña:</b> <code>{acc['password']}</code>" + (f" | <b>PIN:</b> <code>{acc['profile_pin']}</code>" if acc.get('profile_pin') else "") + "\n"
+        f"📅 <b>Vencimiento:</b> <code>{acc['expiry_date']}</code> | Precio: {acc.get('price') or '-'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📲 <b>WhatsApp Listo para Enviar (1 Clic):</b>\n{wa_url}"
+    )
+
+@mcp.tool()
+def consultar_estado_pantallas(plataforma: str = "") -> str:
+    """Muestra el inventario organizado por cuenta madre con casilleros de pantallas ocupadas vs libres."""
+    overview = database.get_shared_screens_overview(platform=plataforma if plataforma else None)
+    if not overview:
+        return "No hay cuentas madre registradas."
+
+    lines = [f"📺 <b>ESTADO DE PANTALLAS COMPARTIDAS ({len(overview)} Cuentas Madre):</b>\n"]
+    for o in overview:
+        lines.append(
+            f"🔹 <b>{o['platform']}</b> | <code>{o['email']}</code>\n"
+            f"   Ocupación: {o['occupied_count']}/{o['total_profiles']} pantallas ({o['free_count']} libres) - {o['occupancy_rate']}%\n"
+            f"   Detalle de pantallas:"
+        )
+        for p in o['profiles']:
+            st = p['status']
+            pin_txt = f" [PIN: {p['profile_pin']}]" if p.get('profile_pin') else ""
+            if st == 'ocupada':
+                lines.append(f"     ✅ {p['profile_name']}{pin_txt}: {p.get('client_name', 'Cliente')} (Vence: {p.get('expiry_date')})")
+            elif st == 'libre':
+                lines.append(f"     ✨ {p['profile_name']}{pin_txt}: <b>DISPONIBLE</b>")
+            elif st == 'caida':
+                lines.append(f"     🚨 {p['profile_name']}{pin_txt}: CAÍDA ({p.get('client_name')})")
+        lines.append("")
+    return "\n".join(lines)
+
+@mcp.tool()
+def reportar_caida_cuenta_madre(correo: str, motivo: str = "Caída de cuenta completa") -> str:
+    """Marca como caídas todas las pantallas de una cuenta madre y lista los clientes afectados para su reemplazo."""
+    res = database.mark_entire_master_account_fallen(correo, reason=motivo)
+    if not res.get("success"):
+        return f"❌ {res.get('error')}"
+
+    clients = res.get("affected_clients", [])
+    lines = [
+        f"🚨 <b>CUENTA MADRE COMPLETA MARCADA COMO CAÍDA:</b>\n"
+        f"• Correo: {res['email']}\n"
+        f"• Total de pantallas afectadas: {res['total_profiles_affected']}\n"
+        f"• Clientes que necesitan reemplazo ({len(clients)}):"
+    ]
+    for c in clients:
+        lines.append(f"  • {c['client_name']} ({c['platform']} - {c['profile_name']}) | WhatsApp: {c.get('whatsapp') or '-'}")
+
+    lines.append("\n💡 Puedes pedirme: 'Cámbiame el correo caído X por una libre' para reasignarlos.")
+    return "\n".join(lines)
+
 # --- Herramientas de Carga y Gestión ---
 @mcp.tool()
 def registrar_ventas_en_lote(
@@ -874,6 +1005,70 @@ async def dashboard(request: Request):
     if not tx_rows:
         tx_rows = "<tr><td colspan='7' style='text-align:center;color:#64748b;padding:20px;'>No hay transacciones registradas este mes aún.</td></tr>"
 
+    # 5. Cuentas Madre y Pantallas Compartidas
+    screens_overview = database.get_shared_screens_overview()
+    screens_html = ""
+    for s in screens_overview:
+        fill_pct = s['occupancy_rate']
+        chips_html = ""
+        for p in s['profiles']:
+            st = p['status']
+            pin_label = f" (PIN: {p['profile_pin']})" if p.get('profile_pin') else ""
+            if st == 'ocupada':
+                c_name = p.get('client_name') or 'Cliente'
+                wa_cobro = database.generate_whatsapp_message(p, "cobro").get("wa_link", "#")
+                wa_datos = database.generate_whatsapp_message(p, "entrega").get("wa_link", "#")
+                chips_html += f"""
+                <div class="chip chip-occupied">
+                    <div>
+                        <strong>{p['profile_name']}</strong>{pin_label}: <span>{c_name}</span>
+                        <small style='color:#94a3b8;margin-left:6px;'>(Vence: {p.get('expiry_date')})</small>
+                    </div>
+                    <div style="display:flex;gap:4px;">
+                        <a href="{wa_cobro}" target="_blank" class="btn-action" style="background:#15803d;color:white;text-decoration:none;padding:2px 6px;font-size:0.7rem;" title="Cobrar WhatsApp">💬</a>
+                        <a href="{wa_datos}" target="_blank" class="btn-action" style="background:#0284c7;color:white;text-decoration:none;padding:2px 6px;font-size:0.7rem;" title="Datos WhatsApp">📩</a>
+                    </div>
+                </div>
+                """
+            elif st == 'libre':
+                chips_html += f"""
+                <div class="chip chip-free">
+                    <span><strong>{p['profile_name']}</strong>{pin_label}: <em>Disponible para venta</em></span>
+                    <span class="badge badge-ok" style="font-size:0.7rem;">Libre</span>
+                </div>
+                """
+            elif st == 'caida':
+                chips_html += f"""
+                <div class="chip chip-fallen">
+                    <span><strong>{p['profile_name']}</strong>{pin_label}: 🚨 Caída ({p.get('client_name') or 'Sin cliente'})</span>
+                    <span class="badge badge-danger" style="font-size:0.7rem;">Caída</span>
+                </div>
+                """
+
+        screens_html += f"""
+        <div class="screen-card">
+            <div class="screen-header">
+                <div>
+                    <span class="badge" style="background:#1e3a8a;color:#93c5fd;margin-bottom:6px;">{s['platform']}</span>
+                    <div class="screen-title"><code>{s['email']}</code></div>
+                    <small style="color:#64748b;">Clave: <code>{s['password']}</code></small>
+                </div>
+                <div style="text-align:right;">
+                    <span style="font-size:1.1rem;font-weight:800;color:#38bdf8;">{s['occupied_count']}/{s['total_profiles']}</span>
+                    <br><small style="color:#10b981;font-weight:600;">{s['free_count']} libres</small>
+                </div>
+            </div>
+            <div class="progress-bar-bg">
+                <div class="progress-bar-fill" style="width:{fill_pct}%;"></div>
+            </div>
+            <div class="profile-chips">
+                {chips_html}
+            </div>
+        </div>
+        """
+    if not screens_html:
+        screens_html = "<div style='grid-column:1/-1;text-align:center;color:#64748b;padding:30px;'>No hay cuentas registradas con pantallas múltiples aún. Puedes pedirle a Gemini: <em>'Crea una cuenta de Netflix con 4 pantallas'</em>.</div>"
+
     html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -902,6 +1097,19 @@ async def dashboard(request: Request):
             .box-profit p.amount {{ color: #38bdf8; }}
             .box-pending {{ border-left: 4px solid #a855f7; }}
             .box-pending p.amount {{ color: #c084fc; }}
+
+            /* Pantallas Compartidas */
+            .screens-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }}
+            .screen-card {{ background: #0b0f19; border: 1px solid #1e293b; border-radius: 12px; padding: 18px; }}
+            .screen-header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; border-bottom: 1px solid #1e293b; padding-bottom: 10px; }}
+            .screen-title {{ font-weight: 700; font-size: 1rem; color: #38bdf8; }}
+            .progress-bar-bg {{ background: #1e293b; border-radius: 6px; height: 8px; width: 100%; margin: 10px 0 14px 0; overflow: hidden; }}
+            .progress-bar-fill {{ background: #10b981; height: 100%; border-radius: 6px; }}
+            .profile-chips {{ display: flex; flex-direction: column; gap: 8px; }}
+            .chip {{ padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; display: flex; justify-content: space-between; align-items: center; }}
+            .chip-occupied {{ background: #064e3b; border: 1px solid #047857; color: #a7f3d0; }}
+            .chip-free {{ background: #111827; border: 1px dashed #334155; color: #94a3b8; }}
+            .chip-fallen {{ background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; }}
 
             .tabs {{ display: flex; gap: 10px; border-bottom: 1px solid #334155; margin-bottom: 20px; }}
             .tab-btn {{ background: none; border: none; color: #94a3b8; padding: 12px 18px; font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }}
@@ -988,6 +1196,7 @@ async def dashboard(request: Request):
             <div class="card">
                 <div class="tabs">
                     <button id="btn-tab-active" class="tab-btn active" onclick="showTab('tab-active')">👥 Clientes & Activas ({len(active_accounts)})</button>
+                    <button id="btn-tab-screens" class="tab-btn" onclick="showTab('tab-screens')">📺 Pantallas ({len(screens_overview)})</button>
                     <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({len(transactions)})</button>
                     <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
@@ -1011,6 +1220,12 @@ async def dashboard(request: Request):
                             {active_rows}
                         </tbody>
                     </table>
+                </div>
+
+                <div id="tab-screens" class="tab-content" style="display:none;">
+                    <div class="screens-grid">
+                        {screens_html}
+                    </div>
                 </div>
 
                 <div id="tab-finance" class="tab-content" style="display:none;">
@@ -1149,7 +1364,7 @@ async def check_now_api(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "service": "streaming-crm-whatsapp", "version": "2.3.0"}
+    return {"status": "ok", "service": "streaming-crm-screens", "version": "2.4.0"}
 
 if __name__ == "__main__":
     import uvicorn

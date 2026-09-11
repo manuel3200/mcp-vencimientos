@@ -918,3 +918,207 @@ def generate_whatsapp_message(
         "message_text": msg,
         "wa_link": wa_url
     }
+
+# ==========================================
+# 7. Gestión de Pantallas Compartidas (Paso 3)
+# ==========================================
+def create_master_account_with_profiles(
+    platform: str,
+    email: str,
+    password: str,
+    profile_count: int = 4,
+    pins: Union[str, List[str]] = "",
+    cost: str = "",
+    notes: str = ""
+) -> List[Dict[str, Any]]:
+    """Crea una cuenta madre en stock y genera automáticamente sus N casilleros/perfiles libres."""
+    conn = get_connection()
+    clean_platform = platform.strip().title()
+    clean_email = email.strip()
+    clean_password = password.strip()
+    
+    pin_list = []
+    if isinstance(pins, list):
+        pin_list = [str(p).strip() for p in pins]
+    elif isinstance(pins, str) and pins.strip():
+        parts = re.split(r'[,;\s]+', pins.strip())
+        pin_list = [p for p in parts if p]
+
+    created = []
+    try:
+        with conn:
+            for i in range(profile_count):
+                prof_name = f"Perfil {i + 1}"
+                prof_pin = pin_list[i] if i < len(pin_list) else (pin_list[0] if len(pin_list) == 1 else "")
+                prof_cost = cost if i == 0 else ""
+
+                cursor = conn.execute("""
+                    INSERT INTO streaming_accounts (
+                        platform, email, password, profile_name, profile_pin,
+                        status, payment_status, cost, notes
+                    ) VALUES (?, ?, ?, ?, ?, 'libre', 'pagado', ?, ?)
+                """, (clean_platform, clean_email, clean_password, prof_name, prof_pin, prof_cost, notes.strip()))
+                
+                acc_id = cursor.lastrowid
+                row = conn.execute("SELECT * FROM streaming_accounts WHERE id = ?", (acc_id,)).fetchone()
+                created.append(dict(row))
+        return created
+    finally:
+        conn.close()
+
+def assign_next_free_profile(
+    client_name: str,
+    platform: str,
+    expiry_date: str,
+    whatsapp: str = "",
+    telegram: str = "",
+    client_type: str = "consumidor_final",
+    price: str = "",
+    notes: str = ""
+) -> Optional[Dict[str, Any]]:
+    """Busca el primer perfil libre disponible de una plataforma y lo asigna a un cliente."""
+    conn = get_connection()
+    clean_platform = platform.strip().title()
+    try:
+        with conn:
+            free_slot = conn.execute("""
+                SELECT * FROM streaming_accounts
+                WHERE lower(platform) = lower(?) AND status = 'libre'
+                ORDER BY id ASC LIMIT 1
+            """, (clean_platform,)).fetchone()
+
+            if not free_slot:
+                return None
+
+            slot = dict(free_slot)
+            slot_id = slot["id"]
+
+            client = find_or_create_client(
+                name=client_name,
+                whatsapp=whatsapp,
+                telegram=telegram,
+                client_type=client_type,
+                notes=notes
+            )
+
+            today_str = date.today().isoformat()
+            conn.execute("""
+                UPDATE streaming_accounts
+                SET client_id = ?, status = 'ocupada', payment_status = 'pagado',
+                    start_date = ?, expiry_date = ?, price = ?, notes = ?,
+                    last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (client["id"], today_str, expiry_date.strip(), price.strip(), notes.strip(), slot_id))
+
+            price_num = parse_money(price)
+            cost_num = parse_money(slot.get("cost"))
+            profit_num = price_num - cost_num
+            if price_num > 0:
+                conn.execute("""
+                    INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                    VALUES (?, ?, ?, ?, ?, 'Inicial', 'Venta perfil compartido')
+                """, (slot_id, client["id"], price_num, cost_num, profit_num))
+
+            fresh = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE a.id = ?
+            """, (slot_id,)).fetchone()
+            return dict(fresh)
+    finally:
+        conn.close()
+
+def get_shared_screens_overview(platform: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Agrupa las cuentas por correo madre y muestra la ocupación de cada una."""
+    conn = get_connection()
+    today = date.today()
+    try:
+        query = """
+            SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+            FROM streaming_accounts a
+            LEFT JOIN clients c ON a.client_id = c.id
+        """
+        params = []
+        if platform:
+            query += " WHERE lower(a.platform) = lower(?)"
+            params.append(platform.strip())
+        query += " ORDER BY a.platform ASC, a.email ASC, a.id ASC"
+
+        rows = conn.execute(query, params).fetchall()
+
+        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for r in rows:
+            d = dict(r)
+            try:
+                exp = datetime.strptime(d["expiry_date"], "%Y-%m-%d").date()
+                d["days_remaining"] = (exp - today).days
+            except Exception:
+                d["days_remaining"] = None
+            key = (d["platform"], d["email"])
+            grouped.setdefault(key, []).append(d)
+
+        overview = []
+        for (plat, mail), profs in grouped.items():
+            occupied = [p for p in profs if p["status"] == "ocupada"]
+            free = [p for p in profs if p["status"] == "libre"]
+            fallen = [p for p in profs if p["status"] == "caida"]
+            passw = profs[0]["password"] if profs else ""
+            
+            overview.append({
+                "platform": plat,
+                "email": mail,
+                "password": passw,
+                "total_profiles": len(profs),
+                "occupied_count": len(occupied),
+                "free_count": len(free),
+                "fallen_count": len(fallen),
+                "occupancy_rate": round((len(occupied) / len(profs)) * 100, 1) if profs else 0.0,
+                "profiles": profs
+            })
+        return overview
+    finally:
+        conn.close()
+
+def mark_entire_master_account_fallen(email_or_query: str, reason: str = "Caída de cuenta completa") -> Dict[str, Any]:
+    """Marca como caídas todas las pantallas asociadas a un correo madre y lista los clientes afectados."""
+    conn = get_connection()
+    q = email_or_query.strip()
+    try:
+        with conn:
+            rows = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) LIKE lower(?) AND a.status IN ('ocupada', 'libre')
+            """, (f"%{q}%",)).fetchall()
+
+            if not rows:
+                return {"success": False, "error": f"No se encontraron cuentas activas con el correo '{q}'"}
+
+            affected_clients = []
+            for r in rows:
+                d = dict(r)
+                if d["status"] == "ocupada":
+                    affected_clients.append({
+                        "account_id": d["id"],
+                        "client_name": d.get("client_name"),
+                        "profile_name": d.get("profile_name"),
+                        "whatsapp": d.get("whatsapp"),
+                        "telegram": d.get("telegram"),
+                        "platform": d.get("platform")
+                    })
+                conn.execute("""
+                    UPDATE streaming_accounts 
+                    SET status = 'caida', notes = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (reason.strip(), d["id"]))
+
+            return {
+                "success": True,
+                "email": q,
+                "total_profiles_affected": len(rows),
+                "affected_clients": affected_clients
+            }
+    finally:
+        conn.close()

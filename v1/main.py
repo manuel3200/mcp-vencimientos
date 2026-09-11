@@ -24,7 +24,7 @@ SECRET_KEY = os.getenv("SESSION_SECRET_KEY", "mcp-super-secret-key-change-in-pro
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 
 def create_session_cookie(username: str) -> str:
-    return serializer.dumps({"user": username, "auth": True}, salt="session-auth")
+    return serializer.dumps({"user": username.lower(), "auth": True}, salt="session-auth")
 
 def verify_session_cookie(cookie: Optional[str]) -> Optional[str]:
     if not cookie:
@@ -36,7 +36,7 @@ def verify_session_cookie(cookie: Optional[str]) -> Optional[str]:
         return None
 
 def create_preauth_cookie(username: str) -> str:
-    return serializer.dumps({"user": username, "step": "2fa"}, salt="preauth")
+    return serializer.dumps({"user": username.lower(), "step": "2fa"}, salt="preauth")
 
 def verify_preauth_cookie(cookie: Optional[str]) -> Optional[str]:
     if not cookie:
@@ -150,6 +150,17 @@ def renovar_servicio(id_servicio: int, nueva_fecha_vencimiento: str) -> str:
     return f"❌ No se pudo actualizar el servicio ID {id_servicio}."
 
 @mcp.tool()
+def cambiar_clave_admin(nueva_contrasena: str, usuario: str = "admin") -> str:
+    """Cambia o restablece la contraseña de acceso al panel web del administrador."""
+    try:
+        clean_user = usuario.strip().lower()
+        clean_pass = nueva_contrasena.strip()
+        database.create_or_update_admin(clean_user, clean_pass)
+        return f"✅ Contraseña del usuario '{clean_user}' actualizada correctamente. Ya puedes ingresar al panel web con tu nueva contraseña."
+    except Exception as e:
+        return f"❌ Error al actualizar contraseña: {str(e)}"
+
+@mcp.tool()
 async def enviar_alerta_prueba_telegram(mensaje: str = "Prueba de conexión con Gemini MCP Bot") -> str:
     """Envía un mensaje de prueba al chat de Telegram configurado."""
     text = (
@@ -179,17 +190,17 @@ async def lifespan(app: FastAPI):
     # Inicialización de DB
     database.init_db()
     
-    # Crear usuario administrador inicial si no existe
-    admin_user = os.getenv("ADMIN_USERNAME", "admin").strip()
-    admin_pass = os.getenv("ADMIN_PASSWORD", "admin123").strip()
-    if not database.get_admin_user(admin_user):
-        totp_secret = pyotp.random_base32()
-        database.create_or_update_admin(admin_user, admin_pass, totp_secret)
-        logger.info(f"Usuario administrador '{admin_user}' creado exitosamente.")
-    else:
-        # Asegurar contraseña de las variables de entorno si se especificó
-        if os.getenv("ADMIN_PASSWORD"):
-            database.create_or_update_admin(admin_user, admin_pass)
+    # Determinar usuario y contraseña asegurando que nunca sean cadenas vacías
+    raw_user = os.getenv("ADMIN_USERNAME")
+    raw_pass = os.getenv("ADMIN_PASSWORD")
+    admin_user = raw_user.strip() if raw_user and raw_user.strip() else "admin"
+    admin_pass = raw_pass.strip() if raw_pass and raw_pass.strip() else "admin123"
+
+    # Siempre asegurar que el usuario administrador existe con esta contraseña
+    existing = database.get_admin_user(admin_user)
+    totp_secret = existing.get("totp_secret") if existing else pyotp.random_base32()
+    database.create_or_update_admin(admin_user, admin_pass, totp_secret)
+    logger.info(f"Usuario administrador '{admin_user}' inicializado correctamente con contraseña activa.")
 
     start_scheduler()
     logger.info("Aplicación y tareas programadas iniciadas.")
@@ -201,7 +212,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Gemini Expiry Alert MCP & Web Panel",
     description="Servidor MCP para Gemini Spark y Panel con Autenticación 2FA",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan
 )
 
@@ -231,7 +242,10 @@ LOGIN_HTML_TEMPLATE = """
         input:focus { border-color: #38bdf8; }
         .btn { width: 100%; background: #0284c7; color: white; border: none; border-radius: 8px; padding: 12px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: background 0.2s; margin-top: 8px; }
         .btn:hover { background: #0369a1; }
+        .btn-recovery { width: 100%; background: transparent; border: 1px solid #334155; color: #38bdf8; border-radius: 8px; padding: 10px; font-size: 0.85rem; font-weight: 500; cursor: pointer; transition: all 0.2s; margin-top: 14px; }
+        .btn-recovery:hover { background: #1e293b; border-color: #38bdf8; }
         .error-msg { background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 18px; text-align: center; }
+        .success-msg { background: #064e3b; border: 1px solid #047857; color: #6ee7b7; padding: 10px 14px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 18px; text-align: center; }
         .footer { text-align: center; margin-top: 24px; font-size: 0.8rem; color: #64748b; }
     </style>
 </head>
@@ -240,11 +254,11 @@ LOGIN_HTML_TEMPLATE = """
         <div class="icon-box">🔐</div>
         <h2>Acceso Administrativo</h2>
         <p class="subtitle">Panel de Vencimientos & Gemini MCP</p>
-        {{ERROR_HTML}}
+        {{MESSAGE_HTML}}
         <form action="/login" method="POST">
             <div class="form-group">
                 <label>Usuario</label>
-                <input type="text" name="username" required autofocus placeholder="admin">
+                <input type="text" name="username" required autofocus placeholder="admin" value="admin">
             </div>
             <div class="form-group">
                 <label>Contraseña</label>
@@ -252,6 +266,11 @@ LOGIN_HTML_TEMPLATE = """
             </div>
             <button type="submit" class="btn">Continuar</button>
         </form>
+
+        <form action="/recuperar" method="POST">
+            <button type="submit" class="btn-recovery">📲 Enviar clave temporal a mi Telegram</button>
+        </form>
+
         <div class="footer">Autenticación de Dos Factores (2FA) Requerida</div>
     </div>
 </body>
@@ -301,19 +320,25 @@ TWOFA_HTML_TEMPLATE = """
 """
 
 @app.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, error: Optional[str] = None):
-    # Si ya está autenticado, redirigir directo al dashboard
+async def login_page(request: Request, error: Optional[str] = None, msg: Optional[str] = None):
     session_user = verify_session_cookie(request.cookies.get("session_token"))
     if session_user:
         return RedirectResponse(url="/", status_code=302)
         
-    error_html = f'<div class="error-msg">{error}</div>' if error else ""
-    return LOGIN_HTML_TEMPLATE.replace("{{ERROR_HTML}}", error_html)
+    message_html = ""
+    if error:
+        message_html = f'<div class="error-msg">{error}</div>'
+    elif msg:
+        message_html = f'<div class="success-msg">{msg}</div>'
+        
+    return LOGIN_HTML_TEMPLATE.replace("{{MESSAGE_HTML}}", message_html)
 
 @app.post("/login")
 async def login_submit(username: str = Form(...), password: str = Form(...)):
-    user = username.strip()
-    if not database.verify_admin_credentials(user, password):
+    user = username.strip().lower()
+    passw = password.strip()
+    
+    if not database.verify_admin_credentials(user, passw):
         return RedirectResponse(url="/login?error=Usuario+o+contrase%C3%B1a+incorrectos", status_code=302)
 
     # Generar código OTP de 6 dígitos para Telegram
@@ -341,6 +366,28 @@ async def login_submit(username: str = Form(...), password: str = Form(...)):
     )
     return response
 
+@app.post("/recuperar")
+async def recover_password():
+    raw_user = os.getenv("ADMIN_USERNAME")
+    admin_user = raw_user.strip().lower() if raw_user and raw_user.strip() else "admin"
+    
+    # Generar clave temporal de 6 dígitos
+    temp_pass = f"{secrets.randbelow(900000) + 100000}"
+    database.create_or_update_admin(admin_user, temp_pass)
+    
+    msg = (
+        "🔑 <b>Recuperación de Contraseña</b>\n\n"
+        "Has solicitado una clave temporal de acceso al Panel Web:\n\n"
+        f"• Usuario: <code>{admin_user}</code>\n"
+        f"• Contraseña temporal: <code>{temp_pass}</code>\n\n"
+        "Ingresa con estos datos en https://mcp.juanconnect.online"
+    )
+    ok = await send_telegram_message(msg)
+    if ok:
+        return RedirectResponse(url="/login?msg=Se+envi%C3%B3+tu+clave+temporal+a+Telegram", status_code=302)
+    else:
+        return RedirectResponse(url="/login?error=Fallo+al+enviar+mensaje+a+Telegram", status_code=302)
+
 @app.get("/2fa", response_class=HTMLResponse)
 async def twofa_page(request: Request, error: Optional[str] = None):
     preauth_user = verify_preauth_cookie(request.cookies.get("preauth_token"))
@@ -359,11 +406,11 @@ async def twofa_submit(request: Request, otp_code: str = Form(...)):
     code = otp_code.strip()
     is_valid = False
 
-    # 1. Validar si coincide con el OTP de Telegram
+    # 1. Validar con OTP de Telegram
     if database.verify_telegram_otp(preauth_user, code):
         is_valid = True
     else:
-        # 2. Validar si coincide con TOTP (Google Authenticator)
+        # 2. Validar con TOTP (Google Authenticator)
         admin_data = database.get_admin_user(preauth_user)
         if admin_data and admin_data.get("totp_secret"):
             totp = pyotp.TOTP(admin_data["totp_secret"])
@@ -381,7 +428,7 @@ async def twofa_submit(request: Request, otp_code: str = Form(...)):
         value=session,
         httponly=True,
         samesite="lax",
-        max_age=86400 * 7 # 7 días de sesión
+        max_age=86400 * 7 # 7 días
     )
     response.delete_cookie("preauth_token")
     return response

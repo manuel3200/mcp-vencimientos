@@ -41,7 +41,6 @@ def init_db():
     conn = get_connection()
     try:
         with conn:
-            # Tabla de servicios
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS services (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +54,6 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            # Tabla de usuarios administradores
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS admin_users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,30 +74,32 @@ def init_db():
 # ==========================================
 def create_or_update_admin(username: str, password: str, totp_secret: str = ""):
     """Crea o actualiza la contraseña de un usuario administrador."""
-    p_hash, salt = hash_password(password)
+    clean_user = username.strip().lower()
+    p_hash, salt = hash_password(password.strip())
     conn = get_connection()
     try:
         with conn:
-            existing = conn.execute("SELECT id, totp_secret FROM admin_users WHERE username = ?", (username,)).fetchone()
+            existing = conn.execute("SELECT id, totp_secret FROM admin_users WHERE lower(username) = ?", (clean_user,)).fetchone()
             if existing:
                 secret_to_use = totp_secret if totp_secret else existing["totp_secret"]
                 conn.execute("""
                     UPDATE admin_users 
                     SET password_hash = ?, salt = ?, totp_secret = ?
-                    WHERE username = ?
-                """, (p_hash, salt, secret_to_use, username))
+                    WHERE lower(username) = ?
+                """, (p_hash, salt, secret_to_use, clean_user))
             else:
                 conn.execute("""
                     INSERT INTO admin_users (username, password_hash, salt, totp_secret)
                     VALUES (?, ?, ?, ?)
-                """, (username, p_hash, salt, totp_secret))
+                """, (clean_user, p_hash, salt, totp_secret))
     finally:
         conn.close()
 
 def get_admin_user(username: str) -> Optional[Dict[str, Any]]:
+    clean_user = username.strip().lower()
     conn = get_connection()
     try:
-        row = conn.execute("SELECT * FROM admin_users WHERE username = ?", (username,)).fetchone()
+        row = conn.execute("SELECT * FROM admin_users WHERE lower(username) = ?", (clean_user,)).fetchone()
         return dict(row) if row else None
     finally:
         conn.close()
@@ -108,10 +108,10 @@ def verify_admin_credentials(username: str, password: str) -> bool:
     user = get_admin_user(username)
     if not user:
         return False
-    return verify_password(password, user["password_hash"], user["salt"])
+    return verify_password(password.strip(), user["password_hash"], user["salt"])
 
 def set_telegram_otp(username: str, otp: str, duration_seconds: int = 300):
-    """Guarda un OTP temporal de Telegram con expiración (por defecto 5 minutos)."""
+    clean_user = username.strip().lower()
     expiry = time.time() + duration_seconds
     conn = get_connection()
     try:
@@ -119,14 +119,14 @@ def set_telegram_otp(username: str, otp: str, duration_seconds: int = 300):
             conn.execute("""
                 UPDATE admin_users 
                 SET telegram_otp = ?, telegram_otp_expiry = ?
-                WHERE username = ?
-            """, (otp, expiry, username))
+                WHERE lower(username) = ?
+            """, (otp.strip(), expiry, clean_user))
     finally:
         conn.close()
 
 def verify_telegram_otp(username: str, otp: str) -> bool:
-    """Verifica si el OTP de Telegram es correcto y no ha expirado."""
-    user = get_admin_user(username)
+    clean_user = username.strip().lower()
+    user = get_admin_user(clean_user)
     if not user:
         return False
     stored_otp = user.get("telegram_otp")
@@ -136,11 +136,10 @@ def verify_telegram_otp(username: str, otp: str) -> bool:
         return False
         
     if secrets.compare_digest(stored_otp, otp.strip()):
-        # Limpiar el OTP usado para que sea de un solo uso
         conn = get_connection()
         try:
             with conn:
-                conn.execute("UPDATE admin_users SET telegram_otp = '', telegram_otp_expiry = 0 WHERE username = ?", (username,))
+                conn.execute("UPDATE admin_users SET telegram_otp = '', telegram_otp_expiry = 0 WHERE lower(username) = ?", (clean_user,))
         finally:
             conn.close()
         return True

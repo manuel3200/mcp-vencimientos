@@ -83,13 +83,13 @@ def consultar_balance_y_ganancias(periodo: str = "mes_actual") -> str:
     b = database.get_financial_balance(period=periodo)
     lines = [
         f"📊 <b>BALANCE FINANCIERO Y GANANCIAS ({b['period']}):</b>\n",
-        f"💰 <b>Ingresos Cobrados:</b> ${b['collected_income']:.2f} USD ({b['transactions_count']} cobros registrados)",
-        f"📉 <b>Costos de Proveedor:</b> ${b['collected_costs']:.2f} USD",
-        f"💵 <b>GANANCIA NETA REAL:</b> ${b['collected_profit']:.2f} USD",
+        f"💰 <b>Ingresos Cobrados:</b> {database.format_ars(b['collected_income'])} ({b['transactions_count']} cobros registrados)",
+        f"📉 <b>Costos de Proveedor:</b> {database.format_ars(b['collected_costs'])}",
+        f"💵 <b>GANANCIA NETA REAL:</b> {database.format_ars(b['collected_profit'])}",
         "\n━━━━━━━━━━━━━━━━━━━━━━",
         f"⏳ <b>POR COBRAR PRÓXIMAMENTE (7 días):</b>",
-        f"• Total a cobrar: <b>${b['pending_receivables_7d']:.2f} USD</b> ({b['pending_accounts_count']} cuentas)",
-        f"🎯 <b>Proyección Mensual Total (Todas las cuentas):</b> ${b['projected_monthly_profit']:.2f} USD de ganancia neta",
+        f"• Total a cobrar: <b>{database.format_ars(b['pending_receivables_7d'])}</b> ({b['pending_accounts_count']} cuentas)",
+        f"🎯 <b>Proyección Mensual Total (Todas las cuentas):</b> {database.format_ars(b['projected_monthly_profit'])} de ganancia neta",
         f"📱 Total de suscripciones activas: {b['active_subscriptions_total']}"
     ]
     return "\n".join(lines)
@@ -101,11 +101,11 @@ def registrar_cobro_cliente(
     metodo_pago: str = "Transferencia",
     nueva_fecha_vencimiento: Optional[str] = None
 ) -> str:
-    """Registra el cobro de una mensualidad o renovación de un cliente:
+    """Registra el cobro de una mensualidad o renovación de un cliente en Pesos Argentinos (ARS):
     Suma el dinero a tus ingresos cobrados, calcula la ganancia neta y extiende la fecha de vencimiento 30 días automáticamente.
     - correo_o_id: Correo o ID de la cuenta que pagó.
-    - monto: Monto recibido (si no se especifica, toma el precio habitual de la cuenta).
-    - metodo_pago: 'Transferencia', 'MercadoPago', 'Binance / USDT', 'Efectivo'.
+    - monto: Monto recibido en ARS (si no se especifica, toma el precio habitual de la cuenta).
+    - metodo_pago: 'Transferencia', 'Mercado Pago', 'Efectivo', 'Binance / USDT'.
     - nueva_fecha_vencimiento: (Opcional) Si quieres fijar una fecha específica en lugar de sumar 30 días.
     """
     res = database.register_customer_payment(
@@ -121,22 +121,22 @@ def registrar_cobro_cliente(
         f"✅ PAGO Y RENOVACIÓN REGISTRADOS CON ÉXITO:\n"
         f"• Cliente: {res['client_name']}\n"
         f"• Servicio: {res['platform']} ({res['email']})\n"
-        f"• Monto cobrado: ${res['amount']:.2f} USD ({metodo_pago})\n"
-        f"• Ganancia neta de este cobro: +${res['profit']:.2f} USD\n"
+        f"• Monto cobrado: {database.format_ars(res['amount'])} ({metodo_pago})\n"
+        f"• Ganancia neta de este cobro: +{database.format_ars(res['profit'])}\n"
         f"• Nuevo vencimiento: <code>{res['new_expiry']}</code> (30 días extendidos)\n"
         f"🎉 El balance financiero ha sido actualizado automáticamente."
     )
 
 @mcp.tool()
 def consultar_cuentas_por_cobrar(dias_anticipacion: int = 7) -> str:
-    """Muestra todas las cuentas que vencen en los próximos días con el monto que debes cobrar y los datos del cliente."""
+    """Muestra todas las cuentas que vencen en los próximos días con el monto en ARS que debes cobrar y los datos del cliente."""
     b = database.get_financial_balance()
     pending = b.get("pending_accounts", [])
     if not pending:
         return f"🎉 ¡Al día! No hay cobros pendientes para los próximos {dias_anticipacion} días."
 
     lines = [
-        f"⏳ <b>Cobros Pendientes ({len(pending)} cuentas - Total: ${b['pending_receivables_7d']:.2f} USD):</b>\n"
+        f"⏳ <b>Cobros Pendientes ({len(pending)} cuentas - Total: {database.format_ars(b['pending_receivables_7d'])}):</b>\n"
     ]
     for p in pending:
         d_txt = "HOY" if p['days_remaining'] == 0 else (f"en {p['days_remaining']}d" if p['days_remaining'] > 0 else f"VENCIDA hace {abs(p['days_remaining'])}d")
@@ -145,7 +145,7 @@ def consultar_cuentas_por_cobrar(dias_anticipacion: int = 7) -> str:
         wa_line = f"\n  📲 Link WhatsApp (1 Clic): {wa_url}" if wa_url else ""
         lines.append(
             f"• <b>{p['client']}</b> - {p['platform']} ({p['email']})\n"
-            f"  A cobrar: <b>${p['price']:.2f} USD</b> | Vence: {d_txt}\n"
+            f"  A cobrar: <b>{database.format_ars(p['price'])}</b> | Vence: {d_txt}\n"
             f"  Contacto: WhatsApp: {p.get('whatsapp') or '-'} | Telegram: {p.get('telegram') or '-'}"
             f"{wa_line}"
         )
@@ -722,6 +722,157 @@ async def enviar_backup_telegram() -> str:
         return "✅ Copia de seguridad en Excel/CSV generada y enviada a tu chat de Telegram."
     return "❌ Error al generar o enviar la copia de seguridad por Telegram."
 
+# ==========================================
+# Herramientas de Catálogo de Precios y Combos (Paso 7 - v2.8.0)
+# ==========================================
+@mcp.tool()
+def consultar_catalogo_precios() -> str:
+    """Muestra el catálogo oficial de precios en Pesos Argentinos (ARS) por plataforma, distinguiendo precio a Consumidor Final, Revendedor y Costo Mayorista."""
+    catalog = database.get_price_catalog()
+    if not catalog:
+        return "El catálogo de precios está vacío. Usa 'configurar_precio_catalogo' para agregar plataformas."
+
+    lines = ["🏷️ <b>CATÁLOGO OFICIAL DE PRECIOS (ARS):</b>\n"]
+    for c in catalog:
+        stype = "📱 Pantalla" if c["service_type"] == "pantalla" else "👑 Completa"
+        lines.append(
+            f"• <b>{c['platform']}</b> ({stype})\n"
+            f"  Costo Prov: {c['cost_price_formatted']} | Final: <b>{c['price_final_formatted']}</b> | Revendedor: <b>{c['price_reseller_formatted']}</b>\n"
+            f"  Margen Ganancia: +{database.format_ars(c['profit_final'])} (Final) / +{database.format_ars(c['profit_reseller'])} (Rev.)\n"
+        )
+    return "\n".join(lines)
+
+@mcp.tool()
+def configurar_precio_catalogo(
+    plataforma: str,
+    precio_final_ars: float,
+    precio_revendedor_ars: float,
+    costo_ars: float = 0.0,
+    tipo_servicio: str = "pantalla",
+    notas: str = ""
+) -> str:
+    """Configura o actualiza el precio oficial y costo en Pesos Argentinos (ARS) para una plataforma:
+    - plataforma: Netflix 4K, Disney+, Max, etc.
+    - precio_final_ars: Precio para el cliente consumidor final en ARS (ej: 5500).
+    - precio_revendedor_ars: Precio mayorista para revendedores en ARS (ej: 4200).
+    - costo_ars: Costo de compra ante el proveedor en ARS (ej: 3200).
+    - tipo_servicio: 'pantalla' (individual) o 'cuenta_completa'.
+    """
+    res = database.upsert_catalog_price(
+        platform=plataforma,
+        service_type=tipo_servicio,
+        cost_price=costo_ars,
+        price_final=precio_final_ars,
+        price_reseller=precio_revendedor_ars,
+        notes=notas
+    )
+    return (
+        f"✅ PRECIO DE CATÁLOGO GUARDADO CON ÉXITO:\n"
+        f"• Plataforma: {res['platform']} ({res['service_type']})\n"
+        f"• Precio Consumidor Final: {database.format_ars(res['price_final'])}\n"
+        f"• Precio Revendedor: {database.format_ars(res['price_reseller'])}\n"
+        f"• Costo Proveedor: {database.format_ars(res['cost_price'])}\n"
+        f"💡 Este precio se aplicará automáticamente a nuevas ventas si no se especifica un monto particular."
+    )
+
+@mcp.tool()
+def listar_combos() -> str:
+    """Lista todos los packs promocionales o combos configurados con sus precios en ARS y plataformas incluidas."""
+    combos = database.get_combos(only_active=True)
+    if not combos:
+        return "No hay combos promocionales activos configurados. Usa 'crear_o_actualizar_combo' para armar uno."
+
+    lines = ["📦 <b>PACKS Y COMBOS ACTIVOS (ARS):</b>\n"]
+    for cb in combos:
+        lines.append(
+            f"🔹 <b>{cb['name']}</b>\n"
+            f"  Plataformas: {cb['platforms_str']}\n"
+            f"  Precio Final: <b>{cb['price_final_formatted']}</b> | Revendedor: <b>{cb['price_reseller_formatted']}</b>\n"
+            f"  Descripción: {cb.get('description') or 'Sin descripción'}\n"
+        )
+    return "\n".join(lines)
+
+@mcp.tool()
+def crear_o_actualizar_combo(
+    nombre: str,
+    plataformas: str,
+    precio_final_ars: float,
+    precio_revendedor_ars: float,
+    descripcion: str = ""
+) -> str:
+    """Crea o actualiza un combo o pack promocional:
+    - nombre: Nombre del combo (ej: 'Dúo Cine Netflix + Disney').
+    - plataformas: Lista de plataformas separadas por coma (ej: 'Netflix 4K, Disney+ Premium').
+    - precio_final_ars: Precio total del combo en ARS para consumidor final (ej: 8500).
+    - precio_revendedor_ars: Precio en ARS para revendedor (ej: 6800).
+    - descripcion: Breve detalle o condiciones del pack.
+    """
+    plat_list = [p.strip() for p in plataformas.split(",") if p.strip()]
+    if not plat_list:
+        return "❌ Debes especificar al menos una plataforma para el combo."
+    res = database.create_or_update_combo(
+        name=nombre,
+        description=descripcion,
+        price_final=precio_final_ars,
+        price_reseller=precio_revendedor_ars,
+        platforms=plat_list
+    )
+    return (
+        f"✅ COMBO '{res['name']}' CONFIGURADO CON ÉXITO:\n"
+        f"• Plataformas: {', '.join(plat_list)}\n"
+        f"• Precio Final: {database.format_ars(precio_final_ars)}\n"
+        f"• Precio Revendedor: {database.format_ars(precio_revendedor_ars)}\n"
+        f"🎉 Ya está disponible para ser vendido en 1 clic con la herramienta 'vender_combo'."
+    )
+
+@mcp.tool()
+def vender_combo(
+    nombre_o_id_combo: str,
+    cliente: str,
+    whatsapp: str = "",
+    telegram: str = "",
+    tipo_cliente: str = "consumidor_final",
+    metodo_pago: str = "Transferencia",
+    dias_validez: int = 30,
+    notas: str = ""
+) -> str:
+    """Vende un combo promocional en un solo paso:
+    Descuenta de stock libre las cuentas/pantallas de cada plataforma requerida, registra el cobro consolidado en ARS y genera el enlace de WhatsApp listo para entregar.
+    - nombre_o_id_combo: Nombre o ID del combo (ej: 'Combo Dúo Cine (Netflix + Disney+)').
+    - cliente: Nombre del comprador.
+    - whatsapp / telegram: Contacto del cliente.
+    - tipo_cliente: 'consumidor_final' o 'revendedor'.
+    - metodo_pago: 'Transferencia', 'Mercado Pago', 'Efectivo', etc.
+    - dias_validez: Duración del servicio (por defecto 30 días).
+    """
+    res = database.sell_combo(
+        combo_name_or_id=nombre_o_id_combo,
+        client_name=cliente,
+        whatsapp=whatsapp,
+        telegram=telegram,
+        client_type=tipo_cliente,
+        payment_method=metodo_pago,
+        duration_days=dias_validez,
+        notes=notas
+    )
+    if not res.get("success"):
+        return f"❌ {res.get('error')}"
+
+    accs_summary = "\n".join([f"  • {a['platform']}: {a['email']} (Perfil: {a.get('profile_name') or 'Único'})" for a in res['accounts']])
+    return (
+        f"🎉 COMBO VENDIDO Y ASIGNADO CON ÉXITO:\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📦 <b>Pack:</b> {res['combo_name']}\n"
+        f"👤 <b>Cliente:</b> {res['client_name']} ({tipo_cliente})\n"
+        f"💰 <b>Total Cobrado:</b> {database.format_ars(res['amount'])}\n"
+        f"💵 <b>Ganancia Neta:</b> +{database.format_ars(res['profit'])}\n"
+        f"📅 <b>Vencimiento:</b> <code>{res['expiry_date']}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📺 <b>Cuentas y Pantallas Asignadas:</b>\n{accs_summary}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📲 <b>WhatsApp de Entrega Listo (1 Clic):</b>\n{res['wa_link']}"
+    )
+
 
 
 # ==========================================
@@ -755,7 +906,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Gemini Streaming CRM & Financial Bot",
     description="Servidor MCP para Gemini Spark y CRM de Streaming con Finanzas y 2FA",
-    version="2.2.0",
+    version="2.8.0",
     lifespan=lifespan
 )
 
@@ -990,13 +1141,42 @@ async def dashboard(request: Request):
     fallen_accounts = database.get_fallen_accounts()
     finance = database.get_financial_balance()
     transactions = database.get_recent_transactions(limit=15)
+    catalog_items = database.get_price_catalog()
+    combos_list = database.get_combos()
 
     msg_raw = request.query_params.get("msg", "")
+    wa_param = request.query_params.get("wa", "")
+    err_param = request.query_params.get("err", "")
     msg_banner = ""
-    if msg_raw:
+    if err_param:
+        msg_banner = f"""
+        <div style="background:#450a0a; border:1px solid #ef4444; color:#fca5a5; padding:12px 18px; border-radius:8px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+            <span>⚠️ <strong>Error:</strong> {err_param}</span>
+            <a href="/" style="color:#fca5a5; text-decoration:none; font-weight:bold; cursor:pointer;">✕</a>
+        </div>
+        """
+    elif msg_raw == "combo_sold" and wa_param:
+        msg_banner = f"""
+        <div style="background:#065f46; border:1px solid #10b981; color:#d1fae5; padding:12px 18px; border-radius:8px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <span>🎉 <strong>¡Combo vendido y asignado con éxito!</strong> Los perfiles quedaron asignados y las cuentas sincronizadas.</span>
+            <a href="{wa_param}" target="_blank" class="btn" style="background:#25d366; color:#fff; text-decoration:none; font-weight:bold; padding:8px 16px; border-radius:6px;">📲 Enviar Accesos por WhatsApp (1 Clic)</a>
+        </div>
+        """
+    elif msg_raw:
+        msg_text = "¡Cambios guardados con éxito!"
+        if msg_raw == "catalog_saved":
+            msg_text = "✅ Precio de catálogo guardado correctamente."
+        elif msg_raw == "catalog_deleted":
+            msg_text = "🗑️ Precio eliminado del catálogo."
+        elif msg_raw == "combo_saved":
+            msg_text = "✅ Combo promocional guardado correctamente."
+        elif msg_raw == "combo_deleted":
+            msg_text = "🗑️ Combo promocional eliminado."
+        else:
+            msg_text = msg_raw
         msg_banner = f"""
         <div style="background:#065f46; border:1px solid #10b981; color:#d1fae5; padding:12px 18px; border-radius:8px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
-            <span>{msg_raw}</span>
+            <span>{msg_text}</span>
             <a href="/" style="color:#a7f3d0; text-decoration:none; font-weight:bold; cursor:pointer;">✕</a>
         </div>
         """
@@ -1150,9 +1330,9 @@ async def dashboard(request: Request):
             <td><small style="color:#94a3b8;">{t['created_at'][:16]}</small></td>
             <td><strong>{c_name}</strong> ({c_type})</td>
             <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span></td>
-            <td><strong style="color:#10b981;">+${t['amount']:.2f} USD</strong></td>
-            <td><span style="color:#f59e0b;">-${t['cost']:.2f}</span></td>
-            <td><strong style="color:#38bdf8;">+${t['profit']:.2f} USD</strong></td>
+            <td><strong style="color:#10b981;">+{database.format_ars(t['amount'])}</strong></td>
+            <td><span style="color:#f59e0b;">-{database.format_ars(t['cost'])}</span></td>
+            <td><strong style="color:#38bdf8;">+{database.format_ars(t['profit'])}</strong></td>
             <td><small>{t.get('payment_method') or 'Transf.'}</small></td>
         </tr>
         """
@@ -1201,16 +1381,19 @@ async def dashboard(request: Request):
 
         screens_html += f"""
         <div class="screen-card">
-            <div class="screen-header">
-                <div>
-                    <span class="badge" style="background:#1e3a8a;color:#93c5fd;margin-bottom:6px;">{s['platform']}</span>
-                    <div class="screen-title"><code>{s['email']}</code></div>
-                    <small style="color:#64748b;">Clave: <code>{s['password']}</code></small>
-                </div>
-                <div style="text-align:right;">
-                    <span style="font-size:1.1rem;font-weight:800;color:#38bdf8;">{s['occupied_count']}/{s['total_profiles']}</span>
-                    <br><small style="color:#10b981;font-weight:600;">{s['free_count']} libres</small>
-                </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <h4 style="margin:0; font-size:1.05rem; color:#f8fafc;">{s['platform']}</h4>
+                <form action="/api/report-master-fallen" method="POST" style="display:inline;" onsubmit="return confirm('¿Marcar toda la cuenta madre como caída? Se afectarán todas las pantallas.');">
+                    <input type="hidden" name="email" value="{s['email']}">
+                    <button type="submit" class="btn-action btn-warn" style="font-size:0.75rem; padding:3px 8px;">🚨 Reportar Caída Madre</button>
+                </form>
+            </div>
+            <p style="margin:0 0 10px 0; font-size:0.85rem; color:#94a3b8;">
+                Correo: <code>{s['email']}</code> | Clave: <code>{s['password']}</code>
+            </p>
+            <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:4px;">
+                <span>Ocupación: {s['occupied_count']}/{s['total_profiles']} ({fill_pct}%)</span>
+                <span>{s['free_count']} libres</span>
             </div>
             <div class="progress-bar-bg">
                 <div class="progress-bar-fill" style="width:{fill_pct}%;"></div>
@@ -1222,6 +1405,59 @@ async def dashboard(request: Request):
         """
     if not screens_html:
         screens_html = "<div style='grid-column:1/-1;text-align:center;color:#64748b;padding:30px;'>No hay cuentas registradas con pantallas múltiples aún. Puedes pedirle a Gemini: <em>'Crea una cuenta de Netflix con 4 pantallas'</em>.</div>"
+
+    # 6. Catálogo de Precios ARS
+    catalog_rows = ""
+    for c in catalog_items:
+        stype_badge = "📱 Pantalla" if c["service_type"] == "pantalla" else "👑 Completa"
+        catalog_rows += f"""
+        <tr>
+            <td><strong>{c['platform']}</strong></td>
+            <td><span class="badge" style="background:#1e293b;color:#94a3b8;">{stype_badge}</span></td>
+            <td style="color:#f59e0b;">{c['cost_price_formatted']}</td>
+            <td><strong style="color:#10b981;">{c['price_final_formatted']}</strong></td>
+            <td><strong style="color:#38bdf8;">{c['price_reseller_formatted']}</strong></td>
+            <td>
+                <small style="color:#10b981;">+{database.format_ars(c['profit_final'])} (Final)</small><br>
+                <small style="color:#38bdf8;">+{database.format_ars(c['profit_reseller'])} (Rev.)</small>
+            </td>
+            <td>
+                <form action="/api/catalog/delete/{c['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar este precio del catálogo?');">
+                    <button type="submit" class="btn-action" style="color:#ef4444;" title="Eliminar">🗑️</button>
+                </form>
+            </td>
+        </tr>
+        """
+    if not catalog_rows:
+        catalog_rows = "<tr><td colspan='7' style='text-align:center;color:#64748b;padding:20px;'>No hay precios configurados en el catálogo aún.</td></tr>"
+
+    # 7. Combos y Packs
+    combos_html = ""
+    for cb in combos_list:
+        pills = "".join([f'<span class="badge" style="background:#0b0f19;border:1px solid #334155;color:#38bdf8;margin:2px;">{it["platform"]}</span>' for it in cb["items"]])
+        combos_html += f"""
+        <div style="background:#0b0f19;border:1px solid #1e293b;border-radius:12px;padding:16px;display:flex;flex-direction:column;justify-content:space-between;">
+            <div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+                    <h4 style="margin:0;color:#f8fafc;font-size:1.05rem;">{cb['name']}</h4>
+                    <form action="/api/combos/delete/{cb['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar este combo?');">
+                        <button type="submit" class="btn-action" style="background:transparent;border:none;color:#ef4444;cursor:pointer;font-size:1.1rem;padding:0;" title="Eliminar Combo">✕</button>
+                    </form>
+                </div>
+                <p style="margin:0 0 10px 0;font-size:0.8rem;color:#94a3b8;">{cb.get('description') or 'Pack promocional'}</p>
+                <div style="margin-bottom:12px;display:flex;flex-wrap:wrap;gap:4px;">{pills}</div>
+            </div>
+            <div style="border-top:1px solid #1e293b;padding-top:12px;">
+                <div style="display:flex;justify-content:space-between;margin-bottom:10px;font-size:0.85rem;">
+                    <span style="color:#94a3b8;">Final: <strong style="color:#10b981;">{cb['price_final_formatted']}</strong></span>
+                    <span style="color:#94a3b8;">Rev: <strong style="color:#38bdf8;">{cb['price_reseller_formatted']}</strong></span>
+                </div>
+                <button type="button" onclick="openSellComboModal('{cb['id']}', '{cb['name']}')" class="btn" style="width:100%;background:#0284c7;padding:8px;font-size:0.85rem;font-weight:bold;">⚡ Vender Combo (1 Toque)</button>
+            </div>
+        </div>
+        """
+    if not combos_html:
+        combos_html = "<div style='color:#64748b;padding:20px;grid-column:1/-1;'>No hay combos activos configurados aún.</div>"
 
     html = f"""
     <!DOCTYPE html>
@@ -1291,9 +1527,25 @@ async def dashboard(request: Request):
             function showTab(tabId) {{
                 document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
                 document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-                document.getElementById(tabId).style.display = 'block';
-                document.getElementById('btn-' + tabId).classList.add('active');
+                const target = document.getElementById(tabId);
+                const btn = document.getElementById('btn-' + tabId);
+                if (target) target.style.display = 'block';
+                if (btn) btn.classList.add('active');
             }}
+            function openSellComboModal(comboId, comboName) {{
+                document.getElementById('modal-combo-id').value = comboId;
+                document.getElementById('modal-combo-title').innerText = '⚡ Vender ' + comboName;
+                document.getElementById('modal-sell-combo').style.display = 'flex';
+            }}
+            function closeSellComboModal() {{
+                document.getElementById('modal-sell-combo').style.display = 'none';
+            }}
+            window.addEventListener('DOMContentLoaded', () => {{
+                const hash = window.location.hash.replace('#', '');
+                if (hash && document.getElementById(hash)) {{
+                    showTab(hash);
+                }}
+            }});
         </script>
     </head>
     <body>
@@ -1312,22 +1564,22 @@ async def dashboard(request: Request):
             <div class="finance-grid">
                 <div class="fin-box box-income">
                     <h4>Ingresos Cobrados (Mes)</h4>
-                    <p class="amount">${finance['collected_income']:.2f} USD</p>
+                    <p class="amount">{database.format_ars(finance['collected_income'])}</p>
                     <small>{finance['transactions_count']} cobros registrados</small>
                 </div>
                 <div class="fin-box box-costs">
                     <h4>Costo Proveedores</h4>
-                    <p class="amount">${finance['collected_costs']:.2f} USD</p>
+                    <p class="amount">{database.format_ars(finance['collected_costs'])}</p>
                     <small>Costo base de cuentas</small>
                 </div>
                 <div class="fin-box box-profit">
                     <h4>Ganancia Neta Real</h4>
-                    <p class="amount">${finance['collected_profit']:.2f} USD</p>
+                    <p class="amount">{database.format_ars(finance['collected_profit'])}</p>
                     <small>Beneficio líquido en el bolsillo</small>
                 </div>
                 <div class="fin-box box-pending">
                     <h4>Por Cobrar (Próximos 7d)</h4>
-                    <p class="amount">${finance['pending_receivables_7d']:.2f} USD</p>
+                    <p class="amount">{database.format_ars(finance['pending_receivables_7d'])}</p>
                     <small>{finance['pending_accounts_count']} cuentas por vencer</small>
                 </div>
             </div>
@@ -1356,6 +1608,7 @@ async def dashboard(request: Request):
                 <div class="tabs">
                     <button id="btn-tab-active" class="tab-btn active" onclick="showTab('tab-active')">👥 Clientes & Activas ({len(active_accounts)})</button>
                     <button id="btn-tab-screens" class="tab-btn" onclick="showTab('tab-screens')">📺 Pantallas ({len(screens_overview)})</button>
+                    <button id="btn-tab-catalog" class="tab-btn" onclick="showTab('tab-catalog')">🏷️ Precios & Combos ({len(catalog_items)}/{len(combos_list)})</button>
                     <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({len(transactions)})</button>
                     <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
@@ -1386,6 +1639,100 @@ async def dashboard(request: Request):
                     <div class="screens-grid">
                         {screens_html}
                     </div>
+                </div>
+
+                <div id="tab-catalog" class="tab-content" style="display:none;">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 24px;">
+                        <!-- Card: Agregar o Modificar Precio al Catálogo -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:18px;">
+                            <h3 style="margin:0 0 12px 0; font-size:1rem; color:#38bdf8;">➕ Agregar o Actualizar Precio (ARS)</h3>
+                            <form action="/api/catalog/save" method="POST" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Plataforma / Servicio *</label>
+                                    <input type="text" name="platform" placeholder="Ej: Netflix 4K, Max, Disney+" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Tipo de Servicio</label>
+                                    <select name="service_type" style="width:100%;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px;font-size:0.85rem;">
+                                        <option value="pantalla">📱 Pantalla (Perfil)</option>
+                                        <option value="cuenta_completa">👑 Cuenta Completa</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Costo Proveedor ($ ARS)</label>
+                                    <input type="number" name="cost_price" step="any" placeholder="3200" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Final ($ ARS) *</label>
+                                    <input type="number" name="price_final" step="any" placeholder="5500" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Revendedor ($ ARS) *</label>
+                                    <input type="number" name="price_reseller" step="any" placeholder="4200" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Notas / Observaciones</label>
+                                    <input type="text" name="notes" placeholder="Perfil UHD con PIN individual" style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1; margin-top:4px;">
+                                    <button type="submit" class="btn" style="background:#059669;width:100%;padding:8px;">💾 Guardar Precio en Catálogo</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Card: Crear Nuevo Combo -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:18px;">
+                            <h3 style="margin:0 0 12px 0; font-size:1rem; color:#38bdf8;">📦 Crear Nuevo Pack o Combo (ARS)</h3>
+                            <form action="/api/combos/save" method="POST" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Nombre del Pack *</label>
+                                    <input type="text" name="name" placeholder="Ej: Combo Dúo Cine (Netflix + Disney+)" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Plataformas Requeridas (separadas por coma) *</label>
+                                    <input type="text" name="platforms" placeholder="Netflix 4K, Disney+ Premium" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Pack Final ($ ARS) *</label>
+                                    <input type="number" name="price_final" step="any" placeholder="8500" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Pack Revendedor ($ ARS) *</label>
+                                    <input type="number" name="price_reseller" step="any" placeholder="6800" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Descripción Promocional</label>
+                                    <input type="text" name="description" placeholder="1 Pantalla Netflix 4K + 1 Pantalla Disney+ con ESPN" style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1; margin-top:4px;">
+                                    <button type="submit" class="btn" style="background:#0284c7;width:100%;padding:8px;">✨ Crear Pack / Combo</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <h3 style="margin:20px 0 12px 0; font-size:1.05rem; color:#e2e8f0;">📦 Packs y Combos Disponibles ({len(combos_list)})</h3>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:30px;">
+                        {combos_html}
+                    </div>
+
+                    <h3 style="margin:20px 0 12px 0; font-size:1.05rem; color:#e2e8f0;">🏷️ Lista de Precios Oficiales ({len(catalog_items)} plataformas)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plataforma</th>
+                                <th>Tipo</th>
+                                <th>Costo Prov.</th>
+                                <th>Precio Final (ARS)</th>
+                                <th>Precio Revendedor (ARS)</th>
+                                <th>Margen Ganancia</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {catalog_rows}
+                        </tbody>
+                    </table>
                 </div>
 
                 <div id="tab-finance" class="tab-content" style="display:none;">
@@ -1525,6 +1872,64 @@ async def dashboard(request: Request):
                 </div>
             </div>
         </div>
+
+        <!-- Modal para Vender Combo Rápido -->
+        <div id="modal-sell-combo" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:12px;padding:24px;width:90%;max-width:480px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #334155;padding-bottom:10px;">
+                    <h3 id="modal-combo-title" style="margin:0;color:#38bdf8;font-size:1.15rem;">⚡ Vender Combo</h3>
+                    <button type="button" onclick="closeSellComboModal()" style="background:none;border:none;color:#94a3b8;font-size:1.3rem;cursor:pointer;">✕</button>
+                </div>
+                <form action="/api/combos/sell" method="POST">
+                    <input type="hidden" id="modal-combo-id" name="combo_id" value="">
+                    
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Nombre del Cliente *</label>
+                        <input type="text" name="client_name" required placeholder="Ej: Lucas Martínez" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.9rem;">
+                    </div>
+                    
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">WhatsApp (con código de país) *</label>
+                        <input type="text" name="whatsapp" required placeholder="+54 9 11 2233 4455" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.9rem;">
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Tipo de Cliente</label>
+                            <select name="client_type" style="width:100%;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                                <option value="consumidor_final">👤 Final</option>
+                                <option value="revendedor">👔 Revendedor</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Medio de Pago</label>
+                            <select name="payment_method" style="width:100%;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                                <option value="Transferencia">Transferencia / CVU</option>
+                                <option value="Mercado Pago">Mercado Pago</option>
+                                <option value="Efectivo">Efectivo</option>
+                                <option value="Binance USDT">Binance USDT</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Días de Validez</label>
+                            <input type="number" name="duration_days" value="30" min="1" max="365" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Telegram (opcional)</label>
+                            <input type="text" name="telegram" placeholder="@usuario" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                        </div>
+                    </div>
+
+                    <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #334155;padding-top:14px;">
+                        <button type="button" onclick="closeSellComboModal()" class="btn" style="background:#475569;padding:8px 16px;">Cancelar</button>
+                        <button type="submit" class="btn" style="background:#059669;padding:8px 16px;font-weight:bold;">🚀 Confirmar Venta de Combo</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </body>
     </html>
     """
@@ -1545,12 +1950,115 @@ async def collect_payment_api(account_id: int, request: Request):
             f"💵 <b>Cobro y Renovación Registrados</b>\n\n"
             f"• Cliente: {res['client_name']}\n"
             f"• Servicio: {res['platform']}\n"
-            f"• Monto cobrado: ${res['amount']:.2f} USD\n"
-            f"• Ganancia Neta: +${res['profit']:.2f} USD\n"
+            f"• Monto cobrado: {database.format_ars(res['amount'])}\n"
+            f"• Ganancia Neta: +{database.format_ars(res['profit'])}\n"
             f"• Próximo vencimiento: {res['new_expiry']}"
             f"{wa_link_html}"
         )
     return RedirectResponse(url="/", status_code=302)
+
+@app.post("/api/catalog/save")
+async def api_catalog_save(
+    request: Request,
+    platform: str = Form(...),
+    service_type: str = Form("pantalla"),
+    cost_price: float = Form(0.0),
+    price_final: float = Form(0.0),
+    price_reseller: float = Form(0.0),
+    notes: str = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.upsert_catalog_price(
+        platform=platform,
+        service_type=service_type,
+        cost_price=cost_price,
+        price_final=price_final,
+        price_reseller=price_reseller,
+        notes=notes
+    )
+    return RedirectResponse(url="/?msg=catalog_saved#tab-catalog", status_code=302)
+
+@app.post("/api/catalog/delete/{price_id}")
+async def api_catalog_delete(price_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.delete_catalog_price(price_id)
+    return RedirectResponse(url="/?msg=catalog_deleted#tab-catalog", status_code=302)
+
+@app.post("/api/combos/save")
+async def api_combos_save(
+    request: Request,
+    name: str = Form(...),
+    platforms: str = Form(...),
+    price_final: float = Form(...),
+    price_reseller: float = Form(...),
+    description: str = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    plat_list = [p.strip() for p in platforms.split(",") if p.strip()]
+    database.create_or_update_combo(
+        name=name,
+        description=description,
+        price_final=price_final,
+        price_reseller=price_reseller,
+        platforms=plat_list
+    )
+    return RedirectResponse(url="/?msg=combo_saved#tab-catalog", status_code=302)
+
+@app.post("/api/combos/delete/{combo_id}")
+async def api_combos_delete(combo_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.delete_combo(combo_id)
+    return RedirectResponse(url="/?msg=combo_deleted#tab-catalog", status_code=302)
+
+@app.post("/api/combos/sell")
+async def api_combos_sell(
+    request: Request,
+    combo_id: int = Form(...),
+    client_name: str = Form(...),
+    whatsapp: str = Form(""),
+    telegram: str = Form(""),
+    client_type: str = Form("consumidor_final"),
+    payment_method: str = Form("Transferencia"),
+    duration_days: int = Form(30),
+    notes: str = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = database.sell_combo(
+        combo_name_or_id=combo_id,
+        client_name=client_name,
+        whatsapp=whatsapp,
+        telegram=telegram,
+        client_type=client_type,
+        payment_method=payment_method,
+        duration_days=duration_days,
+        notes=notes
+    )
+    if res.get("success"):
+        wa_url = res.get("wa_link", "")
+        await send_telegram_message(
+            f"🎉 <b>¡Combo Vendido desde el Panel Web!</b>\n\n"
+            f"• Pack: <b>{res['combo_name']}</b>\n"
+            f"• Cliente: {res['client_name']} ({client_type})\n"
+            f"• Total Cobrado: <b>{database.format_ars(res['amount'])}</b>\n"
+            f"• Ganancia Neta: +{database.format_ars(res['profit'])}\n"
+            f"• Cuentas asignadas: {len(res['accounts'])}\n"
+            f"• Vencimiento: <code>{res['expiry_date']}</code>\n\n"
+            f"📲 <a href=\"{wa_url}\"><b>👉 ENVIAR ACCESOS POR WHATSAPP (1 Clic)</b></a>"
+        )
+        return RedirectResponse(url=f"/?msg=combo_sold&wa={urllib.parse.quote(wa_url)}#tab-active", status_code=302)
+    else:
+        err = urllib.parse.quote(res.get("error", "Error al vender combo"))
+        return RedirectResponse(url=f"/?err={err}#tab-catalog", status_code=302)
 
 @app.post("/api/mark-fallen/{account_id}")
 async def mark_fallen_api(account_id: int, request: Request):

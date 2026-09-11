@@ -178,6 +178,10 @@ def get_main_menu_keyboard() -> Dict[str, Any]:
                 {"text": "⏳ Por Cobrar (7d)", "callback_data": "menu_cobros"}
             ],
             [
+                {"text": "🏷️ Precios ARS", "callback_data": "menu_catalog"},
+                {"text": "📦 Combos Activos", "callback_data": "menu_combos"}
+            ],
+            [
                 {"text": "📦 Stock & Alertas", "callback_data": "menu_stock"},
                 {"text": "📺 Pantallas", "callback_data": "menu_screens"}
             ],
@@ -352,14 +356,45 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         b = database.get_financial_balance()
         txt = (
             f"📊 <b>BALANCE FINANCIERO ({b['period']}):</b>\n\n"
-            f"💰 <b>Ingresos Cobrados:</b> ${b['collected_income']:.2f} USD ({b['transactions_count']} cobros)\n"
-            f"📉 <b>Costo Proveedores:</b> ${b['collected_costs']:.2f} USD\n"
-            f"💵 <b>GANANCIA NETA:</b> +${b['collected_profit']:.2f} USD\n\n"
-            f"⏳ <b>Por Cobrar (7d):</b> ${b['pending_receivables_7d']:.2f} USD ({b['pending_accounts_count']} cuentas)\n"
-            f"🎯 <b>Proyección Mensual:</b> +${b['projected_monthly_profit']:.2f} USD\n"
+            f"💰 <b>Ingresos Cobrados:</b> {database.format_ars(b['collected_income'])} ({b['transactions_count']} cobros)\n"
+            f"📉 <b>Costo Proveedores:</b> {database.format_ars(b['collected_costs'])}\n"
+            f"💵 <b>GANANCIA NETA:</b> +{database.format_ars(b['collected_profit'])}\n\n"
+            f"⏳ <b>Por Cobrar (7d):</b> {database.format_ars(b['pending_receivables_7d'])} ({b['pending_accounts_count']} cuentas)\n"
+            f"🎯 <b>Proyección Mensual:</b> +{database.format_ars(b['projected_monthly_profit'])}\n"
             f"📱 Total Suscripciones Activas: {b['active_subscriptions_total']}"
         )
         await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif cmd in ("/precios", "/catalogo", "precios", "catalogo"):
+        cat = database.get_price_catalog()
+        if not cat:
+            await send_telegram_message("🏷️ El catálogo de precios está vacío actualmente.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["🏷️ <b>LISTA OFICIAL DE PRECIOS (ARS):</b>\n"]
+            for c in cat:
+                st = "📱" if c["service_type"] == "pantalla" else "👑"
+                lines.append(
+                    f"{st} <b>{c['platform']}</b>\n"
+                    f"   👤 Final: <b>{c['price_final_formatted']}</b> | 👔 Rev: <b>{c['price_reseller_formatted']}</b>\n"
+                    f"   📉 Costo: {c['cost_price_formatted']}\n"
+                )
+            lines.append("<i>Precios actualizados automáticamente.</i>")
+            await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif cmd in ("/combos", "combos", "/packs", "packs"):
+        combos = database.get_combos(only_active=True)
+        if not combos:
+            await send_telegram_message("📦 No hay combos o packs promocionales activos.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["📦 <b>PACKS Y COMBOS ACTIVOS (ARS):</b>\n"]
+            for cb in combos:
+                lines.append(
+                    f"🔹 <b>{cb['name']}</b>\n"
+                    f"   📺 Incluye: <code>{cb['platforms_str']}</code>\n"
+                    f"   💰 Final: <b>{cb['price_final_formatted']}</b> | 👔 Rev: <b>{cb['price_reseller_formatted']}</b>\n"
+                )
+            lines.append("<i>Puedes vender un combo desde el panel web o pidiéndoselo a Gemini.</i>")
+            await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
 
     elif cmd in ("/stock", "stock", "/alerta_stock", "/stock_bajo", "/alertas_stock", "/inventario"):
         await format_and_send_stock_alert(chat_id=chat_id)
@@ -399,11 +434,11 @@ async def handle_telegram_callback(query: Dict[str, Any]):
         b = database.get_financial_balance()
         txt = (
             f"📊 <b>BALANCE FINANCIERO ({b['period']}):</b>\n\n"
-            f"💰 <b>Ingresos Cobrados:</b> ${b['collected_income']:.2f} USD\n"
-            f"📉 <b>Costo Proveedores:</b> ${b['collected_costs']:.2f} USD\n"
-            f"💵 <b>GANANCIA NETA:</b> +${b['collected_profit']:.2f} USD\n\n"
-            f"⏳ <b>Por Cobrar (7d):</b> ${b['pending_receivables_7d']:.2f} USD ({b['pending_accounts_count']} cuentas)\n"
-            f"🎯 <b>Proyección Mensual:</b> +${b['projected_monthly_profit']:.2f} USD"
+            f"💰 <b>Ingresos Cobrados:</b> {database.format_ars(b['collected_income'])}\n"
+            f"📉 <b>Costo Proveedores:</b> {database.format_ars(b['collected_costs'])}\n"
+            f"💵 <b>GANANCIA NETA:</b> +{database.format_ars(b['collected_profit'])}\n\n"
+            f"⏳ <b>Por Cobrar (7d):</b> {database.format_ars(b['pending_receivables_7d'])} ({b['pending_accounts_count']} cuentas)\n"
+            f"🎯 <b>Proyección Mensual:</b> +{database.format_ars(b['projected_monthly_profit'])}"
         )
         await send_telegram_message(txt, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
 
@@ -417,7 +452,7 @@ async def handle_telegram_callback(query: Dict[str, Any]):
             lines = [f"⏳ <b>CUENTAS POR COBRAR ({len(pending)}):</b>\n"]
             for p in pending[:8]:
                 d_str = "HOY" if p['days_remaining'] == 0 else f"en {p['days_remaining']}d"
-                lines.append(f"• <b>{p['client']}</b> - {p['platform']}: <b>${p['price']:.2f} USD</b> ({d_str})")
+                lines.append(f"• <b>{p['client']}</b> - {p['platform']}: <b>{database.format_ars(p['price'])}</b> ({d_str})")
             txt = "\n".join(lines)
             kb = {
                 "inline_keyboard": [
@@ -426,6 +461,38 @@ async def handle_telegram_callback(query: Dict[str, Any]):
                 ]
             }
             await send_telegram_message(txt, reply_markup=kb, chat_id=chat_id)
+
+    elif data == "menu_catalog":
+        await answer_callback_query(query_id)
+        cat = database.get_price_catalog()
+        if not cat:
+            await send_telegram_message("🏷️ El catálogo de precios está vacío actualmente.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["🏷️ <b>LISTA OFICIAL DE PRECIOS (ARS):</b>\n"]
+            for c in cat:
+                st = "📱" if c["service_type"] == "pantalla" else "👑"
+                lines.append(
+                    f"{st} <b>{c['platform']}</b>\n"
+                    f"   👤 Final: <b>{c['price_final_formatted']}</b> | 👔 Rev: <b>{c['price_reseller_formatted']}</b>\n"
+                    f"   📉 Costo: {c['cost_price_formatted']}\n"
+                )
+            lines.append("<i>Precios actualizados automáticamente.</i>")
+            await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+
+    elif data == "menu_combos":
+        await answer_callback_query(query_id)
+        combos = database.get_combos(only_active=True)
+        if not combos:
+            await send_telegram_message("📦 No hay combos o packs promocionales activos.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        else:
+            lines = ["📦 <b>PACKS Y COMBOS ACTIVOS (ARS):</b>\n"]
+            for cb in combos:
+                lines.append(
+                    f"🔹 <b>{cb['name']}</b>\n"
+                    f"   📺 Incluye: <code>{cb['platforms_str']}</code>\n"
+                    f"   💰 Final: <b>{cb['price_final_formatted']}</b> | 👔 Rev: <b>{cb['price_reseller_formatted']}</b>\n"
+                )
+            await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
 
     elif data == "menu_main":
         await answer_callback_query(query_id)
@@ -547,8 +614,8 @@ async def handle_telegram_callback(query: Dict[str, Any]):
                 f"💵 <b>¡Cobro Registrado y Renovado con Éxito!</b>\n\n"
                 f"• Cliente: <b>{res['client_name']}</b>\n"
                 f"• Servicio: {res['platform']} ({res['email']})\n"
-                f"• Cobrado: +${res['amount']:.2f} USD\n"
-                f"• Ganancia Neta: +${res['profit']:.2f} USD\n"
+                f"• Cobrado: +{database.format_ars(res['amount'])}\n"
+                f"• Ganancia Neta: +{database.format_ars(res['profit'])}\n"
                 f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (30 días extendidos)",
                 reply_markup=kb,
                 chat_id=chat_id

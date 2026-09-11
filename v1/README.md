@@ -27,7 +27,7 @@ Gestiona tu negocio de venta de cuentas y perfiles de streaming (Netflix, Disney
 ## 💬 Ejemplos de uso con Gemini Spark
 
 * **Vender o asignar un servicio:**
-  > *"Anota una venta para Maik, su WhatsApp es +5491122334455 y su Telegram es @maik_stream, es revendedor. La cuenta es netflix1@correo.com clave 1234, perfil 2, vence el 25 de octubre por $10 USD mensual."*
+  > *"Anota una venta para Maik, su WhatsApp es +5491122334455 y su Telegram es @maik_stream, es revendedor. La cuenta es netflix1@correo.com clave 1234, perfil 2, vence el 25 de octubre por $ 4.200 ARS mensual."*
 
 * **Buscar cliente y sus servicios:**
   > *"Búscame a Maik, ¿qué cuentas tiene y cuándo vencen?"*

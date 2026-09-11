@@ -39,19 +39,75 @@ def verify_password(password: str, stored_hash: str, salt: str) -> bool:
     return secrets.compare_digest(computed_hash, stored_hash)
 
 def parse_money(val: Union[str, float, int, None]) -> float:
-    """Extrae el valor numérico flotante de cadenas como '$10 USD', '15000', '$7.50', etc."""
+    """Extrae el valor numérico flotante soportando Pesos Argentinos (ARS) y formatos internacionales.
+    Maneja: '15000', '$ 15.000', '$ 4.500,50', '4500.50', '$3,500', etc.
+    """
     if val is None:
         return 0.0
     if isinstance(val, (int, float)):
         return float(val)
-    match = re.search(r'([0-9]+(?:[\.,][0-9]+)?)', str(val))
-    if match:
-        clean = match.group(1).replace(',', '.')
-        try:
-            return float(clean)
-        except ValueError:
-            return 0.0
-    return 0.0
+    s = str(val).strip()
+    if not s:
+        return 0.0
+
+    # Remover letras y caracteres que no sean dígitos, comas o puntos
+    s = re.sub(r'[^\d\.,]', '', s)
+    if not s:
+        return 0.0
+
+    # Caso 1: Tiene tanto punto como coma, ej: "15.000,50" o "15,000.50"
+    if '.' in s and ',' in s:
+        if s.rfind(',') > s.rfind('.'):
+            # Notación argentina / hispana (punto de miles, coma decimal: 15.000,50)
+            s = s.replace('.', '').replace(',', '.')
+        else:
+            # Notación anglosajona (coma de miles, punto decimal: 15,000.50)
+            s = s.replace(',', '')
+    # Caso 2: Solo tiene coma
+    elif ',' in s:
+        parts = s.split(',')
+        if len(parts) == 2 and len(parts[1]) in (1, 2):
+            # Decimal: 4500,50 -> 4500.50
+            s = s.replace(',', '.')
+        else:
+            # Miles: 15,000 -> 15000
+            s = s.replace(',', '')
+    # Caso 3: Solo tiene punto
+    elif '.' in s:
+        parts = s.split('.')
+        if len(parts) > 2:
+            # Varios puntos (ej: 1.500.000) -> miles
+            s = s.replace('.', '')
+        elif len(parts) == 2:
+            if len(parts[1]) == 3:
+                # E.g. "15.000" o "4.500" en Argentina son miles
+                s = s.replace('.', '')
+            else:
+                # E.g. "4500.50" o "12.5" es decimal
+                pass
+
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+def format_ars(val: Union[float, int, str, None], include_symbol: bool = True) -> str:
+    """Formatea un monto en Pesos Argentinos con separador de miles con punto.
+    Ejemplos:
+    - 15000 -> "$ 15.000 ARS"
+    - 4500.50 -> "$ 4.500,50 ARS"
+    """
+    num = parse_money(val)
+    if num.is_integer():
+        formatted = f"{int(num):,}".replace(",", ".")
+    else:
+        int_part = int(num)
+        cents = int(round((num - int_part) * 100))
+        formatted = f"{int_part:,}".replace(",", ".") + f",{cents:02d}"
+
+    if include_symbol:
+        return f"${formatted} ARS"
+    return formatted
 
 # ==========================================
 # Inicialización y Esquema Relacional
@@ -142,6 +198,92 @@ def init_db():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # 6. Catálogo de Precios Oficiales (ARS)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS price_catalog (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    platform TEXT NOT NULL,
+                    service_type TEXT NOT NULL DEFAULT 'pantalla',
+                    cost_price REAL DEFAULT 0.0,
+                    price_final REAL DEFAULT 0.0,
+                    price_reseller REAL DEFAULT 0.0,
+                    notes TEXT DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(platform, service_type)
+                )
+            """)
+
+            # 7. Tabla de Combos / Packs Promocionales
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS combos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT UNIQUE NOT NULL,
+                    description TEXT DEFAULT '',
+                    price_final REAL NOT NULL DEFAULT 0.0,
+                    price_reseller REAL NOT NULL DEFAULT 0.0,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 8. Elementos de cada Combo
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS combo_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    combo_id INTEGER NOT NULL REFERENCES combos(id) ON DELETE CASCADE,
+                    platform TEXT NOT NULL,
+                    service_type TEXT NOT NULL DEFAULT 'pantalla'
+                )
+            """)
+
+            # Sembrado de catálogo base si está vacío
+            cat_row = conn.execute("SELECT COUNT(*) as count FROM price_catalog").fetchone()
+            if cat_row and cat_row["count"] == 0:
+                initial_prices = [
+                    ("Netflix 4K", "pantalla", 3200.0, 5500.0, 4200.0, "Perfil 4K UHD individual"),
+                    ("Disney+ Premium", "pantalla", 2000.0, 4000.0, 3000.0, "Perfil con deportes ESPN"),
+                    ("Max (HBO)", "pantalla", 1800.0, 3800.0, 2800.0, "Perfil Platino 4K"),
+                    ("Amazon Prime Video", "pantalla", 1500.0, 3500.0, 2500.0, "Perfil individual"),
+                    ("Paramount+", "pantalla", 1400.0, 3000.0, 2200.0, "Perfil individual"),
+                    ("Spotify Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta completa individual"),
+                    ("YouTube Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta sin anuncios"),
+                    ("Crunchyroll Mega Fan", "pantalla", 1500.0, 3200.0, 2400.0, "Perfil anime HD")
+                ]
+                for p, stype, c_price, p_fin, p_res, notes in initial_prices:
+                    conn.execute("""
+                        INSERT INTO price_catalog (platform, service_type, cost_price, price_final, price_reseller, notes)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, (p, stype, c_price, p_fin, p_res, notes))
+
+            # Sembrado de combos modelo si está vacío
+            combos_row = conn.execute("SELECT COUNT(*) as count FROM combos").fetchone()
+            if combos_row and combos_row["count"] == 0:
+                initial_combos = [
+                    (
+                        "Combo Dúo Cine (Netflix + Disney+)",
+                        "1 Pantalla Netflix 4K + 1 Pantalla Disney+ con ESPN",
+                        8500.0, 6800.0,
+                        [("Netflix 4K", "pantalla"), ("Disney+ Premium", "pantalla")]
+                    ),
+                    (
+                        "Mega Pack Familiar (Netflix + Disney+ + Max)",
+                        "Pack de 3 pantallas con todo el entretenimiento",
+                        11900.0, 9400.0,
+                        [("Netflix 4K", "pantalla"), ("Disney+ Premium", "pantalla"), ("Max (HBO)", "pantalla")]
+                    )
+                ]
+                for c_name, c_desc, p_fin, p_res, items in initial_combos:
+                    cur = conn.execute("""
+                        INSERT INTO combos (name, description, price_final, price_reseller)
+                        VALUES (?, ?, ?, ?)
+                    """, (c_name, c_desc, p_fin, p_res))
+                    cid = cur.lastrowid
+                    for it_plat, it_stype in items:
+                        conn.execute("""
+                            INSERT INTO combo_items (combo_id, platform, service_type)
+                            VALUES (?, ?, ?)
+                        """, (cid, it_plat, it_stype))
     finally:
         conn.close()
 
@@ -373,6 +515,18 @@ def assign_or_sell_account(
     clean_platform = platform.strip().title()
     s_date = start_date.strip() if start_date else date.today().isoformat()
     
+    price_num = parse_money(price)
+    cost_num = parse_money(cost)
+    stype = "pantalla" if profile_name else "cuenta_completa"
+    if price_num == 0.0 or cost_num == 0.0:
+        s_price, s_cost = get_suggested_price(clean_platform, stype, client_type)
+        if price_num == 0.0 and s_price > 0.0:
+            price_num = s_price
+            price = format_ars(price_num)
+        if cost_num == 0.0 and s_cost > 0.0:
+            cost_num = s_cost
+            cost = format_ars(cost_num)
+
     conn = get_connection()
     try:
         with conn:
@@ -408,8 +562,6 @@ def assign_or_sell_account(
                 acc_id = cursor.lastrowid
 
             # Registrar la venta en la tabla de pagos / balance
-            price_num = parse_money(price)
-            cost_num = parse_money(cost)
             profit_num = price_num - cost_num
             if price_num > 0:
                 conn.execute("""
@@ -1013,6 +1165,16 @@ def assign_next_free_profile(
                 notes=notes
             )
 
+            price_num = parse_money(price)
+            cost_num = parse_money(slot.get("cost"))
+            if price_num == 0.0 or cost_num == 0.0:
+                s_price, s_cost = get_suggested_price(clean_platform, "pantalla", client_type)
+                if price_num == 0.0 and s_price > 0.0:
+                    price_num = s_price
+                    price = format_ars(price_num)
+                if cost_num == 0.0 and s_cost > 0.0:
+                    cost_num = s_cost
+
             today_str = date.today().isoformat()
             conn.execute("""
                 UPDATE streaming_accounts
@@ -1022,8 +1184,6 @@ def assign_next_free_profile(
                 WHERE id = ?
             """, (client["id"], today_str, expiry_date.strip(), price.strip(), notes.strip(), slot_id))
 
-            price_num = parse_money(price)
-            cost_num = parse_money(slot.get("cost"))
             profit_num = price_num - cost_num
             if price_num > 0:
                 conn.execute("""
@@ -1355,7 +1515,7 @@ def export_transactions_csv() -> str:
     writer = csv.writer(output, delimiter=",", quoting=csv.QUOTE_MINIMAL)
     writer.writerow([
         "ID_Transaccion", "Fecha_Hora", "Cliente", "Tipo_Cliente", "Plataforma",
-        "Monto_Cobrado_USD", "Costo_USD", "Ganancia_Neta_USD", "Metodo_Pago", "Notas"
+        "Monto_Cobrado_ARS", "Costo_ARS", "Ganancia_Neta_ARS", "Metodo_Pago", "Notas"
     ])
 
     try:
@@ -1393,37 +1553,44 @@ def export_full_backup_json() -> str:
         accounts = [dict(r) for r in conn.execute("SELECT * FROM streaming_accounts").fetchall()]
         payments = [dict(r) for r in conn.execute("SELECT * FROM payments").fetchall()]
         thresholds = [dict(r) for r in conn.execute("SELECT * FROM stock_thresholds").fetchall()]
+        catalog = [dict(r) for r in conn.execute("SELECT * FROM price_catalog").fetchall()]
+        combos = get_combos()
         
         backup_data = {
-            "backup_version": "2.7.0",
+            "backup_version": "2.8.0",
+            "currency": "ARS",
             "created_at": datetime.now().isoformat(),
             "stats": {
                 "clients_count": len(clients),
                 "accounts_count": len(accounts),
-                "payments_count": len(payments)
+                "payments_count": len(payments),
+                "catalog_count": len(catalog),
+                "combos_count": len(combos)
             },
             "clients": clients,
             "streaming_accounts": accounts,
             "payments": payments,
-            "stock_thresholds": thresholds
+            "stock_thresholds": thresholds,
+            "price_catalog": catalog,
+            "combos": combos
         }
         return json.dumps(backup_data, indent=2, ensure_ascii=False)
     finally:
         conn.close()
 
 def get_csv_template_stock() -> str:
-    """Plantilla CSV modelo para cargar inventario libre en Excel."""
+    """Plantilla CSV modelo para cargar inventario libre en Excel (montos en ARS)."""
     output = io.StringIO()
     output.write("\ufeff")
     writer = csv.writer(output, delimiter=",")
     writer.writerow(["Plataforma", "Correo", "Contrasena", "Perfil", "PIN", "Costo", "Notas"])
-    writer.writerow(["Netflix 4K", "cuenta1@ejemplo.com", "ClaveSegura123", "Perfil 1", "1234", "3.00", "Proveedor A"])
-    writer.writerow(["Disney+", "cuenta2@ejemplo.com", "ClaveSegura456", "", "", "2.50", "Cuenta Completa"])
-    writer.writerow(["Spotify Familiar", "cuenta3@ejemplo.com", "ClaveSegura789", "", "", "1.80", "Plan Familiar"])
+    writer.writerow(["Netflix 4K", "cuenta1@ejemplo.com", "ClaveSegura123", "Perfil 1", "1234", "3200", "Proveedor Central"])
+    writer.writerow(["Disney+", "cuenta2@ejemplo.com", "ClaveSegura456", "", "", "2000", "Cuenta Completa"])
+    writer.writerow(["Spotify Familiar", "cuenta3@ejemplo.com", "ClaveSegura789", "", "", "2500", "Plan Familiar"])
     return output.getvalue()
 
 def get_csv_template_sales() -> str:
-    """Plantilla CSV modelo para migrar o cargar ventas con clientes en Excel."""
+    """Plantilla CSV modelo para migrar o cargar ventas con clientes en Excel (montos en ARS)."""
     output = io.StringIO()
     output.write("\ufeff")
     writer = csv.writer(output, delimiter=",")
@@ -1433,11 +1600,11 @@ def get_csv_template_sales() -> str:
     ])
     writer.writerow([
         "Juan Perez", "+5491112345678", "@juanp", "consumidor_final", "Netflix 4K",
-        "net@ejemplo.com", "Clave123", "Perfil 1", "1234", "2026-10-15", "6.00", "3.00", "Cliente puntual"
+        "net@ejemplo.com", "Clave123", "Perfil 1", "1234", "2026-10-15", "5500", "3200", "Cliente puntual"
     ])
     writer.writerow([
         "Matias Revendedor", "+5491187654321", "@matias_reseller", "revendedor", "Disney+",
-        "dis@ejemplo.com", "Pass456", "", "", "2026-10-20", "4.50", "2.50", "Lote mensual"
+        "dis@ejemplo.com", "Pass456", "", "", "2026-10-20", "3000", "2000", "Lote mensual"
     ])
     return output.getvalue()
 
@@ -1639,5 +1806,365 @@ def import_sales_csv(csv_content: str) -> Dict[str, Any]:
         "skipped": skipped,
         "errors": errors[:10]
     }
+
+# ==========================================
+# 10. Catálogo de Precios Oficiales y Combos (Paso 7 - v2.8.0)
+# ==========================================
+def get_price_catalog() -> List[Dict[str, Any]]:
+    """Devuelve la lista completa de precios oficiales por plataforma en Pesos Argentinos (ARS)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT * FROM price_catalog
+            ORDER BY platform ASC, service_type ASC
+        """).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            profit_final = d["price_final"] - d["cost_price"]
+            profit_reseller = d["price_reseller"] - d["cost_price"]
+            d["profit_final"] = profit_final
+            d["profit_reseller"] = profit_reseller
+            d["cost_price_formatted"] = format_ars(d["cost_price"])
+            d["price_final_formatted"] = format_ars(d["price_final"])
+            d["price_reseller_formatted"] = format_ars(d["price_reseller"])
+            result.append(d)
+        return result
+    finally:
+        conn.close()
+
+def upsert_catalog_price(
+    platform: str,
+    service_type: str = "pantalla",
+    cost_price: Union[float, str] = 0.0,
+    price_final: Union[float, str] = 0.0,
+    price_reseller: Union[float, str] = 0.0,
+    notes: str = ""
+) -> Dict[str, Any]:
+    """Crea o actualiza un precio sugerido en el catálogo para una plataforma y tipo de servicio."""
+    conn = get_connection()
+    clean_platform = platform.strip().title()
+    clean_stype = service_type.strip().lower()
+    if clean_stype not in ("pantalla", "cuenta_completa"):
+        clean_stype = "pantalla"
+    
+    cost_val = parse_money(cost_price)
+    final_val = parse_money(price_final)
+    reseller_val = parse_money(price_reseller)
+    
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO price_catalog (platform, service_type, cost_price, price_final, price_reseller, notes, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(platform, service_type) DO UPDATE SET
+                    cost_price = excluded.cost_price,
+                    price_final = excluded.price_final,
+                    price_reseller = excluded.price_reseller,
+                    notes = excluded.notes,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (clean_platform, clean_stype, cost_val, final_val, reseller_val, notes.strip()))
+            
+            row = conn.execute("""
+                SELECT * FROM price_catalog
+                WHERE platform = ? AND service_type = ?
+            """, (clean_platform, clean_stype)).fetchone()
+            return dict(row)
+    finally:
+        conn.close()
+
+def delete_catalog_price(price_id: int) -> bool:
+    """Elimina una entrada del catálogo de precios."""
+    conn = get_connection()
+    try:
+        with conn:
+            cursor = conn.execute("DELETE FROM price_catalog WHERE id = ?", (price_id,))
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+def get_suggested_price(
+    platform: str,
+    service_type: str = "pantalla",
+    client_type: str = "consumidor_final"
+) -> Tuple[float, float]:
+    """Obtiene el precio de venta sugerido y el costo del catálogo para una plataforma.
+    Retorna (precio_venta, costo) en Pesos Argentinos (ARS)."""
+    conn = get_connection()
+    clean_plat = platform.strip().lower()
+    clean_stype = service_type.strip().lower()
+    is_reseller = "revend" in client_type.lower()
+    try:
+        row = conn.execute("""
+            SELECT cost_price, price_final, price_reseller
+            FROM price_catalog
+            WHERE lower(platform) = ? AND service_type = ?
+            LIMIT 1
+        """, (clean_plat, clean_stype)).fetchone()
+        
+        if not row:
+            row = conn.execute("""
+                SELECT cost_price, price_final, price_reseller
+                FROM price_catalog
+                WHERE lower(platform) = ?
+                LIMIT 1
+            """, (clean_plat,)).fetchone()
+            
+        if row:
+            sale_price = row["price_reseller"] if is_reseller else row["price_final"]
+            cost = row["cost_price"]
+            return float(sale_price), float(cost)
+        return 0.0, 0.0
+    finally:
+        conn.close()
+
+def get_combos(only_active: bool = False) -> List[Dict[str, Any]]:
+    """Lista todos los combos configurados con sus plataformas asociadas y precios en ARS."""
+    conn = get_connection()
+    try:
+        query = "SELECT * FROM combos"
+        if only_active:
+            query += " WHERE is_active = 1"
+        query += " ORDER BY name ASC"
+        
+        combos_rows = conn.execute(query).fetchall()
+        result = []
+        for c in combos_rows:
+            combo = dict(c)
+            items_rows = conn.execute("""
+                SELECT * FROM combo_items WHERE combo_id = ?
+            """, (combo["id"],)).fetchall()
+            combo["items"] = [dict(it) for it in items_rows]
+            combo["platforms_list"] = [it["platform"] for it in combo["items"]]
+            combo["platforms_str"] = " + ".join(combo["platforms_list"])
+            combo["price_final_formatted"] = format_ars(combo["price_final"])
+            combo["price_reseller_formatted"] = format_ars(combo["price_reseller"])
+            result.append(combo)
+        return result
+    finally:
+        conn.close()
+
+def create_or_update_combo(
+    name: str,
+    description: str,
+    price_final: Union[float, str],
+    price_reseller: Union[float, str],
+    platforms: List[Union[str, Dict[str, str]]],
+    combo_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """Crea o actualiza un combo promocional compuesto por varias plataformas."""
+    conn = get_connection()
+    clean_name = name.strip()
+    p_final = parse_money(price_final)
+    p_reseller = parse_money(price_reseller)
+    
+    try:
+        with conn:
+            if combo_id:
+                conn.execute("""
+                    UPDATE combos
+                    SET name = ?, description = ?, price_final = ?, price_reseller = ?
+                    WHERE id = ?
+                """, (clean_name, description.strip(), p_final, p_reseller, combo_id))
+                cid = combo_id
+                conn.execute("DELETE FROM combo_items WHERE combo_id = ?", (cid,))
+            else:
+                cursor = conn.execute("""
+                    INSERT INTO combos (name, description, price_final, price_reseller)
+                    VALUES (?, ?, ?, ?)
+                """, (clean_name, description.strip(), p_final, p_reseller))
+                cid = cursor.lastrowid
+                
+            for p in platforms:
+                if isinstance(p, dict):
+                    plat_name = p.get("platform", "").strip().title()
+                    stype = p.get("service_type", "pantalla").strip().lower()
+                else:
+                    plat_name = str(p).strip().title()
+                    stype = "pantalla"
+                
+                if plat_name:
+                    conn.execute("""
+                        INSERT INTO combo_items (combo_id, platform, service_type)
+                        VALUES (?, ?, ?)
+                    """, (cid, plat_name, stype))
+                    
+            return {"success": True, "combo_id": cid, "name": clean_name}
+    finally:
+        conn.close()
+
+def delete_combo(combo_id: int) -> bool:
+    """Elimina un combo y sus elementos asociados."""
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("DELETE FROM combo_items WHERE combo_id = ?", (combo_id,))
+            cursor = conn.execute("DELETE FROM combos WHERE id = ?", (combo_id,))
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+def sell_combo(
+    combo_name_or_id: Union[str, int],
+    client_name: str,
+    whatsapp: str = "",
+    telegram: str = "",
+    client_type: str = "consumidor_final",
+    payment_method: str = "Transferencia",
+    duration_days: int = 30,
+    notes: str = ""
+) -> Dict[str, Any]:
+    """Vende un combo completo en un solo paso:
+    1. Verifica stock libre disponible para todas las plataformas del combo.
+    2. Asigna un perfil libre de cada plataforma al cliente con vencimiento sincronizado.
+    3. Registra el cobro consolidado en la tabla de pagos en ARS.
+    4. Genera el mensaje de entrega de WhatsApp consolidado con todos los accesos listos.
+    """
+    conn = get_connection()
+    try:
+        c_query = str(combo_name_or_id).strip()
+        if c_query.isdigit():
+            combo_row = conn.execute("SELECT * FROM combos WHERE id = ?", (int(c_query),)).fetchone()
+        else:
+            combo_row = conn.execute("SELECT * FROM combos WHERE lower(name) = lower(?)", (c_query,)).fetchone()
+            
+        if not combo_row:
+            return {"success": False, "error": f"No se encontró el combo '{combo_name_or_id}'"}
+            
+        combo = dict(combo_row)
+        combo_id = combo["id"]
+        
+        items = conn.execute("SELECT * FROM combo_items WHERE combo_id = ?", (combo_id,)).fetchall()
+        if not items:
+            return {"success": False, "error": f"El combo '{combo['name']}' no tiene plataformas asociadas."}
+            
+        missing_stock = []
+        needed_slots = []
+        for it in items:
+            p_name = it["platform"]
+            slot = conn.execute("""
+                SELECT * FROM streaming_accounts
+                WHERE lower(platform) = lower(?) AND status = 'libre'
+                ORDER BY id ASC LIMIT 1
+            """, (p_name,)).fetchone()
+            
+            if not slot:
+                missing_stock.append(p_name)
+            else:
+                needed_slots.append((it, dict(slot)))
+                
+        if missing_stock:
+            return {
+                "success": False,
+                "error": f"Stock insuficiente para completar el combo '{combo['name']}'. Cuentas faltantes: {', '.join(missing_stock)}"
+            }
+            
+        client = find_or_create_client(
+            name=client_name,
+            whatsapp=whatsapp,
+            telegram=telegram,
+            client_type=client_type,
+            notes=notes
+        )
+        
+        today = date.today()
+        expiry = today + timedelta(days=duration_days)
+        expiry_str = expiry.isoformat()
+        today_str = today.isoformat()
+        
+        is_reseller = "revend" in client_type.lower()
+        combo_sale_price = combo["price_reseller"] if is_reseller else combo["price_final"]
+        
+        assigned_accounts = []
+        total_costs = 0.0
+        
+        with conn:
+            for item, slot in needed_slots:
+                slot_id = slot["id"]
+                slot_cost = parse_money(slot.get("cost"))
+                if slot_cost == 0.0:
+                    _, cat_cost = get_suggested_price(item["platform"], item.get("service_type", "pantalla"), client_type)
+                    slot_cost = cat_cost
+                total_costs += slot_cost
+                
+                conn.execute("""
+                    UPDATE streaming_accounts
+                    SET client_id = ?, status = 'ocupada', payment_status = 'pagado',
+                        start_date = ?, expiry_date = ?, price = ?, notes = ?,
+                        last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (
+                    client["id"],
+                    today_str,
+                    expiry_str,
+                    format_ars(combo_sale_price / len(needed_slots)),
+                    f"Venta Combo: {combo['name']}. {notes}".strip(),
+                    slot_id
+                ))
+                
+                fresh = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.id = ?
+                """, (slot_id,)).fetchone()
+                assigned_accounts.append(dict(fresh))
+                
+            profit = combo_sale_price - total_costs
+            cursor = conn.execute("""
+                INSERT INTO payments (client_id, amount, cost, profit, payment_method, notes)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                client["id"],
+                combo_sale_price,
+                total_costs,
+                profit,
+                payment_method,
+                f"Combo {combo['name']} ({len(assigned_accounts)} servicios)"
+            ))
+            payment_id = cursor.lastrowid
+
+        clean_phone = clean_whatsapp_phone(whatsapp)
+        
+        msg_lines = [
+            f"🍿 *¡Hola {client['name']}!* ¡Gracias por tu compra!",
+            f"Aquí tienes los accesos a tu *{combo['name']}*:\n"
+        ]
+        
+        for idx, acc in enumerate(assigned_accounts, 1):
+            prof = f" | 👤 *Perfil:* {acc['profile_name']}" if acc.get('profile_name') else ""
+            pin = f" | 🔒 *PIN:* {acc['profile_pin']}" if acc.get('profile_pin') else ""
+            msg_lines.append(
+                f"📺 *{idx}. {acc['platform']}*\n"
+                f"📧 *Correo:* `{acc['email']}`\n"
+                f"🔑 *Clave:* `{acc['password']}`"
+                f"{prof}{pin}\n"
+            )
+            
+        msg_lines.append(f"📅 *Vencimiento del Combo:* {expiry_str}")
+        msg_lines.append(f"💰 *Total Abonado:* {format_ars(combo_sale_price)}")
+        msg_lines.append(f"💳 *Medio de Pago:* {payment_method}\n")
+        msg_lines.append("⚠️ *Reglas:* No modificar contraseñas ni perfiles ajenos para conservar la garantía activa.\n")
+        msg_lines.append("¡Que disfrutes de tus series y películas! 🚀✨")
+        
+        full_msg = "\n".join(msg_lines)
+        encoded_text = urllib.parse.quote(full_msg)
+        wa_link = f"https://wa.me/{clean_phone}?text={encoded_text}" if clean_phone else f"https://wa.me/?text={encoded_text}"
+        
+        return {
+            "success": True,
+            "combo_name": combo["name"],
+            "client_name": client["name"],
+            "accounts": assigned_accounts,
+            "amount": combo_sale_price,
+            "cost": total_costs,
+            "profit": profit,
+            "expiry_date": expiry_str,
+            "whatsapp_message": full_msg,
+            "wa_link": wa_link,
+            "payment_id": payment_id
+        }
+    finally:
+        conn.close()
 
 

@@ -2868,6 +2868,7 @@ def get_master_accounts_overview() -> List[Dict[str, Any]]:
             occupied = [a for a in accs if a["status"] == "ocupada"]
             free = [a for a in accs if a["status"] == "libre"]
             fallen = [a for a in accs if a["status"] in ("caida", "reemplazada_caida")]
+            occ_rate = round((len(occupied) / total_profs) * 100) if total_profs > 0 else 0
 
             # Fecha máxima de vencimiento entre los clientes ocupados
             client_max_expiry = ""
@@ -2898,6 +2899,7 @@ def get_master_accounts_overview() -> List[Dict[str, Any]]:
                 "profiles_occupied": len(occupied),
                 "profiles_free": len(free),
                 "profiles_fallen": len(fallen),
+                "occupancy_rate": occ_rate,
                 "client_max_expiry": client_max_expiry,
                 "risk_mismatch": risk_mismatch,
                 "mismatch_warning": mismatch_warning,

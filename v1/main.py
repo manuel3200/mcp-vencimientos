@@ -1876,7 +1876,7 @@ async def dashboard(request: Request):
             <td><code>{m['email']}</code></td>
             <td><span class="badge" style="background:#1e293b;color:#cbd5e1;">{m['supplier_name']}</span></td>
             <td><code>{cur_expiry or 'No fijada'}</code> {s_badge}</td>
-            <td>{m['profiles_occupied']} / {m['profiles_total']} ({m['occupancy_rate']}%)</td>
+            <td>{m.get('profiles_occupied', 0)} / {m.get('profiles_total', 0)} ({m.get('occupancy_rate', 0)}%)</td>
             <td style="color:#f59e0b;font-weight:600;">{m['supplier_cost_formatted']}</td>
             <td>{risk_cell}</td>
             <td>

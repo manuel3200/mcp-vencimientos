@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  evolution-api:
+    image: atendai/evolution-api:v2.1.2
+    container_name: evolution-api
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      # URL publica o interna de acceso a la API
+      - SERVER_URL=http://localhost:8081
+      - DOCKER_ENV=true
+      
+      # Clave Secreta Global (API Key) para autenticar las peticiones del CRM
+      - AUTHENTICATION_API_KEY=mcp-evolution-key-2026
+      
+      # Configuracion de Logging y almacenamiento local ligero (sin necesidad de PostgreSQL/Redis)
+      - LOG_LEVEL=ERROR,WARN,INFO
+      - DEL_INSTANCE=false
+      - DATABASE_ENABLED=false
+      - CACHE_REDIS_ENABLED=false
+      
+      # Nombre visible en WhatsApp Web
+      - CONFIG_SESSION_PHONE_CLIENT=Streaming CRM Bot
+      - QRCODE_LIMIT=30
+    volumes:
+      # Persistencia de credenciales de WhatsApp y sesiones activas
+      - evolution_instances:/evolution/instances
+
+volumes:
+  evolution_instances:
+    name: evolution_instances_data

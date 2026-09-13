@@ -427,6 +427,21 @@ def init_db():
                 conn.execute("ALTER TABLE streaming_accounts ADD COLUMN supplier_cost REAL DEFAULT 0.0")
             except Exception:
                 pass
+
+            # 13. Configuración de Evolution API WhatsApp
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS whatsapp_api_settings (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    api_url TEXT DEFAULT 'http://evolution-api:8080',
+                    api_key TEXT DEFAULT 'mcp-evolution-key-2026',
+                    instance_name TEXT DEFAULT 'streaming-bot',
+                    auto_send_expiry INTEGER DEFAULT 0,
+                    auto_send_sales INTEGER DEFAULT 0,
+                    auto_reply_enabled INTEGER DEFAULT 1,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("INSERT OR IGNORE INTO whatsapp_api_settings (id) VALUES (1)")
     finally:
         conn.close()
 
@@ -1260,6 +1275,55 @@ def reset_whatsapp_template(template_key: str) -> bool:
     d = DEFAULT_WHATSAPP_TEMPLATES[k]
     return save_whatsapp_template(k, d["content"], d["title"], d["description"])
 
+def get_whatsapp_api_settings() -> Dict[str, Any]:
+    """Obtiene la configuración de conexión y automatización de Evolution API WhatsApp."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM whatsapp_api_settings WHERE id = 1").fetchone()
+        if not row:
+            conn.execute("INSERT OR IGNORE INTO whatsapp_api_settings (id) VALUES (1)")
+            conn.commit()
+            row = conn.execute("SELECT * FROM whatsapp_api_settings WHERE id = 1").fetchone()
+        return dict(row) if row else {
+            "id": 1,
+            "api_url": "http://evolution-api:8080",
+            "api_key": "mcp-evolution-key-2026",
+            "instance_name": "streaming-bot",
+            "auto_send_expiry": 0,
+            "auto_send_sales": 0,
+            "auto_reply_enabled": 1
+        }
+    finally:
+        conn.close()
+
+def save_whatsapp_api_settings(
+    api_url: str = "http://evolution-api:8080",
+    api_key: str = "mcp-evolution-key-2026",
+    instance_name: str = "streaming-bot",
+    auto_send_expiry: int = 0,
+    auto_send_sales: int = 0,
+    auto_reply_enabled: int = 1
+) -> Dict[str, Any]:
+    """Guarda la configuración de conexión de Evolution API y opciones de envío automático."""
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO whatsapp_api_settings (id, api_url, api_key, instance_name, auto_send_expiry, auto_send_sales, auto_reply_enabled, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    api_url = excluded.api_url,
+                    api_key = excluded.api_key,
+                    instance_name = excluded.instance_name,
+                    auto_send_expiry = excluded.auto_send_expiry,
+                    auto_send_sales = excluded.auto_send_sales,
+                    auto_reply_enabled = excluded.auto_reply_enabled,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (api_url.strip(), api_key.strip(), instance_name.strip(), int(auto_send_expiry), int(auto_send_sales), int(auto_reply_enabled)))
+        return get_whatsapp_api_settings()
+    finally:
+        conn.close()
+
 def render_dynamic_template(template_str: str, context: Dict[str, Any]) -> str:
     """Reemplaza etiquetas dinámicas {tag} en la plantilla de WhatsApp sin fallar si faltan variables."""
     out = template_str
@@ -1634,6 +1698,23 @@ def get_client_360_profile(query_or_id: Union[str, int]) -> Optional[Dict[str, A
             profile_data["consolidated_billing"] = billing
 
             return profile_data
+    finally:
+        conn.close()
+
+def get_client_by_phone(phone: str) -> Optional[Dict[str, Any]]:
+    """Busca un cliente por su número de teléfono (comparando los últimos 8 dígitos) e incluye su Ficha 360 y cuentas."""
+    clean = clean_whatsapp_phone(phone)
+    if not clean or len(clean) < 6:
+        return None
+    suffix = clean[-8:]
+    conn = get_connection()
+    try:
+        clients = conn.execute("SELECT id, whatsapp FROM clients WHERE whatsapp IS NOT NULL AND whatsapp != ''").fetchall()
+        for c in clients:
+            c_clean = clean_whatsapp_phone(c["whatsapp"] or "")
+            if c_clean and (c_clean.endswith(suffix) or clean.endswith(c_clean[-8:])):
+                return get_client_360_profile(c["id"])
+        return None
     finally:
         conn.close()
 

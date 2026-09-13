@@ -18,6 +18,7 @@ import pyotp
 import database
 import system_logger
 system_logger.setup_system_logging()
+import whatsapp_client
 
 from telegram_bot import send_telegram_message, format_and_send_alert, start_telegram_polling, stop_telegram_polling, send_full_backup_to_telegram
 from scheduler import start_scheduler, stop_scheduler, check_and_send_alerts
@@ -1196,6 +1197,92 @@ def renovar_cuenta_madre(
 
 
 
+
+# --- Herramientas Evolution API & WhatsApp Bot (Paso 5) ---
+@mcp.tool()
+async def consultar_estado_whatsapp() -> str:
+    """Verifica el estado de conexión de la instancia de WhatsApp en Evolution API (Conectado / Desconectado / QR pendiente)."""
+    st = await whatsapp_client.check_connection_status()
+    cfg = whatsapp_client.get_evolution_config()
+    
+    if st.get("connected"):
+        return (
+            f"🟢 <b>WHATSAPP CONECTADO Y OPERATIVO:</b>\n"
+            f"• Instancia: <code>{st.get('instance')}</code>\n"
+            f"• Estado: <b>En línea (Open)</b>\n"
+            f"• Servidor API: <code>{cfg['api_url']}</code>\n"
+            f"• Auto-Cobro diario (09:00 AM): {'✅ Activado' if cfg['auto_send_expiry'] else '⏸️ Desactivado'}\n"
+            f"• Auto-Envío en ventas: {'✅ Activado' if cfg['auto_send_sales'] else '⏸️ Desactivado'}\n"
+            f"• Auto-Respuesta / Webhook: {'✅ Activado' if cfg['auto_reply_enabled'] else '⏸️ Desactivado'}"
+        )
+    else:
+        err = st.get("error") or "No conectado"
+        return (
+            f"🔴 <b>WHATSAPP DESCONECTADO:</b>\n"
+            f"• Instancia: <code>{st.get('instance')}</code>\n"
+            f"• Estado actual: <code>{st.get('state')}</code>\n"
+            f"• Detalle: {err}\n\n"
+            f"👉 Abre la pestaña '💬 WhatsApp & Mensajería' en el panel web para escanear el código QR."
+        )
+
+@mcp.tool()
+async def enviar_whatsapp_cliente(
+    telefono: str,
+    mensaje: str,
+    delay_segundos: float = 2.0
+) -> str:
+    """Envía un mensaje de texto por WhatsApp directamente a un cliente usando Evolution API:
+    - telefono: Número del cliente (con o sin código de país, ej: +54 9 11 1234-5678 o 5491112345678).
+    - mensaje: Texto del mensaje a enviar.
+    - delay_segundos: Simulación de escritura anti-baneo en segundos (por defecto 2.0).
+    """
+    res = await whatsapp_client.send_text_message(telefono, mensaje, delay_seconds=delay_segundos)
+    if res.get("success"):
+        return f"✅ Mensaje de WhatsApp enviado exitosamente a {res.get('phone')} (ID: {res.get('message_id')})."
+    else:
+        return f"❌ Error al enviar WhatsApp a {telefono}: {res.get('error')}"
+
+@mcp.tool()
+def configurar_automatizacion_whatsapp(
+    api_url: str = "",
+    api_key: str = "",
+    instance_name: str = "",
+    auto_send_expiry: Optional[int] = None,
+    auto_send_sales: Optional[int] = None,
+    auto_reply_enabled: Optional[int] = None
+) -> str:
+    """Configura las opciones de Evolution API WhatsApp y las automatizaciones del sistema:
+    - api_url: URL base de Evolution API (ej: http://evolution-api:8080).
+    - api_key: Clave API global de autenticación.
+    - instance_name: Nombre de la sesión/instancia (ej: streaming-bot).
+    - auto_send_expiry: 1 para activar envío 100% automático de cobranzas a las 09:00 AM, 0 para desactivar.
+    - auto_send_sales: 1 para despachar credenciales por WhatsApp automáticamente al vender combos, 0 para desactivar.
+    - auto_reply_enabled: 1 para activar bot de auto-respuesta a consultas de clientes, 0 para desactivar.
+    """
+    current = database.get_whatsapp_api_settings()
+    new_url = api_url.strip() if api_url else current.get("api_url", "http://evolution-api:8080")
+    new_key = api_key.strip() if api_key else current.get("api_key", "mcp-evolution-key-2026")
+    new_inst = instance_name.strip() if instance_name else current.get("instance_name", "streaming-bot")
+    new_expiry = auto_send_expiry if auto_send_expiry is not None else current.get("auto_send_expiry", 0)
+    new_sales = auto_send_sales if auto_send_sales is not None else current.get("auto_send_sales", 0)
+    new_reply = auto_reply_enabled if auto_reply_enabled is not None else current.get("auto_reply_enabled", 1)
+
+    database.save_whatsapp_api_settings(
+        api_url=new_url,
+        api_key=new_key,
+        instance_name=new_inst,
+        auto_send_expiry=new_expiry,
+        auto_send_sales=new_sales,
+        auto_reply_enabled=new_reply
+    )
+    return (
+        f"✅ CONFIGURACIÓN DE WHATSAPP ACTUALIZADA:\n"
+        f"• URL: <code>{new_url}</code> | Instancia: <code>{new_inst}</code>\n"
+        f"• Auto-Cobro diario (09:00 AM): {'Activado' if new_expiry else 'Desactivado'}\n"
+        f"• Auto-Envío en ventas: {'Activado' if new_sales else 'Desactivado'}\n"
+        f"• Bot Auto-Respuesta: {'Activado' if new_reply else 'Desactivado'}"
+    )
+
 # ==========================================
 # 2. Servidor Web FastAPI & Lifespan
 # ==========================================
@@ -1473,6 +1560,7 @@ async def dashboard(request: Request):
     master_accounts_list = database.get_master_accounts_overview()
     system_health = system_logger.get_system_health_report()
     recent_logs = system_logger.get_recent_logs(limit=120)
+    wa_settings = database.get_whatsapp_api_settings()
 
     msg_raw = request.query_params.get("msg", "")
     wa_param = request.query_params.get("wa", "")
@@ -1516,6 +1604,14 @@ async def dashboard(request: Request):
             msg_text = "✅ Cuenta madre renovada con éxito y perfiles sincronizados."
         elif msg_raw == "logs_cleared":
             msg_text = "🧹 Buffer de logs en memoria limpiado."
+        elif msg_raw == "wa_settings_saved":
+            msg_text = "✅ Configuración de Evolution API WhatsApp guardada con éxito."
+        elif msg_raw == "wa_test_sent":
+            msg_text = "✅ Mensaje de prueba enviado exitosamente por WhatsApp."
+        elif msg_raw == "wa_logged_out":
+            msg_text = "🚪 Sesión de WhatsApp cerrada correctamente."
+        elif msg_raw == "wa_webhook_configured":
+            msg_text = "🔗 Webhook configurado exitosamente en Evolution API."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -2525,12 +2621,112 @@ async def dashboard(request: Request):
                 previewEl.innerHTML = formatted;
             }}
 
+            let waQrPollInterval = null;
+
+            async function checkWaStatus() {{
+                const badge = document.getElementById('wa-connection-badge');
+                const btnQr = document.getElementById('btn-wa-open-qr');
+                const btnLogout = document.getElementById('btn-wa-logout');
+                if (!badge) return;
+
+                try {{
+                    const res = await fetch('/api/whatsapp/status');
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const data = await res.json();
+                    const st = data.status || {{}};
+                    if (st.connected) {{
+                        badge.className = 'badge badge-ok';
+                        badge.innerHTML = '🟢 Conectado (' + (st.instance || 'bot') + ')';
+                        if (btnQr) btnQr.style.display = 'none';
+                        if (btnLogout) btnLogout.style.display = 'inline-block';
+                    }} else if (st.state === 'connecting') {{
+                        badge.className = 'badge badge-warn';
+                        badge.innerHTML = '🟡 Conectando...';
+                        if (btnQr) btnQr.style.display = 'inline-block';
+                        if (btnLogout) btnLogout.style.display = 'none';
+                    }} else {{
+                        badge.className = 'badge badge-danger';
+                        badge.innerHTML = '🔴 Desconectado (' + (st.state || 'close') + ')';
+                        if (btnQr) btnQr.style.display = 'inline-block';
+                        if (btnLogout) btnLogout.style.display = 'none';
+                    }}
+                }} catch (e) {{
+                    badge.className = 'badge badge-danger';
+                    badge.innerHTML = '⚠️ Evolution API Desconectado';
+                    if (btnQr) btnQr.style.display = 'inline-block';
+                    if (btnLogout) btnLogout.style.display = 'none';
+                }}
+            }}
+
+            async function openWaQrModal() {{
+                const modal = document.getElementById('modal-wa-qr');
+                if (!modal) return;
+                modal.style.display = 'flex';
+                loadWaQr();
+                if (waQrPollInterval) clearInterval(waQrPollInterval);
+                waQrPollInterval = setInterval(async () => {{
+                    try {{
+                        const res = await fetch('/api/whatsapp/status');
+                        if (res.ok) {{
+                            const data = await res.json();
+                            if (data.status && data.status.connected) {{
+                                clearInterval(waQrPollInterval);
+                                closeWaQrModal();
+                                alert('🎉 ¡WhatsApp Conectado Exitosamente!');
+                                checkWaStatus();
+                            }}
+                        }}
+                    }} catch (e) {{}}
+                }}, 3000);
+            }}
+
+            function closeWaQrModal() {{
+                const modal = document.getElementById('modal-wa-qr');
+                if (modal) modal.style.display = 'none';
+                if (waQrPollInterval) clearInterval(waQrPollInterval);
+                checkWaStatus();
+            }}
+
+            async function loadWaQr() {{
+                const img = document.getElementById('wa-qr-img');
+                const loading = document.getElementById('wa-qr-loading');
+                const pcode = document.getElementById('wa-qr-pairing');
+                if (loading) loading.innerHTML = '🔄 Generando código QR con Evolution API...';
+                if (img) img.style.display = 'none';
+                if (pcode) pcode.innerHTML = '';
+
+                try {{
+                    const res = await fetch('/api/whatsapp/qr');
+                    const data = await res.json();
+                    if (data.connected) {{
+                        if (loading) loading.innerHTML = '✅ ¡WhatsApp ya está conectado!';
+                        setTimeout(closeWaQrModal, 1500);
+                        return;
+                    }}
+                    if (data.base64) {{
+                        if (img) {{
+                            img.src = data.base64.startsWith('data:') ? data.base64 : 'data:image/png;base64,' + data.base64;
+                            img.style.display = 'block';
+                        }}
+                        if (loading) loading.innerHTML = '📲 Escanea este código desde WhatsApp > Dispositivos Vinculados:';
+                        if (data.pairingCode && pcode) {{
+                            pcode.innerHTML = 'Código de vinculación: <strong>' + data.pairingCode + '</strong>';
+                        }}
+                    }} else {{
+                        if (loading) loading.innerHTML = '⚠️ ' + (data.error || 'No se pudo obtener el QR. Verifica que Evolution API esté iniciado.');
+                    }}
+                }} catch (e) {{
+                    if (loading) loading.innerHTML = '❌ Error al contactar al servidor: ' + e.message;
+                }}
+            }}
+
             window.addEventListener('DOMContentLoaded', () => {{
                 const hash = window.location.hash.replace('#', '');
                 if (hash && document.getElementById(hash)) {{
                     showTab(hash);
                 }}
                 loadTemplatesManager();
+                checkWaStatus();
             }});
         </script>
     </head>
@@ -2597,7 +2793,7 @@ async def dashboard(request: Request):
                     <button id="btn-tab-suppliers" class="tab-btn" onclick="showTab('tab-suppliers')">🏢 Proveedores & Cuentas ({len(suppliers_list)}/{len(master_accounts_list)})</button>
                     <button id="btn-tab-catalog" class="tab-btn" onclick="showTab('tab-catalog')">🏷️ Precios & Combos ({len(catalog_items)}/{len(combos_list)})</button>
                     <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({len(transactions)})</button>
-                    <button id="btn-tab-templates" class="tab-btn" onclick="showTab('tab-templates')">💬 Plantillas WhatsApp</button>
+                    <button id="btn-tab-templates" class="tab-btn" onclick="showTab('tab-templates')">💬 WhatsApp & Mensajería</button>
                     <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({len(free_stock)})</button>
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
                     <button id="btn-tab-backup" class="tab-btn" onclick="showTab('tab-backup')">📁 Excel & Backups</button>
@@ -2871,6 +3067,128 @@ async def dashboard(request: Request):
 
                 <!-- Pestaña 💬 Plantillas WhatsApp y Datos de Cobro -->
                 <div id="tab-templates" class="tab-content" style="display:none;">
+                    <!-- 0. Conexión Evolution API & Bot Automático WhatsApp -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; margin-bottom:24px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid #1e293b; padding-bottom:12px; flex-wrap:wrap; gap:12px;">
+                            <div>
+                                <h3 style="margin:0; color:#25d366; font-size:1.2rem; display:flex; align-items:center; gap:8px;">
+                                    💬 WhatsApp Evolution API v2 & Bot de Mensajería
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Envío automático de cobros (09:00 AM), entrega de credenciales en ventas y auto-respuesta con Webhooks.
+                                </p>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                <span id="wa-connection-badge" class="badge badge-warn">⏳ Verificando...</span>
+                                <button type="button" id="btn-wa-open-qr" onclick="openWaQrModal()" class="btn" style="background:#25d366; color:#000; font-weight:bold; padding:8px 14px; border-radius:6px; cursor:pointer;">
+                                    📲 Vincular WhatsApp (QR)
+                                </button>
+                                <button type="button" onclick="checkWaStatus()" class="btn-action" style="background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 12px; cursor:pointer;" title="Refrescar estado de conexión">
+                                    🔄
+                                </button>
+                                <form action="/api/whatsapp/logout" method="POST" style="display:inline;" onsubmit="return confirm('¿Seguro que deseas cerrar la sesión de WhatsApp?');">
+                                    <button type="submit" id="btn-wa-logout" class="btn-action btn-warn" style="display:none; padding:8px 12px; cursor:pointer;" title="Cerrar sesión de WhatsApp">
+                                        🚪 Desconectar
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Formulario de Configuración y Toggles -->
+                        <form action="/api/whatsapp/settings" method="POST" style="margin-bottom:20px;">
+                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:14px; margin-bottom:16px;">
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">URL Servidor Evolution API</label>
+                                    <input type="text" name="api_url" value="{wa_settings.get('api_url', 'http://evolution-api:8080')}" placeholder="http://evolution-api:8080" required style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Global API Key (Token)</label>
+                                    <input type="text" name="api_key" value="{wa_settings.get('api_key', 'mcp-evolution-key-2026')}" placeholder="mcp-evolution-key-2026" required style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Nombre de Instancia</label>
+                                    <input type="text" name="instance_name" value="{wa_settings.get('instance_name', 'streaming-bot')}" placeholder="streaming-bot" required style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                            </div>
+
+                            <!-- Toggles de Automatización -->
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px; margin-bottom:16px;">
+                                <div style="font-size:0.85rem; color:#f8fafc; font-weight:bold; margin-bottom:10px;">
+                                    ⚙️ Automatizaciones Inteligentes:
+                                </div>
+                                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+                                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" name="auto_send_expiry" value="1" {'checked' if wa_settings.get('auto_send_expiry') == 1 else ''} style="margin-top:3px; transform:scale(1.2);">
+                                        <div>
+                                            <strong style="color:#38bdf8; font-size:0.85rem;">⏰ Auto-Cobro 09:00 AM</strong>
+                                            <span style="display:block; font-size:0.75rem; color:#94a3b8;">Envía recordatorios diarios con delay anti-ban a clientes que vencen hoy o en 2 días.</span>
+                                        </div>
+                                    </label>
+
+                                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" name="auto_send_sales" value="1" {'checked' if wa_settings.get('auto_send_sales') == 1 else ''} style="margin-top:3px; transform:scale(1.2);">
+                                        <div>
+                                            <strong style="color:#10b981; font-size:0.85rem;">🚀 Auto-Envío en Ventas</strong>
+                                            <span style="display:block; font-size:0.75rem; color:#94a3b8;">Despacha credenciales y accesos por WhatsApp automáticamente al vender combos o perfiles.</span>
+                                        </div>
+                                    </label>
+
+                                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" name="auto_reply_enabled" value="1" {'checked' if wa_settings.get('auto_reply_enabled', 1) == 1 else ''} style="margin-top:3px; transform:scale(1.2);">
+                                        <div>
+                                            <strong style="color:#a78bfa; font-size:0.85rem;">🤖 Bot de Auto-Respuesta</strong>
+                                            <span style="display:block; font-size:0.75rem; color:#94a3b8;">Responde consultas de vencimientos, claves, datos CBU y notifica comprobantes a Telegram.</span>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                                <button type="submit" class="btn" style="background:#059669; padding:9px 18px; font-weight:bold;">
+                                    💾 Guardar Configuración de WhatsApp
+                                </button>
+                                <span style="font-size:0.8rem; color:#94a3b8;">
+                                    Actualizado: <strong>{wa_settings.get('updated_at', 'Predeterminado')}</strong>
+                                </span>
+                            </div>
+                        </form>
+
+                        <!-- Fila: Webhook & Prueba Rápida -->
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; border-top:1px solid #1e293b; padding-top:16px;">
+                            <!-- Webhook Box -->
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <h4 style="margin:0 0 8px 0; font-size:0.9rem; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+                                    🔗 Webhook para Auto-Respuesta (MESSAGES_UPSERT)
+                                </h4>
+                                <p style="font-size:0.75rem; color:#94a3b8; margin:0 0 10px 0;">
+                                    Evolution API enviará los mensajes entrantes a este endpoint para procesar auto-respuestas y comprobantes:
+                                </p>
+                                <form action="/api/whatsapp/setup-webhook" method="POST" style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <input type="text" name="webhook_url" value="https://mcp.juanconnect.online/api/webhook/whatsapp" style="flex:1; min-width:220px; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                    <button type="submit" class="btn" style="background:#0284c7; padding:6px 12px; font-size:0.8rem; font-weight:600;">
+                                        ⚡ Vincular Webhook
+                                    </button>
+                                </form>
+                            </div>
+
+                            <!-- Prueba Rápida de Envío -->
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <h4 style="margin:0 0 8px 0; font-size:0.9rem; color:#10b981; display:flex; align-items:center; gap:6px;">
+                                    🧪 Enviar Mensaje de Prueba
+                                </h4>
+                                <form action="/api/whatsapp/test" method="POST" style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                    <input type="text" name="test_phone" placeholder="Teléfono (ej: 5491112345678)" required style="background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 8px; font-size:0.8rem;">
+                                    <input type="text" name="test_message" placeholder="Texto de prueba..." value="Hola! Prueba de conexion exitosa con Streaming CRM." required style="background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 8px; font-size:0.8rem;">
+                                    <div style="grid-column: 1 / -1;">
+                                        <button type="submit" class="btn" style="width:100%; background:#059669; padding:6px 12px; font-size:0.8rem; font-weight:600;">
+                                            📤 Enviar WhatsApp de Prueba
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- 1. Configuración de Cobro y CBU -->
                     <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; margin-bottom:20px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #1e293b; padding-bottom:10px;">
@@ -3354,6 +3672,34 @@ async def dashboard(request: Request):
                 </form>
             </div>
         </div>
+
+        <!-- Modal: Escanear QR WhatsApp Evolution API -->
+        <div id="modal-wa-qr" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#161e2e;border:1px solid #334155;border-radius:16px;padding:28px;width:90%;max-width:440px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.7);text-align:center;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #1e293b;padding-bottom:12px;">
+                    <h3 style="margin:0;color:#25d366;font-size:1.2rem;display:flex;align-items:center;gap:8px;">
+                        📲 Vincular WhatsApp
+                    </h3>
+                    <button type="button" onclick="closeWaQrModal()" style="background:none;border:none;color:#94a3b8;font-size:1.4rem;cursor:pointer;">✕</button>
+                </div>
+                <p id="wa-qr-loading" style="font-size:0.9rem;color:#cbd5e1;margin-bottom:16px;">
+                    🔄 Obteniendo código QR...
+                </p>
+                <div style="display:flex;justify-content:center;margin-bottom:16px;">
+                    <img id="wa-qr-img" src="" alt="WhatsApp QR Code" style="display:none;width:260px;height:260px;border-radius:12px;background:#ffffff;padding:12px;box-shadow:0 4px 12px rgba(0,0,0,0.4);" />
+                </div>
+                <div id="wa-qr-pairing" style="font-size:0.85rem;color:#38bdf8;margin-bottom:16px;"></div>
+                <p style="font-size:0.8rem;color:#94a3b8;line-height:1.4;margin-bottom:20px;">
+                    1. Abre WhatsApp en tu celular.<br>
+                    2. Ve a <strong>Ajustes > Dispositivos vinculados</strong>.<br>
+                    3. Toca en <strong>Vincular un dispositivo</strong> y apunta al código.
+                </p>
+                <div style="display:flex;justify-content:center;gap:10px;">
+                    <button type="button" onclick="loadWaQr()" class="btn" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;">🔄 Recargar QR</button>
+                    <button type="button" onclick="closeWaQrModal()" class="btn" style="background:#475569;">Cerrar</button>
+                </div>
+            </div>
+        </div>
     </body>
     </html>
     """
@@ -3540,6 +3886,22 @@ async def api_combos_sell(
     )
     if res.get("success"):
         wa_url = res.get("wa_link", "")
+        wa_text = res.get("whatsapp_message", "")
+        wa_auto_sent = False
+        if whatsapp:
+            wa_settings = database.get_whatsapp_api_settings()
+            if wa_settings.get("auto_send_sales") == 1:
+                try:
+                    wa_st = await whatsapp_client.check_connection_status()
+                    if wa_st.get("connected"):
+                        send_res = await whatsapp_client.send_text_message(whatsapp, wa_text, delay_seconds=2.0)
+                        if send_res.get("success"):
+                            wa_auto_sent = True
+                            logger.info(f"Accesos de combo despachados automáticamente a {whatsapp}")
+                except Exception as e:
+                    logger.error(f"Error despachando combo automáticamente por WhatsApp: {e}")
+
+        wa_info_telegram = "\n📲 <b>WhatsApp:</b> ✅ Entregado automáticamente al cliente" if wa_auto_sent else f"\n\n📲 <a href=\"{wa_url}\"><b>👉 ENVIAR ACCESOS POR WHATSAPP (1 Clic)</b></a>"
         await send_telegram_message(
             f"🎉 <b>¡Combo Vendido desde el Panel Web!</b>\n\n"
             f"• Pack: <b>{res['combo_name']}</b>\n"
@@ -3547,8 +3909,8 @@ async def api_combos_sell(
             f"• Total Cobrado: <b>{database.format_ars(res['amount'])}</b>\n"
             f"• Ganancia Neta: +{database.format_ars(res['profit'])}\n"
             f"• Cuentas asignadas: {len(res['accounts'])}\n"
-            f"• Vencimiento: <code>{res['expiry_date']}</code>\n\n"
-            f"📲 <a href=\"{wa_url}\"><b>👉 ENVIAR ACCESOS POR WHATSAPP (1 Clic)</b></a>"
+            f"• Vencimiento: <code>{res['expiry_date']}</code>"
+            f"{wa_info_telegram}"
         )
         return RedirectResponse(url=f"/?msg=combo_sold&wa={urllib.parse.quote(wa_url)}#tab-active", status_code=302)
     else:
@@ -3840,6 +4202,195 @@ async def api_clear_logs(request: Request):
         raise HTTPException(status_code=401)
     system_logger.clear_memory_logs()
     return RedirectResponse(url="/?msg=logs_cleared#tab-logs", status_code=303)
+
+# ==========================================
+# 12. Endpoints Evolution API WhatsApp & Webhooks
+# ==========================================
+@app.get("/api/whatsapp/status")
+async def api_whatsapp_status(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    st = await whatsapp_client.check_connection_status()
+    cfg = whatsapp_client.get_evolution_config()
+    return {"status": st, "config": cfg}
+
+@app.get("/api/whatsapp/qr")
+async def api_whatsapp_qr(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    qr_data = await whatsapp_client.get_qr_code()
+    return qr_data
+
+@app.post("/api/whatsapp/settings")
+async def api_whatsapp_settings(
+    request: Request,
+    api_url: str = Form("http://evolution-api:8080"),
+    api_key: str = Form("mcp-evolution-key-2026"),
+    instance_name: str = Form("streaming-bot"),
+    auto_send_expiry: Optional[str] = Form(None),
+    auto_send_sales: Optional[str] = Form(None),
+    auto_reply_enabled: Optional[str] = Form(None)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.save_whatsapp_api_settings(
+        api_url=api_url.strip(),
+        api_key=api_key.strip(),
+        instance_name=instance_name.strip(),
+        auto_send_expiry=1 if auto_send_expiry in ("1", "on", "true") else 0,
+        auto_send_sales=1 if auto_send_sales in ("1", "on", "true") else 0,
+        auto_reply_enabled=1 if auto_reply_enabled in ("1", "on", "true") else 0
+    )
+    return RedirectResponse(url="/?msg=wa_settings_saved#tab-templates", status_code=302)
+
+@app.post("/api/whatsapp/setup-webhook")
+async def api_whatsapp_setup_webhook(request: Request, webhook_url: str = Form("")):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    target_url = webhook_url.strip() or "https://mcp.juanconnect.online/api/webhook/whatsapp"
+    res = await whatsapp_client.configure_webhook(target_url)
+    if res.get("success"):
+        return RedirectResponse(url="/?msg=wa_webhook_configured#tab-templates", status_code=302)
+    else:
+        err = urllib.parse.quote(res.get("error", "Error configurando webhook"))
+        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+
+@app.post("/api/whatsapp/test")
+async def api_whatsapp_test(request: Request, test_phone: str = Form(...), test_message: str = Form(...)):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = await whatsapp_client.send_text_message(test_phone, test_message, delay_seconds=1.0)
+    if res.get("success"):
+        return RedirectResponse(url="/?msg=wa_test_sent#tab-templates", status_code=302)
+    else:
+        err = urllib.parse.quote(res.get("error", "Fallo al enviar mensaje de prueba"))
+        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+
+@app.post("/api/whatsapp/logout")
+async def api_whatsapp_logout(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    await whatsapp_client.logout_instance()
+    return RedirectResponse(url="/?msg=wa_logged_out#tab-templates", status_code=302)
+
+@app.post("/api/webhook/whatsapp")
+async def whatsapp_webhook(request: Request):
+    """Webhook receptor de eventos de Evolution API v2 (Baileys).
+    Procesa mensajes entrantes de clientes, auto-responde consultas de vencimientos/claves/CBU y
+    alerta a Telegram ante el envío de comprobantes de pago.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"status": "ignored", "reason": "invalid_json"})
+
+    event = body.get("event") or body.get("type", "")
+    data = body.get("data", {}) or {}
+
+    key = data.get("key", {}) or body.get("key", {})
+    from_me = key.get("fromMe", False)
+    remote_jid = key.get("remoteJid", "")
+
+    # 1. Ignorar mensajes salientes propios o grupos para evitar bucles
+    if from_me or not remote_jid or "@g.us" in remote_jid or "status@broadcast" in remote_jid:
+        return JSONResponse({"status": "ignored"})
+
+    # 2. Extraer número de teléfono limpio
+    phone_raw = remote_jid.split("@")[0]
+    sender_phone = re.sub(r'[^0-9]', '', phone_raw)
+    if not sender_phone or len(sender_phone) < 8:
+        return JSONResponse({"status": "ignored", "reason": "invalid_phone"})
+
+    # 3. Extraer contenido de texto o caption de imagen/documento
+    msg_obj = data.get("message", {}) or body.get("message", {}) or {}
+    text = (
+        msg_obj.get("conversation") or
+        msg_obj.get("extendedTextMessage", {}).get("text") or
+        msg_obj.get("imageMessage", {}).get("caption") or
+        msg_obj.get("documentMessage", {}).get("caption") or
+        ""
+    ).strip()
+    is_media = bool(msg_obj.get("imageMessage") or msg_obj.get("documentMessage"))
+
+    # 4. Verificar si la auto-respuesta está habilitada
+    settings = database.get_whatsapp_api_settings()
+    if not settings.get("auto_reply_enabled"):
+        return JSONResponse({"status": "disabled"})
+
+    push_name = data.get("pushName") or body.get("pushName") or "Cliente"
+    client_profile = database.get_client_by_phone(sender_phone)
+    client_name = client_profile["client"]["name"] if client_profile else push_name
+
+    text_lower = text.lower()
+
+    # REGLA A: Detección de comprobantes de pago (Imágenes/Docs o palabras clave de pago)
+    receipt_keywords = ["comprobante", "pague", "pagué", "transferi", "transferí", "adjunto", "constancia", "abone", "aboné"]
+    is_receipt = is_media or any(k in text_lower for k in receipt_keywords)
+
+    if is_receipt:
+        logger.info(f"Comprobante recibido de {client_name} ({sender_phone})")
+        caption_txt = f"<i>\"{text}\"</i>" if text else "(Archivo multimedia adjunto)"
+        await send_telegram_message(
+            f"🧾 <b>¡COMPROBANTE RECIBIDO POR WHATSAPP!</b>\n\n"
+            f"• Cliente: <b>{client_name}</b>\n"
+            f"• WhatsApp: <code>{sender_phone}</code>\n"
+            f"• Mensaje: {caption_txt}\n\n"
+            f"👉 Por favor verifica el ingreso en tu cuenta bancaria y confirma el cobro en el panel."
+        )
+
+        reply = (
+            f"¡Hola {client_name}! 🙌 Recibimos tu comprobante correctamente.\n\n"
+            f"Nuestro equipo lo verificará en el sistema a la brevedad y extenderá tu servicio. ¡Muchas gracias por tu pago! ✨"
+        )
+        await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+        return JSONResponse({"status": "ok", "action": "receipt_acknowledged"})
+
+    # REGLA B: Consultas de Vencimiento o Credenciales ("vence", "vencimiento", "clave", "pin", "acceso", "contraseña")
+    expiry_keywords = ["vence", "vencimiento", "cuando vence", "cuándo vence", "clave", "contraseña", "contrasena", "pin", "acceso", "accesos", "cuenta"]
+    if any(k in text_lower for k in expiry_keywords):
+        if client_profile and client_profile.get("active_accounts"):
+            accs = client_profile["active_accounts"]
+            lines = [f"¡Hola {client_name}! 🍿 Aquí tienes el estado de tus servicios activos:\n"]
+            for a in accs:
+                perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
+                pin = f" | PIN: {a['profile_pin']}" if a.get("profile_pin") else ""
+                lines.append(
+                    f"📺 *{a['platform']}*{perf}\n"
+                    f"📧 Usuario: `{a['email']}`\n"
+                    f"🔑 Clave: `{a['password']}`{pin}\n"
+                    f"📅 Vence: *{a.get('expiry_date')}* ({a.get('days_label')})\n"
+                )
+            lines.append("¡Cualquier consulta o renovación estamos a tu disposición!")
+            reply = "\n".join(lines)
+            await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+            return JSONResponse({"status": "ok", "action": "expiry_info_sent"})
+        else:
+            reply = (
+                f"¡Hola {client_name}! En este momento no registramos suscripciones activas a tu nombre en el sistema. "
+                f"Si deseas contratar Netflix, Disney+, Max u otra plataforma, avísanos y te enviamos los planes disponibles."
+            )
+            await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+            return JSONResponse({"status": "ok", "action": "no_active_services"})
+
+    # REGLA C: Consulta de Medios de Pago / CBU / Alias
+    payment_keywords = ["alias", "cbu", "cvu", "como pago", "cómo pago", "datos de pago", "medios de pago", "transferir", "donde transfiero", "dónde transfiero", "pagar", "cuenta bancaria"]
+    if any(k in text_lower for k in payment_keywords):
+        pm = database.get_formatted_payment_methods()
+        reply = (
+            f"¡Hola {client_name}! Aquí tienes nuestros datos de cobro oficiales:\n\n"
+            f"{pm}\n\n"
+            f"Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu renovación. ¡Muchas gracias! 🙌"
+        )
+        await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+        return JSONResponse({"status": "ok", "action": "payment_info_sent"})
+
+    return JSONResponse({"status": "ok", "action": "none"})
 
 @app.get("/health")
 async def health():

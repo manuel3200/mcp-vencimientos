@@ -58,6 +58,37 @@ async def check_and_send_alerts(days_window: int = None, force: bool = False) ->
     except Exception as e:
         logger.error(f"Error verificando vencimiento de cuentas madre en scheduler: {e}")
 
+    # Despacho automático de cobros/recordatorios por WhatsApp si Evolution API está activa
+    try:
+        import whatsapp_client
+        import random
+        wa_settings = database.get_whatsapp_api_settings()
+        if wa_settings.get("auto_send_expiry") and wa_settings["auto_send_expiry"] == 1:
+            wa_status = await whatsapp_client.check_connection_status()
+            if wa_status.get("connected"):
+                logger.info("Evolution API conectada. Iniciando envío automático de recordatorios por WhatsApp...")
+                wa_sent_count = 0
+                for item in expiring:
+                    client_phone = item.get("whatsapp") or ""
+                    if client_phone:
+                        wa_data = database.generate_whatsapp_message(item, "cobro")
+                        msg_text = wa_data.get("message_text", "")
+                        if msg_text:
+                            delay = random.uniform(4.0, 9.0)
+                            res = await whatsapp_client.send_text_message(client_phone, msg_text, delay_seconds=delay)
+                            if res.get("success"):
+                                wa_sent_count += 1
+                                logger.info(f"Recordatorio WhatsApp enviado automáticamente a {client_phone}")
+                                await asyncio.sleep(delay)
+                if wa_sent_count > 0:
+                    from telegram_bot import send_telegram_message
+                    await send_telegram_message(
+                        f"📲 <b>Auto-Cobro WhatsApp Activo:</b>\n"
+                        f"Se enviaron automáticamente <b>{wa_sent_count}</b> recordatorios de vencimiento por WhatsApp a tus clientes."
+                    )
+    except Exception as e:
+        logger.error(f"Error en envío automático de recordatorios WhatsApp: {e}")
+
     return sent_count
 
 async def check_and_send_stock_alerts(force: bool = False) -> bool:

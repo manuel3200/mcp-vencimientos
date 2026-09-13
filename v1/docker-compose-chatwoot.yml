@@ -8,10 +8,10 @@ version: '3.8'
 
 services:
   # ----------------------------------------------------------------------------
-  # 1. Base de datos PostgreSQL 15 (Probada y 100% compatible con ARM64)
+  # 1. Base de datos PostgreSQL 15 con extensión Vector (ARM64)
   # ----------------------------------------------------------------------------
   chatwoot-postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg15
     container_name: chatwoot-postgres
     restart: always
     environment:

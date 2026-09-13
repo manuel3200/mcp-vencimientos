@@ -84,7 +84,13 @@ def search_client(query: Union[str, int]) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     q = str(query).strip()
     clean_q = q.replace(" ", "").replace("-", "")
-    client_id = int(q) if q.isdigit() else -1
+    client_id = -1
+    if q.isdigit() and len(q) <= 9:
+        try:
+            client_id = int(q)
+        except (ValueError, OverflowError):
+            client_id = -1
+
     try:
         with conn:
             row = conn.execute("""
@@ -136,8 +142,11 @@ def get_client_360_profile(query_or_id: Union[str, int]) -> Optional[Dict[str, A
         with conn:
             client_row = None
             q = str(query_or_id).strip()
-            if isinstance(query_or_id, int) or q.isdigit():
-                client_row = conn.execute("SELECT * FROM clients WHERE id = ?", (int(q),)).fetchone()
+            if (isinstance(query_or_id, int) and query_or_id < 2_000_000_000) or (q.isdigit() and len(q) <= 9):
+                try:
+                    client_row = conn.execute("SELECT * FROM clients WHERE id = ?", (int(q),)).fetchone()
+                except (ValueError, OverflowError):
+                    client_row = None
 
             if not client_row:
                 clean_q = q.replace(" ", "").replace("-", "")

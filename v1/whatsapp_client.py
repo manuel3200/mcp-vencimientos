@@ -648,10 +648,22 @@ async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
                 if not cw_id:
                     continue
                 cw_name = str(cw_c.get("name") or "").strip()
-                cw_phone_raw = str(cw_c.get("phone_number") or cw_c.get("identifier") or "")
-                clean_p = re.sub(r'[^0-9]', '', cw_phone_raw)
+                ident = str(cw_c.get("identifier") or "")
+                cw_phone_raw = str(cw_c.get("phone_number") or "")
 
-                if not clean_p or len(clean_p) < 8:
+                # Omitir grupos de WhatsApp (@g.us o con etiqueta de grupo)
+                if "@g.us" in ident or "@g.us" in cw_phone_raw or "(group)" in cw_name.lower():
+                    continue
+
+                if not cw_phone_raw:
+                    if "@s.whatsapp.net" in ident:
+                        cw_phone_raw = ident.split("@")[0]
+                    else:
+                        continue
+
+                clean_p = re.sub(r'[^0-9]', '', cw_phone_raw)
+                # Un número válido de WhatsApp tiene entre 8 y 15 dígitos
+                if not clean_p or len(clean_p) < 8 or len(clean_p) > 15:
                     continue
 
                 target_name = None

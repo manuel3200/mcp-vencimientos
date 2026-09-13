@@ -1227,20 +1227,43 @@ async def consultar_estado_whatsapp() -> str:
 
 @mcp.tool()
 async def enviar_whatsapp_cliente(
-    telefono: str,
-    mensaje: str,
+    destinatario: str = "",
+    mensaje: str = "",
+    telefono: str = "",
     delay_segundos: float = 2.0
 ) -> str:
     """Envía un mensaje de texto por WhatsApp directamente a un cliente usando Evolution API:
-    - telefono: Número del cliente (con o sin código de país, ej: +54 9 11 1234-5678 o 5491112345678).
+    - destinatario: Puede ser el NOMBRE o alias del cliente registrado (ej: 'Juan Prueba Ortiz', 'Maik', 'CLI-001') o directamente su número de teléfono (+549...).
     - mensaje: Texto del mensaje a enviar.
+    - telefono: (Opcional) Número del cliente si no se especificó en destinatario.
     - delay_segundos: Simulación de escritura anti-baneo en segundos (por defecto 2.0).
     """
-    res = await whatsapp_client.send_text_message(telefono, mensaje, delay_seconds=delay_segundos)
+    target = (destinatario or telefono or "").strip()
+    if not target:
+        return "❌ Error: Debes indicar el nombre del cliente o su número de teléfono."
+    if not mensaje.strip():
+        return "❌ Error: El mensaje a enviar no puede estar vacío."
+
+    client_name_str = ""
+    phone_to_send = target
+
+    # Si contiene letras o parece un nombre/código en vez de solo números
+    clean_digits = re.sub(r'[^0-9]', '', target)
+    if re.search(r'[a-zA-Z]', target) or len(clean_digits) < 8:
+        client = database.search_client(target)
+        if not client:
+            return f"❌ No se encontró ningún cliente en el sistema con el nombre o código '{target}'."
+        phone_reg = client.get("whatsapp")
+        if not phone_reg:
+            return f"❌ El cliente '{client.get('name')}' ({client.get('client_code')}) está registrado pero no tiene número de WhatsApp configurado."
+        phone_to_send = phone_reg
+        client_name_str = f" a {client.get('name')}"
+
+    res = await whatsapp_client.send_text_message(phone_to_send, mensaje, delay_seconds=delay_segundos)
     if res.get("success"):
-        return f"✅ Mensaje de WhatsApp enviado exitosamente a {res.get('phone')} (ID: {res.get('message_id')})."
+        return f"✅ Mensaje de WhatsApp enviado exitosamente{client_name_str} ({res.get('phone')}) (ID: {res.get('message_id')})."
     else:
-        return f"❌ Error al enviar WhatsApp a {telefono}: {res.get('error')}"
+        return f"❌ Error al enviar WhatsApp{client_name_str} ({phone_to_send}): {res.get('error')}"
 
 @mcp.tool()
 def configurar_automatizacion_whatsapp(

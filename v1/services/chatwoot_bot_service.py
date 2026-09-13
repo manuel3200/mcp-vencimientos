@@ -162,13 +162,13 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
             price_str = acc.get("price") or "-"
             await whatsapp_client.send_chatwoot_message(
                 conv_id,
-                f"✅ <b>[StreamVault CRM] Suscripción Asignada con Éxito:</b>\n"
-                f"• Cliente: <b>{acc['client_name']}</b> ({badge_type})\n"
-                f"• Plataforma: <b>{acc['platform']}</b>" + (f" - <b>{acc.get('profile_name')}</b>" if acc.get('profile_name') else "") + "\n"
-                f"• Correo: <code>{acc['email']}</code>\n"
-                f"• Contraseña: <code>{acc['password']}</code>" + (f" | PIN: <code>{acc['profile_pin']}</code>" if acc.get('profile_pin') else "") + "\n"
-                f"• Vencimiento: <code>{acc['expiry_date']}</code>\n"
-                f"• Tarifa cobrada: <b>{price_str}</b> (Costo prov: {cost_str})\n"
+                f"✅ **[StreamVault CRM] Suscripción Asignada con Éxito:**\n"
+                f"• Cliente: **{acc['client_name']}** ({badge_type})\n"
+                f"• Plataforma: **{acc['platform']}**" + (f" - **{acc.get('profile_name')}**" if acc.get('profile_name') else "") + "\n"
+                f"• Correo: `{acc['email']}`\n"
+                f"• Contraseña: `{acc['password']}`" + (f" | PIN: `{acc['profile_pin']}`" if acc.get('profile_pin') else "") + "\n"
+                f"• Vencimiento: `{acc['expiry_date']}`\n"
+                f"• Tarifa cobrada: **{price_str}** (Costo prov: {cost_str})\n"
                 f"• Los accesos fueron enviados al cliente y la ganancia registrada en el balance financiero.",
                 private=True
             )
@@ -186,8 +186,8 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
         else:
             await whatsapp_client.send_chatwoot_message(
                 conv_id,
-                f"⚠️ <b>[StreamVault CRM] ¡SIN STOCK DISPONIBLE!</b>\n\n"
-                f"No se encontraron cuentas o pantallas libres para <b>'{platform_name}'</b>.\n"
+                f"⚠️ **[StreamVault CRM] ¡SIN STOCK DISPONIBLE!**\n\n"
+                f"No se encontraron cuentas o pantallas libres para **'{platform_name}'**.\n"
                 f"Por favor ingresa al panel web para cargar nuevas cuentas en stock o crear una cuenta madre antes de asignar.",
                 private=True
             )
@@ -199,14 +199,14 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
     elif clean_cmd.startswith("/stock"):
         health = database.get_stock_health_summary()
         platforms = health.get("platforms", [])
-        lines = ["📦 <b>[StreamVault CRM] Stock Libre en Inventario:</b>\n"]
+        lines = ["📦 **[StreamVault CRM] Stock Libre en Inventario:**\n"]
         if not platforms:
             lines.append("No hay cuentas ni plataformas registradas en stock.")
         else:
             for p in platforms:
                 ico = "🔴" if p["status"] == "agotado" else ("🟡" if p["status"] == "bajo" else "🟢")
-                lines.append(f"{ico} <b>{p['platform']}:</b> {p['free_count']} libres (Mín: {p['min_threshold']})")
-        lines.append(f"\n📊 <b>Total Unidades Libres:</b> {health.get('total_free_units', 0)}")
+                lines.append(f"{ico} **{p['platform']}:** {p['free_count']} libres (Mín: {p['min_threshold']})")
+        lines.append(f"\n📊 **Total Unidades Libres:** {health.get('total_free_units', 0)}")
         await whatsapp_client.send_chatwoot_message(conv_id, "\n".join(lines), private=True)
         return {"status": "ok", "action": "stock_reported"}
 
@@ -221,18 +221,18 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
         if not active_accs:
             await whatsapp_client.send_chatwoot_message(
                 conv_id,
-                f"ℹ️ [StreamVault CRM] <b>{client['name']}</b> ({badge_type}) no posee suscripciones activas en este momento.",
+                f"ℹ️ [StreamVault CRM] **{client['name']}** ({badge_type}) no posee suscripciones activas en este momento.",
                 private=True
             )
         else:
-            lines = [f"👤 <b>[StreamVault CRM] Suscripciones de {client['name']} ({badge_type}):</b>\n"]
+            lines = [f"👤 **[StreamVault CRM] Suscripciones de {client['name']} ({badge_type}):**\n"]
             for a in active_accs:
                 perf = f" ({a['profile_name']})" if a.get("profile_name") else ""
                 pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
                 lines.append(
-                    f"• <b>{a['platform']}{perf}</b>\n"
-                    f"  📧 Correo: <code>{a['email']}</code> | Clave: <code>{a['password']}</code>{pin}\n"
-                    f"  📅 Vence: <code>{a['expiry_date']}</code> ({a.get('days_label', '')}) | Precio: {a.get('price') or '-'}\n"
+                    f"• **{a['platform']}{perf}**\n"
+                    f"  📧 Correo: `{a['email']}` | Clave: `{a['password']}`{pin}\n"
+                    f"  📅 Vence: `{a['expiry_date']}` ({a.get('days_label', '')}) | Precio: {a.get('price') or '-'}\n"
                 )
             await whatsapp_client.send_chatwoot_message(conv_id, "\n".join(lines), private=True)
         return {"status": "ok", "action": "info_reported"}
@@ -257,7 +257,7 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
         if not active_accs:
             await whatsapp_client.send_chatwoot_message(
                 conv_id,
-                f"⚠️ [StreamVault CRM] <b>{client['name']}</b> no registra suscripciones activas para renovar.",
+                f"⚠️ [StreamVault CRM] **{client['name']}** no registra suscripciones activas para renovar.",
                 private=True
             )
             return {"status": "ok", "action": "no_active_accounts"}
@@ -284,11 +284,11 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 # 2. Nota privada para el agente
                 note_agent = (
-                    f"✅ <b>[StreamVault CRM] ¡Pago de Compra Registrado!</b>\n"
-                    f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
-                    f"• Servicio: <b>{res['platform']}</b> (<code>{res['email']}</code>)\n"
-                    f"• Cobrado: <b>+{amt_fmt}</b> (Ganancia: +{database.format_ars(res['profit'])})\n"
-                    f"• Vencimiento: <code>{res['new_expiry']}</code> (Suscripción al día)\n"
+                    f"✅ **[StreamVault CRM] ¡Pago de Compra Registrado!**\n"
+                    f"• Cliente: **{res['client_name']}** ({badge_type})\n"
+                    f"• Servicio: **{res['platform']}** (`{res['email']}`)\n"
+                    f"• Cobrado: **+{amt_fmt}** (Ganancia: +{database.format_ars(res['profit'])})\n"
+                    f"• Vencimiento: `{res['new_expiry']}` (Suscripción al día)\n"
                     f"• Transacción registrada en el libro contable de finanzas."
                 )
                 tg_title = "💵 <b>¡PAGO DE COMPRA CONFIRMADO DESDE CHATWOOT!</b>"
@@ -302,11 +302,11 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 )
                 # 2. Nota privada para el agente
                 note_agent = (
-                    f"✅ <b>[StreamVault CRM] ¡Pago y Renovación Registrados!</b>\n"
-                    f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
-                    f"• Servicio: <b>{res['platform']}</b> (<code>{res['email']}</code>)\n"
-                    f"• Cobrado: <b>+{amt_fmt}</b> (Ganancia: +{database.format_ars(res['profit'])})\n"
-                    f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (+30 días)\n"
+                    f"✅ **[StreamVault CRM] ¡Pago y Renovación Registrados!**\n"
+                    f"• Cliente: **{res['client_name']}** ({badge_type})\n"
+                    f"• Servicio: **{res['platform']}** (`{res['email']}`)\n"
+                    f"• Cobrado: **+{amt_fmt}** (Ganancia: +{database.format_ars(res['profit'])})\n"
+                    f"• Nuevo Vencimiento: `{res['new_expiry']}` (+30 días)\n"
                     f"• Transacción registrada en el libro contable de finanzas."
                 )
                 tg_title = "🔄 <b>¡RENOVACIÓN (+30D) REGISTRADA DESDE CHATWOOT!</b>"
@@ -349,22 +349,22 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
     # -------------------------------------------------------------
     elif clean_cmd in ("/ayuda", "/comandos", "/help"):
         help_text = (
-            "🛠️ <b>COMANDOS RÁPIDOS STREAMVAULT EN CHATWOOT:</b>\n\n"
-            "<b>Ventas Rápidas (Asignación Automática):</b>\n"
-            "• <code>/nc_n_casaextra</code> : Asigna Netflix Casa Extra (1 Pantalla)\n"
-            "• <code>/nc_n_full</code> : Asigna Netflix Cuenta Completa (4 Pantallas)\n"
-            "• <code>/nc_disney</code> : Asigna Disney+ Premium\n"
-            "• <code>/nc_max</code> : Asigna Max (HBO)\n"
-            "• <code>/nc_prime</code> : Asigna Amazon Prime Video\n"
-            "• <code>/nc_spotify</code> : Asigna Spotify Premium\n"
-            "• <code>/nc_youtube</code> : Asigna YouTube Premium\n"
-            "• <code>/nc_paramount</code> : Asigna Paramount+\n"
-            "• <code>/nc_crunchyroll</code> : Asigna Crunchyroll\n\n"
-            "<b>Consultas & Operaciones:</b>\n"
-            "• <code>/stock</code> : Ver stock libre en tiempo real\n"
-            "• <code>/info</code> : Ver suscripciones activas del cliente actual\n"
-            "• <code>/cbu</code> : Enviar datos bancarios y alias al cliente\n\n"
-            "💡 <b>Consejo Pro:</b> Puedes escribir el comando en la pestaña <b>'Nota privada'</b> (caja amarilla en Chatwoot). Así el cliente no verá el comando y recibirá únicamente el mensaje final con sus accesos."
+            "🛠️ **COMANDOS RÁPIDOS STREAMVAULT EN CHATWOOT:**\n\n"
+            "**Ventas Rápidas (Asignación Automática):**\n"
+            "• `/nc_n_casaextra` : Asigna Netflix Casa Extra (1 Pantalla)\n"
+            "• `/nc_n_full` : Asigna Netflix Cuenta Completa (4 Pantallas)\n"
+            "• `/nc_disney` : Asigna Disney+ Premium\n"
+            "• `/nc_max` : Asigna Max (HBO)\n"
+            "• `/nc_prime` : Asigna Amazon Prime Video\n"
+            "• `/nc_spotify` : Asigna Spotify Premium\n"
+            "• `/nc_youtube` : Asigna YouTube Premium\n"
+            "• `/nc_paramount` : Asigna Paramount+\n"
+            "• `/nc_crunchyroll` : Asigna Crunchyroll\n\n"
+            "**Consultas & Operaciones:**\n"
+            "• `/stock` : Ver stock libre en tiempo real\n"
+            "• `/info` : Ver suscripciones activas del cliente actual\n"
+            "• `/cbu` : Enviar datos bancarios y alias al cliente\n\n"
+            "💡 **Consejo Pro:** Puedes escribir el comando en la pestaña **'Nota privada'** (caja amarilla en Chatwoot). Así el cliente no verá el comando y recibirá únicamente el mensaje final con sus accesos."
         )
         await whatsapp_client.send_chatwoot_message(conv_id, help_text, private=True)
         return {"status": "ok", "action": "help_sent"}

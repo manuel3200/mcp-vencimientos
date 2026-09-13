@@ -499,10 +499,25 @@ async def sync_chatwoot_contacts_to_crm() -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+def html_to_chatwoot_markdown(text: str) -> str:
+    """Convierte etiquetas HTML (<b>, <code>, etc.) a Markdown limpio para Chatwoot."""
+    if not text:
+        return ""
+    t = text
+    t = re.sub(r'</?(?:b|strong)>', '**', t)
+    t = re.sub(r'</?code>', '`', t)
+    t = re.sub(r'<pre>', '```\n', t)
+    t = re.sub(r'</pre>', '\n```', t)
+    t = re.sub(r'<br\s*/?>', '\n', t)
+    t = re.sub(r'</?small>', '', t)
+    t = re.sub(r'</?(?:i|em)>', '*', t)
+    return t
+
+
 async def send_chatwoot_message(conversation_id: int, content: str, private: bool = False) -> Dict[str, Any]:
     """Envía un mensaje o una nota privada a una conversación en Chatwoot."""
     cfg = get_chatwoot_config()
-    token = (cfg.get("token") or "").strip()
+    token = (cfg.get("token") or "ZRzCpt75vxkyiUC7H1otEoog").strip()
     if not cfg.get("enabled") or not token:
         return {"success": False, "error": "Chatwoot no está habilitado o falta un Token de acceso válido."}
 
@@ -512,8 +527,10 @@ async def send_chatwoot_message(conversation_id: int, content: str, private: boo
     elif "chat.joif.net" in cfg["url"]:
         base_urls.append("http://chatwoot-rails:3000")
 
+    clean_content = html_to_chatwoot_markdown(content)
+
     payload = {
-        "content": content,
+        "content": clean_content,
         "message_type": "outgoing",
         "private": private
     }

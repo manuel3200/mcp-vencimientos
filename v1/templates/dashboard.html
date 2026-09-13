@@ -1393,23 +1393,45 @@
 
   <!-- Vanilla JavaScript: View Switcher, Ficha 360, Filtros y Modales -->
   <script>
-    // 1. Tabbed Multi-View Switcher Logic
-    function switchView(target) {
+    // 1. Tabbed Multi-View Switcher Logic con Persistencia y Soporte de Hash
+    function switchView(target, scrollToTop = true) {
+      if (!target) return;
+
+      const aliasMap = {
+        'tab-overview': 'overview',
+        'tab-active': 'accounts',
+        'tab-accounts': 'accounts',
+        'tab-screens': 'screens',
+        'tab-stock': 'stock',
+        'tab-catalog': 'catalog',
+        'tab-suppliers': 'suppliers',
+        'tab-finance': 'finance',
+        'tab-templates': 'integrations',
+        'tab-integrations': 'integrations',
+        'tab-tools': 'tools',
+        'tab-logs': 'logs'
+      };
+
+      let cleanTarget = String(target).replace(/^#/, '').trim();
+      if (aliasMap[cleanTarget]) {
+        cleanTarget = aliasMap[cleanTarget];
+      }
+
+      const activeView = document.getElementById('view-' + cleanTarget);
+      if (!activeView) return;
+
       // Ocultar todos los paneles
       const views = document.querySelectorAll('.view-panel');
       views.forEach(v => v.classList.add('hidden'));
 
       // Mostrar el panel seleccionado
-      const activeView = document.getElementById('view-' + target);
-      if (activeView) {
-        activeView.classList.remove('hidden');
-      }
+      activeView.classList.remove('hidden');
 
       // Actualizar enlaces del Sidebar
       const navLinks = document.querySelectorAll('#sidebar-nav .nav-item');
       navLinks.forEach(link => {
         const linkTarget = link.getAttribute('data-nav-target');
-        if (linkTarget === target) {
+        if (linkTarget === cleanTarget) {
           link.className = 'nav-item flex items-center justify-between px-3 py-2 rounded transition-all bg-surface-container-high text-primary font-semibold border border-primary/20 shadow-sm';
         } else {
           link.className = 'nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors';
@@ -1419,7 +1441,7 @@
       // Actualizar Mobile Bottom Bar
       const mobileBtns = document.querySelectorAll('.mobile-nav-btn');
       mobileBtns.forEach(btn => {
-        if (btn.getAttribute('data-target') === target) {
+        if (btn.getAttribute('data-target') === cleanTarget) {
           btn.classList.add('text-primary');
           btn.classList.remove('text-on-surface-variant');
         } else {
@@ -1428,12 +1450,46 @@
         }
       });
 
+      // Guardar pestaña en localStorage y actualizar hash en la URL
+      try {
+        localStorage.setItem('streamvault_active_tab', cleanTarget);
+        if (window.location.hash !== '#' + cleanTarget) {
+          history.replaceState(null, null, '#' + cleanTarget);
+        }
+      } catch (e) {}
+
       // Cerrar sidebar en celular si estaba abierto
       closeMobileSidebar();
 
-      // Scroll top
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      // Scroll top solo si fue por clic manual
+      if (scrollToTop) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     }
+
+    // Inicializar la pestaña correcta al cargar o recargar la página
+    function initActiveTab() {
+      const hash = window.location.hash ? window.location.hash.replace(/^#/, '').trim() : '';
+      let savedTab = '';
+      try {
+        savedTab = localStorage.getItem('streamvault_active_tab') || '';
+      } catch (e) {}
+
+      const targetTab = hash || savedTab || 'overview';
+      switchView(targetTab, false);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initActiveTab);
+    } else {
+      initActiveTab();
+    }
+
+    window.addEventListener('hashchange', () => {
+      if (window.location.hash) {
+        switchView(window.location.hash, false);
+      }
+    });
 
     // Attach Click Handlers to Nav Items
     document.querySelectorAll('#sidebar-nav .nav-item').forEach(link => {
@@ -1441,7 +1497,7 @@
         e.preventDefault();
         const target = link.getAttribute('data-nav-target');
         if (target) {
-          switchView(target);
+          switchView(target, true);
         }
       });
     });

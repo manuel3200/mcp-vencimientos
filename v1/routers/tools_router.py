@@ -159,7 +159,7 @@ async def import_stock_api(request: Request, file: Optional[UploadFile] = None, 
         msg = urllib.parse.quote(f"✅ Se importaron con éxito {res['imported']} cuenta(s) al stock libre ({res['skipped']} omitidas).")
     else:
         msg = urllib.parse.quote(f"❌ Error al importar: {res.get('error')}")
-    return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+    return RedirectResponse(url=f"/?msg={msg}#stock", status_code=303)
 
 @router.post("/api/import/sales")
 async def import_sales_api(request: Request, file: Optional[UploadFile] = None, csv_text: Optional[str] = Form("")):
@@ -176,14 +176,14 @@ async def import_sales_api(request: Request, file: Optional[UploadFile] = None, 
     
     if not content:
         msg = urllib.parse.quote("⚠️ No se proporcionó ningún archivo ni texto CSV.")
-        return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+        return RedirectResponse(url=f"/?msg={msg}#tools", status_code=303)
     
     res = database.import_sales_csv(content)
     if res.get("success"):
         msg = urllib.parse.quote(f"✅ Se migraron con éxito {res['imported']} venta(s) y cliente(s) ({res['skipped']} omitidas).")
     else:
         msg = urllib.parse.quote(f"❌ Error al importar: {res.get('error')}")
-    return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+    return RedirectResponse(url=f"/?msg={msg}#accounts", status_code=303)
 
 
 @router.post("/api/import/csv")
@@ -206,7 +206,7 @@ async def trigger_backup_api(request: Request):
     from telegram_bot import send_full_backup_to_telegram
     await send_full_backup_to_telegram()
     msg = urllib.parse.quote("📲 Copia de seguridad enviada exitosamente a tu Telegram.")
-    return RedirectResponse(url=f"/?msg={msg}", status_code=303)
+    return RedirectResponse(url=f"/?msg={msg}#tools", status_code=303)
 
 # API Proveedores y Cuentas Madre (Paso 4)
 
@@ -238,7 +238,7 @@ async def api_clear_logs(request: Request):
     if not user:
         raise HTTPException(status_code=401)
     system_logger.clear_memory_logs()
-    return RedirectResponse(url="/?msg=logs_cleared#tab-logs", status_code=303)
+    return RedirectResponse(url="/?msg=logs_cleared#logs", status_code=303)
 
 # ==========================================
 # 12. Endpoints Evolution API WhatsApp & Webhooks

@@ -59,7 +59,7 @@ async def api_whatsapp_settings(
         auto_send_sales=1 if auto_send_sales in ("1", "on", "true") else 0,
         auto_reply_enabled=1 if auto_reply_enabled in ("1", "on", "true") else 0
     )
-    return RedirectResponse(url="/?msg=wa_settings_saved#tab-templates", status_code=302)
+    return RedirectResponse(url="/?msg=wa_settings_saved#integrations", status_code=302)
 
 @router.post("/api/whatsapp/setup-webhook")
 async def api_whatsapp_setup_webhook(request: Request, webhook_url: str = Form("")):
@@ -69,10 +69,10 @@ async def api_whatsapp_setup_webhook(request: Request, webhook_url: str = Form("
     target_url = webhook_url.strip() or "https://mcp.juanconnect.online/api/webhook/whatsapp"
     res = await whatsapp_client.configure_webhook(target_url)
     if res.get("success"):
-        return RedirectResponse(url="/?msg=wa_webhook_configured#tab-templates", status_code=302)
+        return RedirectResponse(url="/?msg=wa_webhook_configured#integrations", status_code=302)
     else:
         err = urllib.parse.quote(res.get("error", "Error configurando webhook"))
-        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+        return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
 
 @router.post("/api/whatsapp/setup-chatwoot")
 async def api_whatsapp_setup_chatwoot(
@@ -92,10 +92,10 @@ async def api_whatsapp_setup_chatwoot(
         sign_msg=True if sign_msg in ("1", "on", "true") else False
     )
     if res.get("success"):
-        return RedirectResponse(url="/?msg=wa_chatwoot_configured#tab-templates", status_code=302)
+        return RedirectResponse(url="/?msg=wa_chatwoot_configured#integrations", status_code=302)
     else:
         err = urllib.parse.quote(res.get("error", "Error vinculando Chatwoot con Evolution API"))
-        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+        return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
 
 @router.post("/api/chatwoot/sync")
 async def api_chatwoot_sync(request: Request):
@@ -106,10 +106,10 @@ async def api_chatwoot_sync(request: Request):
     if res.get("success"):
         imp = res.get("imported", 0)
         upd = res.get("updated", 0)
-        return RedirectResponse(url=f"/?msg=chatwoot_synced&imported={imp}&updated={upd}#tab-templates", status_code=302)
+        return RedirectResponse(url=f"/?msg=chatwoot_synced&imported={imp}&updated={upd}#integrations", status_code=302)
     else:
         err = urllib.parse.quote(res.get("error", "Error sincronizando contactos de Chatwoot"))
-        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+        return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
 
 @router.post("/api/whatsapp/test")
 async def api_whatsapp_test(request: Request, test_phone: str = Form(...), test_message: str = Form(...)):
@@ -118,10 +118,10 @@ async def api_whatsapp_test(request: Request, test_phone: str = Form(...), test_
         raise HTTPException(status_code=401)
     res = await whatsapp_client.send_text_message(test_phone, test_message, delay_seconds=1.0)
     if res.get("success"):
-        return RedirectResponse(url="/?msg=wa_test_sent#tab-templates", status_code=302)
+        return RedirectResponse(url="/?msg=wa_test_sent#integrations", status_code=302)
     else:
         err = urllib.parse.quote(res.get("error", "Fallo al enviar mensaje de prueba"))
-        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+        return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
 
 @router.post("/api/whatsapp/logout")
 async def api_whatsapp_logout(request: Request):
@@ -129,7 +129,7 @@ async def api_whatsapp_logout(request: Request):
     if not user:
         raise HTTPException(status_code=401)
     await whatsapp_client.logout_instance()
-    return RedirectResponse(url="/?msg=wa_logged_out#tab-templates", status_code=302)
+    return RedirectResponse(url="/?msg=wa_logged_out#integrations", status_code=302)
 
 
 @router.post("/api/webhook/whatsapp")

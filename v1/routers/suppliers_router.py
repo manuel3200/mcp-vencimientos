@@ -29,7 +29,7 @@ async def api_save_supplier(
         payment_info=payment_info.strip(),
         notes=notes.strip()
     )
-    return RedirectResponse(url="/?msg=supplier_saved#tab-suppliers", status_code=303)
+    return RedirectResponse(url="/?msg=supplier_saved#suppliers", status_code=303)
 
 @router.post("/api/suppliers/delete/{supplier_id}")
 async def api_delete_supplier(supplier_id: int, request: Request):
@@ -37,7 +37,7 @@ async def api_delete_supplier(supplier_id: int, request: Request):
     if not user:
         raise HTTPException(status_code=401)
     database.delete_supplier(supplier_id)
-    return RedirectResponse(url="/?msg=supplier_deleted#tab-suppliers", status_code=303)
+    return RedirectResponse(url="/?msg=supplier_deleted#suppliers", status_code=303)
 
 @router.post("/api/master-accounts/renew")
 async def api_renew_master(
@@ -60,6 +60,6 @@ async def api_renew_master(
         payment_method=payment_method.strip(),
         notes=notes.strip()
     )
-    return RedirectResponse(url="/?msg=master_renewed#tab-suppliers", status_code=303)
+    return RedirectResponse(url="/?msg=master_renewed#suppliers", status_code=303)
 
 # API Logs y Diagnóstico del Sistema

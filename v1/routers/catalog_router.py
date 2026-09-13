@@ -31,7 +31,7 @@ async def api_catalog_save(
         price_reseller=price_reseller,
         notes=notes
     )
-    return RedirectResponse(url="/?msg=catalog_saved#tab-catalog", status_code=302)
+    return RedirectResponse(url="/?msg=catalog_saved#catalog", status_code=303)
 
 @router.post("/api/catalog/delete/{price_id}")
 async def api_catalog_delete(price_id: int, request: Request):
@@ -39,7 +39,7 @@ async def api_catalog_delete(price_id: int, request: Request):
     if not user:
         raise HTTPException(status_code=401)
     database.delete_catalog_price(price_id)
-    return RedirectResponse(url="/?msg=catalog_deleted#tab-catalog", status_code=302)
+    return RedirectResponse(url="/?msg=catalog_deleted#catalog", status_code=303)
 
 @router.post("/api/combos/save")
 async def api_combos_save(
@@ -61,7 +61,7 @@ async def api_combos_save(
         price_reseller=price_reseller,
         platforms=plat_list
     )
-    return RedirectResponse(url="/?msg=combo_saved#tab-catalog", status_code=302)
+    return RedirectResponse(url="/?msg=combo_saved#catalog", status_code=303)
 
 @router.post("/api/combos/delete/{combo_id}")
 async def api_combos_delete(combo_id: int, request: Request):
@@ -69,7 +69,7 @@ async def api_combos_delete(combo_id: int, request: Request):
     if not user:
         raise HTTPException(status_code=401)
     database.delete_combo(combo_id)
-    return RedirectResponse(url="/?msg=combo_deleted#tab-catalog", status_code=302)
+    return RedirectResponse(url="/?msg=combo_deleted#catalog", status_code=303)
 
 @router.post("/api/combos/sell")
 async def api_combos_sell(
@@ -124,10 +124,10 @@ async def api_combos_sell(
             f"• Vencimiento: <code>{res['expiry_date']}</code>"
             f"{wa_info_telegram}"
         )
-        return RedirectResponse(url=f"/?msg=combo_sold&wa={urllib.parse.quote(wa_url)}#tab-active", status_code=302)
+        return RedirectResponse(url=f"/?msg=combo_sold&wa={urllib.parse.quote(wa_url)}#accounts", status_code=303)
     else:
         err = urllib.parse.quote(res.get("error", "Error al vender combo"))
-        return RedirectResponse(url=f"/?err={err}#tab-catalog", status_code=302)
+        return RedirectResponse(url=f"/?err={err}#catalog", status_code=303)
 
 
 @router.post("/api/combos")

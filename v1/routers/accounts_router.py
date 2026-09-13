@@ -109,5 +109,25 @@ async def set_stock_threshold_api(request: Request):
         database.set_platform_min_stock(platform, min_stock)
     return RedirectResponse(url="/", status_code=303)
 
+@router.post("/api/account/update-price")
+async def update_account_price_endpoint(
+    request: Request,
+    account_id: int = Form(...),
+    new_price: str = Form(...),
+    mark_as_reseller: bool = Form(False)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = database.update_account_price(
+        identifier=account_id,
+        new_price=new_price,
+        mark_as_reseller=mark_as_reseller
+    )
+    if not res:
+        return RedirectResponse(url="/?err=No+se+pudo+actualizar+el+precio", status_code=303)
+    return RedirectResponse(url="/?msg=price_saved", status_code=303)
+
+
 # ==========================================
 # Endpoints de Exportación e Importación (Excel / CSV)

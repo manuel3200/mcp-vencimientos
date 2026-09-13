@@ -24,7 +24,8 @@ from db.repositories.clients_repo import (
     list_all_clients,
     register_or_update_client,
     get_client_360_profile,
-    get_client_by_phone
+    get_client_by_phone,
+    update_client_type
 )
 
 from db.repositories.accounts_repo import (
@@ -46,7 +47,8 @@ from db.repositories.accounts_repo import (
     mark_entire_master_account_fallen,
     set_platform_min_stock,
     get_stock_thresholds,
-    get_stock_health_summary
+    get_stock_health_summary,
+    update_account_price
 )
 
 from db.repositories.finance_repo import (

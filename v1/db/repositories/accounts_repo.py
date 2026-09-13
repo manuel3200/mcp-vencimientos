@@ -61,17 +61,28 @@ def assign_or_sell_account(
     clean_platform = platform.strip().title()
     s_date = start_date.strip() if start_date else date.today().isoformat()
     
+    actual_client_type = client.get("client_type") or client_type
+    
     price_num = parse_money(price)
     cost_num = parse_money(cost)
     stype = "pantalla" if profile_name else "cuenta_completa"
-    if price_num == 0.0 or cost_num == 0.0:
-        s_price, s_cost = get_suggested_price(clean_platform, stype, client_type)
+    
+    s_price, s_cost = get_suggested_price(clean_platform, stype, actual_client_type)
+    if "revend" in actual_client_type.lower():
+        norm_price, _ = get_suggested_price(clean_platform, stype, "consumidor_final")
+        # Si no se pasó precio o el precio pasado coincide con el precio de consumidor final, aplicar tarifa revendedor
+        if price_num == 0.0 or (norm_price > 0 and price_num == norm_price):
+            if s_price > 0.0:
+                price_num = s_price
+                price = format_ars(price_num)
+    else:
         if price_num == 0.0 and s_price > 0.0:
             price_num = s_price
             price = format_ars(price_num)
-        if cost_num == 0.0 and s_cost > 0.0:
-            cost_num = s_cost
-            cost = format_ars(cost_num)
+
+    if cost_num == 0.0 and s_cost > 0.0:
+        cost_num = s_cost
+        cost = format_ars(cost_num)
 
     conn = get_connection()
     try:
@@ -437,15 +448,25 @@ def assign_next_free_profile(
                 notes=notes
             )
 
+            actual_client_type = client.get("client_type") or client_type
+
             price_num = parse_money(price)
             cost_num = parse_money(slot.get("cost"))
-            if price_num == 0.0 or cost_num == 0.0:
-                s_price, s_cost = get_suggested_price(clean_platform, "pantalla", client_type)
+            
+            s_price, s_cost = get_suggested_price(clean_platform, "pantalla", actual_client_type)
+            if "revend" in actual_client_type.lower():
+                norm_price, _ = get_suggested_price(clean_platform, "pantalla", "consumidor_final")
+                if price_num == 0.0 or (norm_price > 0 and price_num == norm_price):
+                    if s_price > 0.0:
+                        price_num = s_price
+                        price = format_ars(price_num)
+            else:
                 if price_num == 0.0 and s_price > 0.0:
                     price_num = s_price
                     price = format_ars(price_num)
-                if cost_num == 0.0 and s_cost > 0.0:
-                    cost_num = s_cost
+
+            if cost_num == 0.0 and s_cost > 0.0:
+                cost_num = s_cost
 
             today_str = date.today().isoformat()
             conn.execute("""
@@ -697,5 +718,115 @@ def get_stock_health_summary(default_min_stock: int = 2) -> Dict[str, Any]:
             "alert_platforms": alert_platforms,
             "platforms": platforms_summary
         }
+    finally:
+        conn.close()
+
+def update_account_price(
+    identifier: Union[str, int],
+    new_price: Union[str, float],
+    platform: Optional[str] = None,
+    mark_as_reseller: bool = False,
+    notes: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Modifica o corrige el precio cobrado por una cuenta activa y actualiza el libro contable de pagos."""
+    conn = get_connection()
+    new_price_num = parse_money(new_price)
+    new_price_str = format_ars(new_price_num)
+    ident_str = str(identifier).strip()
+
+    try:
+        with conn:
+            target = None
+            if ident_str.isdigit():
+                target = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.client_code, c.client_type, c.whatsapp, c.id as cid
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.id = ?
+                """, (int(ident_str),)).fetchone()
+
+            if not target:
+                target = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.client_code, c.client_type, c.whatsapp, c.id as cid
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) = lower(?) AND a.status = 'ocupada'
+                    LIMIT 1
+                """, (ident_str,)).fetchone()
+
+            if not target:
+                plat_filter = "AND lower(a.platform) = lower(?)" if platform else ""
+                plat_args = (f"%{ident_str}%", f"%{ident_str}%", platform.strip()) if platform else (f"%{ident_str}%", f"%{ident_str}%")
+                
+                target = conn.execute(f"""
+                    SELECT a.*, c.name as client_name, c.client_code, c.client_type, c.whatsapp, c.id as cid
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.status = 'ocupada'
+                      AND (lower(c.name) LIKE lower(?) OR replace(replace(c.whatsapp, ' ', ''), '-', '') LIKE ?)
+                      {plat_filter}
+                    ORDER BY a.id DESC
+                    LIMIT 1
+                """, plat_args).fetchone()
+
+            if not target:
+                return None
+
+            acc_id = target["id"]
+            client_id = target["cid"]
+            old_price = target["price"]
+            cost_num = parse_money(target["cost"])
+            new_profit_num = new_price_num - cost_num
+
+            # 1. Actualizar streaming_accounts
+            conn.execute("""
+                UPDATE streaming_accounts
+                SET price = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (new_price_str, acc_id))
+
+            # 2. Si se marcó como revendedor, actualizar cliente
+            if mark_as_reseller and client_id:
+                conn.execute("""
+                    UPDATE clients
+                    SET client_type = 'revendedor'
+                    WHERE id = ?
+                """, (client_id,))
+
+            # 3. Actualizar registro en payments
+            last_payment = conn.execute("""
+                SELECT id, cost FROM payments
+                WHERE account_id = ?
+                ORDER BY id DESC LIMIT 1
+            """, (acc_id,)).fetchone()
+
+            if last_payment:
+                p_cost = float(last_payment["cost"] or cost_num)
+                p_profit = new_price_num - p_cost
+                conn.execute("""
+                    UPDATE payments
+                    SET amount = ?, cost = ?, profit = ?, notes = notes || ' [Precio corregido a ' || ? || ']'
+                    WHERE id = ?
+                """, (new_price_num, p_cost, p_profit, new_price_str, last_payment["id"]))
+            else:
+                conn.execute("""
+                    INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                    VALUES (?, ?, ?, ?, ?, 'Corrección', 'Ajuste de precio manual')
+                """, (acc_id, client_id, new_price_num, cost_num, new_profit_num))
+
+            fresh = conn.execute("""
+                SELECT a.*, c.name as client_name, c.client_code, c.client_type, c.whatsapp
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE a.id = ?
+            """, (acc_id,)).fetchone()
+
+            res = dict(fresh)
+            res["old_price"] = old_price
+            res["new_price"] = new_price_str
+            res["new_price_num"] = new_price_num
+            res["cost_num"] = cost_num
+            res["profit_num"] = new_profit_num
+            return res
     finally:
         conn.close()

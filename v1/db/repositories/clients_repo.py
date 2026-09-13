@@ -32,6 +32,13 @@ def find_or_create_client(
 
             if existing:
                 client_id = existing["id"]
+                existing_type = (existing["client_type"] or "consumidor_final").lower()
+                # Si el cliente ya estaba registrado como revendedor, NUNCA degradarlo a consumidor_final por omisión
+                if "revend" in existing_type and "revend" not in client_type.lower():
+                    final_type = "revendedor"
+                else:
+                    final_type = c_type
+
                 conn.execute("""
                     UPDATE clients 
                     SET whatsapp = CASE WHEN length(?) > 0 THEN ? ELSE whatsapp END,
@@ -39,7 +46,7 @@ def find_or_create_client(
                         client_type = ?,
                         notes = CASE WHEN length(?) > 0 THEN ? ELSE notes END
                     WHERE id = ?
-                """, (clean_wa, clean_wa, clean_tg, clean_tg, c_type, notes.strip(), notes.strip(), client_id))
+                """, (clean_wa, clean_wa, clean_tg, clean_tg, final_type, notes.strip(), notes.strip(), client_id))
                 row = conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
                 return dict(row)
             else:
@@ -322,5 +329,29 @@ def get_client_by_phone(phone: str) -> Optional[Dict[str, Any]]:
             if c_clean and (c_clean.endswith(suffix) or clean.endswith(c_clean[-8:])):
                 return get_client_360_profile(c["id"])
         return None
+    finally:
+        conn.close()
+
+def update_client_type(client_id_or_query: Union[int, str], new_type: str = "revendedor") -> Optional[Dict[str, Any]]:
+    """Actualiza el tipo de cliente ('revendedor' o 'consumidor_final') por ID, nombre o código."""
+    conn = get_connection()
+    c_type = "revendedor" if "revend" in new_type.lower() else "consumidor_final"
+    ident = str(client_id_or_query).strip()
+    try:
+        with conn:
+            client = None
+            if ident.isdigit():
+                client = conn.execute("SELECT * FROM clients WHERE id = ?", (int(ident),)).fetchone()
+            if not client:
+                client = conn.execute("""
+                    SELECT * FROM clients 
+                    WHERE lower(client_code) = lower(?) OR lower(name) = lower(?)
+                    LIMIT 1
+                """, (ident, ident)).fetchone()
+            if not client:
+                return None
+            conn.execute("UPDATE clients SET client_type = ? WHERE id = ?", (c_type, client["id"]))
+            row = conn.execute("SELECT * FROM clients WHERE id = ?", (client["id"],)).fetchone()
+            return dict(row)
     finally:
         conn.close()

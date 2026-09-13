@@ -72,6 +72,11 @@ def vender_perfil_compartido(
     - whatsapp / telegram: Datos de contacto.
     - precio: Precio de venta del perfil individual.
     """
+    # Verificación proactiva: Si el cliente ya existe en el CRM como revendedor, aplicar tarifa mayorista
+    existing_client = database.search_client(cliente)
+    if existing_client and "revend" in (existing_client.get("client_type") or "").lower():
+        tipo_cliente = "revendedor"
+
     acc = database.assign_next_free_profile(
         client_name=cliente,
         platform=plataforma,
@@ -227,6 +232,11 @@ def vender_o_asignar_servicio(
 ) -> str:
     """Registra una venta o asignación individual de cuenta o perfil de streaming a un cliente."""
     try:
+        # Verificación proactiva: Si el cliente ya existe en el CRM como revendedor, aplicar tarifa mayorista
+        existing_client = database.search_client(cliente)
+        if existing_client and "revend" in (existing_client.get("client_type") or "").lower():
+            tipo_cliente = "revendedor"
+
         acc = database.assign_or_sell_account(
             client_name=cliente,
             platform=plataforma,
@@ -517,6 +527,51 @@ def renovar_cuenta_madre(
         f"• Costo Registrado: {res['cost_formatted']} ({metodo_pago})\n"
         f"🎉 Todos los perfiles vinculados quedaron sincronizados y el egreso asentado en el balance financiero."
     )
+
+
+@mcp.tool()
+def corregir_o_modificar_precio_cuenta(
+    cliente_o_cuenta: str,
+    nuevo_precio: str,
+    plataforma: str = "",
+    marcar_como_revendedor: bool = True
+) -> str:
+    """Modifica o corrige el precio cobrado por una suscripción activa y recalcula las ganancias en el balance financiero.
+    
+    Casos de uso principales:
+    - Se vendió una cuenta a precio normal ($8.500) a un revendedor por error y hay que cambiarla al precio de mayorista ($6.500).
+    - Se acordó un descuento o tarifa especial con un cliente.
+    
+    Argumentos:
+    - cliente_o_cuenta: Nombre del cliente (ej: 'Mateo', 'Juan'), número de WhatsApp, correo de la cuenta o ID numérico.
+    - nuevo_precio: El nuevo precio en ARS (ej: '6500' o '$6.500').
+    - plataforma: (Opcional) Si el cliente tiene múltiples servicios, especifica cuál (ej: 'Netflix', 'Disney+').
+    - marcar_como_revendedor: (Por defecto True) Guarda permanentemente al cliente como 'revendedor' en el CRM para que futuras ventas usen precio mayorista.
+    """
+    res = database.update_account_price(
+        identifier=cliente_o_cuenta,
+        new_price=nuevo_precio,
+        platform=plataforma,
+        mark_as_reseller=marcar_como_revendedor
+    )
+    if not res:
+        return f"❌ No se encontró ninguna cuenta activa asignada para '{cliente_o_cuenta}'" + (f" en la plataforma '{plataforma}'." if plataforma else ".")
+
+    c_type_label = "👔 Revendedor" if res.get("client_type") == "revendedor" else "👤 Consumidor Final"
+    perf = f" (Perfil: {res['profile_name']})" if res.get("profile_name") else ""
+    return (
+        f"✅ PRECIO CORREGIDO EXITOSAMENTE:\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Cliente:</b> {res.get('client_name') or 'Cliente'} ({res.get('client_code') or ''}) - {c_type_label}\n"
+        f"📺 <b>Servicio:</b> {res['platform']}{perf}\n"
+        f"📧 <b>Cuenta:</b> <code>{res['email']}</code>\n"
+        f"💰 <b>Precio anterior:</b> {res.get('old_price') or '-'}\n"
+        f"💵 <b>Nuevo precio cobrado:</b> <b>{res['new_price']}</b>\n"
+        f"📈 <b>Ganancia neta recalculada:</b> +{database.format_ars(res['profit_num'])}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <i>El balance financiero, Ficha 360° y libro contable fueron actualizados en tiempo real.</i>"
+    )
+
 
 
 

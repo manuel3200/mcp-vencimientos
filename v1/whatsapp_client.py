@@ -543,6 +543,8 @@ async def setup_chatwoot_canned_responses() -> Dict[str, Any]:
         {"short_code": "nc_youtube", "content": "/nc_youtube"},
         {"short_code": "nc_paramount", "content": "/nc_paramount"},
         {"short_code": "nc_crunchyroll", "content": "/nc_crunchyroll"},
+        {"short_code": "pago", "content": "/pago"},
+        {"short_code": "renovar", "content": "/renovar"},
         {"short_code": "stock", "content": "/stock"},
         {"short_code": "info", "content": "/info"},
         {"short_code": "cbu", "content": "/cbu"},
@@ -586,5 +588,27 @@ async def setup_chatwoot_canned_responses() -> Dict[str, Any]:
             continue
 
     return {"success": False, "error": "No se pudieron registrar las respuestas predefinidas en Chatwoot."}
+
+
+async def get_media_base64(message_key: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Descarga el contenido en base64 de un archivo multimedia (imagen/PDF) desde Evolution API."""
+    cfg = get_evolution_config()
+    url = f"{cfg['api_url']}/chat/getBase64FromMediaMessage/{cfg['instance_name']}"
+    headers = get_headers(cfg["api_key"])
+    payload = {
+        "message": {
+            "key": message_key
+        },
+        "convertToMp4": False
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                return resp.json()
+    except Exception as e:
+        logger.debug(f"Error al obtener base64 de Evolution API: {e}")
+    return None
+
 
 

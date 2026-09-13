@@ -65,6 +65,8 @@ def register_customer_payment(
             return {
                 "success": True,
                 "client_name": acc.get("client_name"),
+                "whatsapp": acc.get("whatsapp"),
+                "client_type": acc.get("client_type"),
                 "platform": acc["platform"],
                 "email": acc["email"],
                 "amount": final_amount,

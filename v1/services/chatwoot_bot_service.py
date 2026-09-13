@@ -238,9 +238,82 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "ok", "action": "info_reported"}
 
     # -------------------------------------------------------------
-    # 4. ENVIAR DATOS DE COBRO Y ALIAS AL CLIENTE (/cbu, /alias, /pago)
+    # 4. REGISTRAR PAGO Y RENOVAR SERVICIO (/pago, /pagado, /renovar, /cobrado, /confirmar)
     # -------------------------------------------------------------
-    elif clean_cmd in ("/cbu", "/alias", "/pago", "/pagos", "/transferir"):
+    elif clean_cmd.startswith(("/pago", "/pagado", "/renovar", "/cobrado", "/confirmar")):
+        # Extraer monto opcional si el agente puso por ejemplo /pago 6500
+        parts = clean_cmd.split()
+        custom_amount = None
+        if len(parts) > 1:
+            clean_num = re.sub(r'[^0-9.]', '', parts[1].replace(",", "."))
+            if clean_num:
+                try:
+                    custom_amount = float(clean_num)
+                except ValueError:
+                    pass
+
+        c_info = database.get_client_360(client["id"])
+        active_accs = c_info.get("active_accounts", []) if c_info else []
+        if not active_accs:
+            await whatsapp_client.send_chatwoot_message(
+                conv_id,
+                f"⚠️ [StreamVault CRM] <b>{client['name']}</b> no registra suscripciones activas para renovar.",
+                private=True
+            )
+            return {"status": "ok", "action": "no_active_accounts"}
+
+        target_acc = active_accs[0]
+        res = database.register_customer_payment(
+            email_or_id=str(target_acc["id"]),
+            amount=custom_amount,
+            payment_method="Chatwoot / Transferencia"
+        )
+
+        if res.get("success"):
+            amt_fmt = database.format_ars(res['amount'])
+            # 1. Enviar confirmación al cliente por WhatsApp (Chat público)
+            msg_client = (
+                f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
+                f"para tu servicio *{res['platform']}*.\n\n"
+                f"Tu suscripción ha sido renovada con éxito hasta el *{res['new_expiry']}* (30 días extendidos). "
+                f"¡Muchas gracias por tu pago y preferencia! 🙌✨"
+            )
+            await whatsapp_client.send_chatwoot_message(conv_id, msg_client, private=False)
+
+            # 2. Enviar nota privada para el agente en Chatwoot
+            badge_type = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
+            await whatsapp_client.send_chatwoot_message(
+                conv_id,
+                f"✅ <b>[StreamVault CRM] ¡Pago Registrado y Servicio Renovado!</b>\n"
+                f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
+                f"• Servicio: <b>{res['platform']}</b> (<code>{res['email']}</code>)\n"
+                f"• Cobrado: <b>+{amt_fmt}</b> (Ganancia: +{database.format_ars(res['profit'])})\n"
+                f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (+30 días)\n"
+                f"• Transacción registrada en el libro contable de finanzas.",
+                private=True
+            )
+
+            # 3. Notificar a Telegram
+            await send_telegram_message(
+                f"💵 <b>¡COBRO Y RENOVACIÓN DESDE CHATWOOT!</b>\n\n"
+                f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
+                f"• Servicio: <b>{res['platform']}</b>\n"
+                f"• Cobrado: <b>+{amt_fmt}</b>\n"
+                f"• Próximo Vencimiento: <code>{res['new_expiry']}</code>"
+            )
+            return {"status": "ok", "action": "payment_collected", "details": res}
+        else:
+            await whatsapp_client.send_chatwoot_message(
+                conv_id,
+                f"❌ [StreamVault CRM] Error al registrar pago: {res.get('error')}",
+                private=True
+            )
+            return {"status": "error", "error": res.get("error")}
+
+    # -------------------------------------------------------------
+    # 5. ENVIAR DATOS DE COBRO Y ALIAS AL CLIENTE (/cbu, /alias, /datos, /transferir)
+    # -------------------------------------------------------------
+    elif clean_cmd in ("/cbu", "/alias", "/datos", "/banco", "/transferir"):
         pm = database.get_formatted_payment_methods()
         text = (
             f"¡Hola {client['name']}! Aquí tienes nuestros datos de cobro oficiales:\n\n"

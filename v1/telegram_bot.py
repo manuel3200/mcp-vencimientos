@@ -998,24 +998,56 @@ async def handle_telegram_callback(query: Dict[str, Any]):
     # 2. Acciones de Cuenta (Cobro y Caída)
     elif data.startswith("pay_"):
         acc_id = data.split("_")[1]
+        msg_obj = query.get("message", {})
+        msg_id = msg_obj.get("message_id")
         res = database.register_customer_payment(email_or_id=acc_id, payment_method="Telegram Bot")
         if res.get("success"):
-            await answer_callback_query(query_id, f"✅ ¡Cobro registrado! Vence el {res['new_expiry']}", show_alert=True)
-            wa_data = database.generate_whatsapp_message(acc_id, message_type="entrega")
-            wa_link = wa_data.get("wa_link", "")
-            kb = None
-            if wa_link:
-                kb = {"inline_keyboard": [[{"text": "📲 Enviar Recibo por WhatsApp", "url": wa_link}]]}
-            await send_telegram_message(
-                f"💵 <b>¡Cobro Registrado y Renovado con Éxito!</b>\n\n"
-                f"• Cliente: <b>{res['client_name']}</b>\n"
-                f"• Servicio: {res['platform']} ({res['email']})\n"
-                f"• Cobrado: +{database.format_ars(res['amount'])}\n"
-                f"• Ganancia Neta: +{database.format_ars(res['profit'])}\n"
-                f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (30 días extendidos)",
-                reply_markup=kb,
-                chat_id=chat_id
-            )
+            amt_fmt = database.format_ars(res['amount'])
+            await answer_callback_query(query_id, f"✅ ¡Cobro de {amt_fmt} registrado! (+30d)", show_alert=True)
+
+            # Enviar mensaje automático por WhatsApp al cliente
+            phone = res.get("whatsapp")
+            if phone:
+                try:
+                    import whatsapp_client
+                    clean_phone = database.clean_whatsapp_phone(phone)
+                    if clean_phone:
+                        wa_reply = (
+                            f"🎉 ¡Hola {res['client_name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
+                            f"para tu servicio *{res['platform']}*.\n\n"
+                            f"Tu suscripción quedó renovada con éxito hasta el *{res['new_expiry']}* (30 días extendidos). "
+                            f"¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                        )
+                        await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
+                except Exception as e:
+                    logger.debug(f"Fallo al enviar WhatsApp tras cobro en Telegram: {e}")
+
+            if msg_id and chat_id:
+                try:
+                    await edit_telegram_message(
+                        chat_id=chat_id,
+                        message_id=msg_id,
+                        text=(
+                            f"✅ <b>PAGO CONFIRMADO Y RENOVADO (+30 DÍAS)</b>\n\n"
+                            f"• Cliente: <b>{res['client_name']}</b>\n"
+                            f"• Servicio: <b>{res['platform']}</b> (<code>{res['email']}</code>)\n"
+                            f"• Monto Cobrado: <b>+{amt_fmt}</b> (Ganancia: +{database.format_ars(res['profit'])})\n"
+                            f"• Próximo Vencimiento: <code>{res['new_expiry']}</code>\n"
+                            f"• Se envió comprobante oficial al WhatsApp del cliente y se asentó en finanzas."
+                        )
+                    )
+                except Exception:
+                    pass
+            else:
+                await send_telegram_message(
+                    f"💵 <b>¡Cobro Registrado y Renovado con Éxito!</b>\n\n"
+                    f"• Cliente: <b>{res['client_name']}</b>\n"
+                    f"• Servicio: {res['platform']} ({res['email']})\n"
+                    f"• Cobrado: +{amt_fmt}\n"
+                    f"• Ganancia Neta: +{database.format_ars(res['profit'])}\n"
+                    f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (30 días extendidos)",
+                    chat_id=chat_id
+                )
         else:
             await answer_callback_query(query_id, f"Error: {res.get('error')}", show_alert=True)
 

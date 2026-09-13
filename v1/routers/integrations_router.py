@@ -13,6 +13,8 @@ from telegram_bot import send_telegram_message
 from core.security import verify_session_cookie
 from core.utils import format_ars
 from services.chatwoot_bot_service import process_chatwoot_command
+import services.receipt_service as receipt_service
+import base64
 
 logger = logging.getLogger("integrations")
 
@@ -217,26 +219,110 @@ async def whatsapp_webhook(request: Request):
         return JSONResponse({"status": "ignored", "reason": "template_echo"})
 
     # REGLA A: Detección de comprobantes de pago (Imágenes/Docs o palabras clave de pago)
+    doc_msg = msg_obj.get("documentMessage") or {}
+    img_msg = msg_obj.get("imageMessage") or {}
+    is_doc = bool(doc_msg)
+    is_img = bool(img_msg)
+    is_media = is_doc or is_img
+
     receipt_keywords = ["comprobante", "pague", "pagué", "transferi", "transferí", "adjunto", "constancia", "abone", "aboné"]
     is_receipt = is_media or any(k in text_lower for k in receipt_keywords)
 
     if is_receipt:
         logger.info(f"Comprobante recibido de {client_name} ({sender_phone})")
-        caption_txt = f"<i>\"{text}\"</i>" if text else "(Archivo multimedia adjunto)"
-        await send_telegram_message(
+
+        # 1. Obtener información de la cuenta activa del cliente
+        active_accs = client_profile.get("active_accounts", []) if client_profile else []
+        target_acc = active_accs[0] if active_accs else None
+
+        # 2. Análisis de comprobante (PDF o Imagen)
+        file_name = doc_msg.get("fileName") or ("comprobante.pdf" if is_doc else ("comprobante.jpg" if is_img else ""))
+        file_type_label = "📄 PDF" if (is_doc or file_name.lower().endswith(".pdf")) else ("🖼️ Imagen" if is_img else "📝 Mensaje")
+
+        detected_info = None
+        # Intentar obtener media base64 de Evolution API para análisis inteligente
+        if is_media and key.get("id"):
+            try:
+                media_data = await whatsapp_client.get_media_base64(key)
+                if media_data and media_data.get("base64"):
+                    b64_str = media_data["base64"]
+                    # Si es PDF
+                    if is_doc or "pdf" in (media_data.get("mimetype") or "").lower() or file_name.lower().endswith(".pdf"):
+                        try:
+                            pdf_bytes = base64.b64decode(b64_str.split(",")[-1])
+                            pdf_text = receipt_service.extract_text_from_pdf(pdf_bytes)
+                            detected_info = receipt_service.parse_transfer_receipt_text(pdf_text)
+                        except Exception as e:
+                            logger.debug(f"Error parseando PDF: {e}")
+                    # Si es Imagen
+                    elif is_img:
+                        detected_info = await receipt_service.analyze_image_with_gemini(
+                            b64_str,
+                            mime_type=media_data.get("mimetype") or "image/jpeg"
+                        )
+            except Exception as e:
+                logger.debug(f"No se pudo analizar media descargada: {e}")
+
+        # Si no hubo media analizada pero hay texto en el caption
+        if not detected_info and text:
+            detected_info = receipt_service.parse_transfer_receipt_text(text)
+
+        # Resumen del análisis
+        analysis_line = ""
+        if detected_info and (detected_info.get("amount_formatted") or detected_info.get("bank")):
+            detected_parts = []
+            if detected_info.get("bank"):
+                detected_parts.append(f"<b>{detected_info['bank']}</b>")
+            if detected_info.get("amount_formatted"):
+                detected_parts.append(f"Monto: <b>{detected_info['amount_formatted']}</b>")
+            if detected_info.get("operation_id"):
+                detected_parts.append(f"Op: <code>#{detected_info['operation_id']}</code>")
+            analysis_line = "• Detección inteligente: " + " | ".join(detected_parts) + "\n"
+
+        caption_txt = f"<i>\"{text}\"</i>" if text else (f"{file_type_label}: <code>{file_name}</code>" if file_name else "(Archivo adjunto)")
+        client_tag = "👔 Revendedor" if "revend" in (client_profile.get("client", {}).get("client_type") or "").lower() else "👤 Consumidor Final"
+
+        # Armar mensaje interactivo con botones para Telegram
+        service_lines = ""
+        kb = None
+        if target_acc:
+            acc_id = target_acc["id"]
+            price_str = target_acc.get("price") or "-"
+            exp_date = target_acc.get("expiry_date") or "-"
+            service_lines = (
+                f"• Servicio a Renovar: <b>{target_acc['platform']}</b> (<code>{target_acc['email']}</code>)\n"
+                f"• Tarifa Acordada: <b>{price_str}</b> | Vence: <code>{exp_date}</code>\n"
+            )
+            # Teclado interactivo para Telegram (1 Clic)
+            client_id_val = client_profile.get("client", {}).get("id")
+            client_btn = [{"text": "👤 Ficha 360°", "callback_data": f"client_{client_id_val}"}] if client_id_val else []
+            kb = {
+                "inline_keyboard": [
+                    [
+                        {"text": f"💵 Confirmar Pago ({price_str}) y Renovar (+30d)", "callback_data": f"pay_{acc_id}"}
+                    ],
+                    client_btn + [{"text": "💬 Abrir WhatsApp", "url": f"https://wa.me/{sender_phone}"}]
+                ]
+            }
+
+        tg_msg = (
             f"🧾 <b>¡COMPROBANTE RECIBIDO POR WHATSAPP!</b>\n\n"
-            f"• Cliente: <b>{client_name}</b>\n"
+            f"• Cliente: <b>{client_name}</b> ({client_tag})\n"
             f"• WhatsApp: <code>{sender_phone}</code>\n"
-            f"• Mensaje: {caption_txt}\n\n"
-            f"👉 Por favor verifica el ingreso en tu cuenta bancaria y confirma el cobro en el panel."
+            f"{service_lines}"
+            f"• Adjunto: {caption_txt}\n"
+            f"{analysis_line}\n"
+            f"👉 <i>Toca el botón abajo para confirmar el cobro y renovar 30 días automáticamente:</i>"
         )
+        await send_telegram_message(tg_msg, reply_markup=kb)
 
         reply = (
             f"¡Hola {client_name}! 🙌 Recibimos tu comprobante correctamente.\n\n"
             f"Nuestro equipo lo verificará en el sistema a la brevedad y extenderá tu servicio. ¡Muchas gracias por tu pago! ✨"
         )
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
-        return JSONResponse({"status": "ok", "action": "receipt_acknowledged"})
+        return JSONResponse({"status": "ok", "action": "receipt_acknowledged", "detected": detected_info})
+
 
     # 7. FILTRO DE MENSAJES REENVIADOS PARA CONSULTAS DE DATOS:
     # Si un cliente reenvía un mensaje de texto (sin ser comprobante), no debe disparar auto-entrega de credenciales

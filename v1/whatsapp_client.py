@@ -185,10 +185,15 @@ async def configure_webhook(webhook_url: str) -> Dict[str, Any]:
     url = f"{config['api_url']}/webhook/set/{config['instance_name']}"
     headers = get_headers(config["api_key"])
     payload = {
-        "enabled": True,
-        "url": webhook_url,
-        "webhookByEvents": False,
-        "events": ["MESSAGES_UPSERT"]
+        "webhook": {
+            "enabled": True,
+            "url": webhook_url,
+            "byEvents": False,
+            "base64": False,
+            "events": [
+                "MESSAGES_UPSERT"
+            ]
+        }
     }
 
     try:

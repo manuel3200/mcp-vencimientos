@@ -1,0 +1,1828 @@
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Streaming CRM & Finanzas</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 24px; }
+            .container { max-width: 1150px; margin: 0 auto; }
+            .header-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+            h1 { margin: 0; color: #38bdf8; font-size: 1.6rem; display: flex; align-items: center; gap: 10px; }
+            .card { background: #161e2e; border: 1px solid #1e293b; border-radius: 14px; padding: 20px; margin-bottom: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.3); }
+            
+            /* Tarjetas Financieras */
+            .finance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; margin-bottom: 24px; }
+            .fin-box { background: #0b0f19; border: 1px solid #1e293b; border-radius: 12px; padding: 18px; }
+            .fin-box h4 { margin: 0 0 6px 0; font-size: 0.75rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
+            .fin-box p.amount { margin: 0; font-size: 1.6rem; font-weight: 800; }
+            .fin-box small { display: block; margin-top: 4px; font-size: 0.75rem; color: #64748b; }
+            .box-income { border-left: 4px solid #10b981; }
+            .box-income p.amount { color: #10b981; }
+            .box-costs { border-left: 4px solid #f59e0b; }
+            .box-costs p.amount { color: #f59e0b; }
+            .box-profit { border-left: 4px solid #38bdf8; background: #0c2135; }
+            .box-profit p.amount { color: #38bdf8; }
+            .box-pending { border-left: 4px solid #a855f7; }
+            .box-pending p.amount { color: #c084fc; }
+
+            /* Pantallas Compartidas */
+            .screens-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+            .screen-card { background: #0b0f19; border: 1px solid #1e293b; border-radius: 12px; padding: 18px; }
+            .screen-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; border-bottom: 1px solid #1e293b; padding-bottom: 10px; }
+            .screen-title { font-weight: 700; font-size: 1rem; color: #38bdf8; }
+            .progress-bar-bg { background: #1e293b; border-radius: 6px; height: 8px; width: 100%; margin: 10px 0 14px 0; overflow: hidden; }
+            .progress-bar-fill { background: #10b981; height: 100%; border-radius: 6px; }
+            .profile-chips { display: flex; flex-direction: column; gap: 8px; }
+            .chip { padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; display: flex; justify-content: space-between; align-items: center; }
+            .chip-occupied { background: #064e3b; border: 1px solid #047857; color: #a7f3d0; }
+            .chip-free { background: #111827; border: 1px dashed #334155; color: #94a3b8; }
+            .chip-fallen { background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+
+            .tabs { display: flex; gap: 10px; border-bottom: 1px solid #334155; margin-bottom: 20px; }
+            .tab-btn { background: none; border: none; color: #94a3b8; padding: 12px 18px; font-size: 0.95rem; font-weight: 600; cursor: pointer; border-bottom: 2px solid transparent; }
+            .tab-btn.active { color: #38bdf8; border-bottom-color: #38bdf8; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 12px 14px; text-align: left; border-bottom: 1px solid #1e293b; font-size: 0.9rem; }
+            th { color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+            .badge { padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700; display: inline-block; }
+            .badge-ok { background: #064e3b; color: #6ee7b7; }
+            .badge-warn { background: #78350f; color: #fde047; }
+            .badge-danger { background: #7f1d1d; color: #fca5a5; }
+            code { font-family: monospace; background: #0b0f19; padding: 3px 6px; border-radius: 4px; font-size: 0.85rem; }
+            .btn { background: #0284c7; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 0.85rem; font-weight: 600; }
+            .btn:hover { background: #0369a1; }
+            .btn-action { background: transparent; border: 1px solid #334155; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 0.8rem; font-weight: 600; }
+            .btn-warn { color: #f59e0b; border-color: #78350f; }
+            .btn-warn:hover { background: #451a03; }
+            .btn-replace { background: #059669; color: white; border: none; }
+            .btn-replace:hover { background: #047857; }
+            .btn-logout { background: #1e293b; color: #cbd5e1; text-decoration: none; padding: 8px 14px; border-radius: 8px; font-size: 0.85rem; }
+            .btn-logout:hover { background: #334155; color: #fff; }
+            .endpoint-banner { background: #0369a1; color: white; padding: 12px 18px; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; margin-top: 15px; font-size: 0.9rem; }
+
+            /* Plantillas WhatsApp & Preview */
+            .template-chip {
+                background: #1e293b;
+                border: 1px solid #38bdf8;
+                color: #38bdf8;
+                padding: 5px 10px;
+                border-radius: 6px;
+                font-size: 0.78rem;
+                font-family: monospace;
+                cursor: pointer;
+                transition: all 0.15s ease;
+                display: inline-block;
+                user-select: none;
+            }
+            .template-chip:hover {
+                background: #0284c7;
+                color: #ffffff;
+                border-color: #0284c7;
+            }
+            .wa-preview-card {
+                background: #0b141a;
+                border: 1px solid #222e35;
+                border-radius: 12px;
+                padding: 16px;
+                display: flex;
+                flex-direction: column;
+                min-height: 280px;
+                background-image: radial-gradient(#1f2c34 1px, transparent 1px);
+                background-size: 16px 16px;
+            }
+            .wa-bubble {
+                background: #005c4b;
+                color: #e9edef;
+                padding: 12px 14px;
+                border-radius: 8px 8px 0 8px;
+                font-size: 0.84rem;
+                line-height: 1.45;
+                max-width: 95%;
+                align-self: flex-end;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            .wa-bubble-time {
+                display: flex;
+                justify-content: flex-end;
+                align-items: center;
+                gap: 4px;
+                font-size: 0.65rem;
+                color: #8696a0;
+                margin-top: 5px;
+            }
+            .tpl-subtab-btn {
+                background: #1e293b;
+                border: 1px solid #334155;
+                color: #94a3b8;
+                padding: 8px 14px;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 0.85rem;
+                font-weight: 600;
+            }
+            .tpl-subtab-btn.active {
+                background: #0284c7;
+                border-color: #0284c7;
+                color: #ffffff;
+            }
+
+            /* Terminal de Logs & Diagnóstico */
+            .log-terminal {
+                background: #020617;
+                border: 1px solid #1e293b;
+                border-radius: 10px;
+                padding: 14px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                font-size: 0.82rem;
+                line-height: 1.6;
+                max-height: 520px;
+                overflow-y: auto;
+            }
+            .log-row {
+                padding: 4px 8px;
+                border-radius: 4px;
+                margin-bottom: 2px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: baseline;
+                border-left: 3px solid transparent;
+            }
+            .log-row:hover {
+                background: rgba(255,255,255,0.03);
+            }
+            .log-error {
+                background: rgba(239, 68, 68, 0.12);
+                border-left-color: #ef4444;
+                color: #fca5a5;
+            }
+            .log-warn {
+                background: rgba(245, 158, 11, 0.10);
+                border-left-color: #f59e0b;
+                color: #fde68a;
+            }
+            .log-info {
+                border-left-color: #38bdf8;
+                color: #cbd5e1;
+            }
+            .log-time {
+                color: #64748b;
+                font-size: 0.75rem;
+                min-width: 145px;
+            }
+            .log-badge {
+                padding: 1px 6px;
+                border-radius: 4px;
+                font-weight: 700;
+                font-size: 0.7rem;
+                text-transform: uppercase;
+            }
+            .log-badge-error { background: #7f1d1d; color: #fecaca; }
+            .log-badge-warn { background: #78350f; color: #fef08a; }
+            .log-badge-info { background: #0c4a6e; color: #bae6fd; }
+            .log-mod {
+                color: #a78bfa;
+                font-weight: 600;
+            }
+            .log-txt {
+                flex: 1;
+                word-break: break-word;
+            }
+            .log-tb {
+                width: 100%;
+                margin: 4px 0 6px 20px;
+                padding: 8px;
+                background: #000;
+                border: 1px solid #7f1d1d;
+                border-radius: 4px;
+                color: #f87171;
+                font-size: 0.75rem;
+                white-space: pre-wrap;
+            }
+            .filter-btn {
+                background: #1e293b;
+                border: 1px solid #334155;
+                color: #94a3b8;
+                padding: 6px 12px;
+                border-radius: 6px;
+                cursor: pointer;
+                font-size: 0.8rem;
+                font-weight: 600;
+            }
+            .filter-btn.active {
+                background: #0284c7;
+                border-color: #0284c7;
+                color: #fff;
+            }
+        </style>
+        <script>
+            // Modal Proveedores Mayoristas
+            function openSupplierModal(id, name, contact, payment, notes) {
+                document.getElementById('sup-modal-id').value = id || '';
+                document.getElementById('sup-modal-name').value = name || '';
+                document.getElementById('sup-modal-contact').value = contact || '';
+                document.getElementById('sup-modal-payment').value = payment || '';
+                document.getElementById('sup-modal-notes').value = notes || '';
+                document.getElementById('sup-modal-title').innerText = id ? '✏️ Editar Proveedor Mayorista' : '➕ Nuevo Proveedor Mayorista';
+                document.getElementById('modal-supplier').style.display = 'flex';
+            }
+            function closeSupplierModal() {
+                document.getElementById('modal-supplier').style.display = 'none';
+            }
+
+            // Modal Renovación de Cuenta Madre
+            function openRenewMasterModal(email, platform, curExpiry, curCost) {
+                document.getElementById('rm-modal-email').value = email;
+                document.getElementById('rm-modal-plat').value = platform;
+                document.getElementById('rm-display-account').innerText = platform + ' - ' + email;
+                
+                let baseDate = new Date();
+                if (curExpiry) {
+                    const parsed = new Date(curExpiry + 'T00:00:00');
+                    if (!isNaN(parsed) && parsed > baseDate) baseDate = parsed;
+                }
+                baseDate.setDate(baseDate.getDate() + 30);
+                const yyyy = baseDate.getFullYear();
+                const mm = String(baseDate.getMonth() + 1).padStart(2, '0');
+                const dd = String(baseDate.getDate()).padStart(2, '0');
+                document.getElementById('rm-modal-expiry').value = yyyy + '-' + mm + '-' + dd;
+                document.getElementById('rm-modal-cost').value = curCost || '';
+                document.getElementById('modal-renew-master').style.display = 'flex';
+            }
+            function closeRenewMasterModal() {
+                document.getElementById('modal-renew-master').style.display = 'none';
+            }
+
+            // Terminal de Logs & Diagnóstico en Vivo
+            let currentLogLevel = 'ALL';
+            let cachedLogs = [];
+
+            async function refreshSystemLogs() {
+                const term = document.getElementById('logs-terminal');
+                if (!term) return;
+                try {
+                    const res = await fetch('/api/logs/json');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    cachedLogs = data.logs || [];
+                    renderFilteredLogs();
+                    
+                    if (data.health) {
+                        const h = data.health;
+                        const statEl = document.getElementById('health-overall-status');
+                        if (statEl) {
+                            statEl.innerText = h.status;
+                            statEl.className = 'badge ' + (h.status === 'OK' ? 'badge-ok' : (h.status === 'WARNING' ? 'badge-warn' : 'badge-danger'));
+                        }
+                        const errsEl = document.getElementById('health-errors-count');
+                        if (errsEl) errsEl.innerText = (h.logs_summary ? h.logs_summary.errors_count : 0);
+                        const warnsEl = document.getElementById('health-warns-count');
+                        if (warnsEl) warnsEl.innerText = (h.logs_summary ? h.logs_summary.warnings_count : 0);
+                        const uptimeEl = document.getElementById('health-uptime');
+                        if (uptimeEl) uptimeEl.innerText = 'Uptime: ' + (h.uptime || '-');
+                    }
+                } catch (e) {
+                    console.error('Error cargando logs:', e);
+                }
+            }
+
+            function setLogFilterLevel(lvl) {
+                currentLogLevel = lvl;
+                document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+                const b = document.getElementById('filter-btn-' + lvl.toLowerCase());
+                if (b) b.classList.add('active');
+                renderFilteredLogs();
+            }
+
+            function filterLogsLocally() {
+                renderFilteredLogs();
+            }
+
+            function renderFilteredLogs() {
+                const term = document.getElementById('logs-terminal');
+                const searchQ = (document.getElementById('log-search-input')?.value || '').toLowerCase().trim();
+                if (!term) return;
+
+                if (!cachedLogs || cachedLogs.length === 0) return;
+
+                let filtered = cachedLogs.filter(l => {
+                    const lvl = (l.level || 'INFO').toUpperCase();
+                    if (currentLogLevel === 'ERROR' && !(lvl === 'ERROR' || lvl === 'CRITICAL')) return false;
+                    if (currentLogLevel === 'WARNING' && lvl !== 'WARNING') return false;
+                    if (currentLogLevel === 'INFO' && lvl !== 'INFO') return false;
+
+                    if (searchQ) {
+                        const text = (l.message + ' ' + l.module + ' ' + (l.traceback || '')).toLowerCase();
+                        if (!text.includes(searchQ)) return false;
+                    }
+                    return true;
+                });
+
+                if (filtered.length === 0) {
+                    term.innerHTML = '<div style="color:#64748b;padding:20px;text-align:center;">No hay registros que coincidan con el filtro actual.</div>';
+                    return;
+                }
+
+                let html = '';
+                filtered.forEach(l => {
+                    const lvl = (l.level || 'INFO').toUpperCase();
+                    const lvlClass = (lvl === 'ERROR' || lvl === 'CRITICAL') ? 'error' : (lvl === 'WARNING' ? 'warn' : 'info');
+                    const tbHtml = l.traceback ? '<div class="log-tb">' + l.traceback.replace(/</g, '&lt;') + '</div>' : '';
+                    html += '<div class="log-row log-' + lvlClass + '">' +
+                        '<span class="log-time">' + l.timestamp + '</span> ' +
+                        '<span class="log-badge log-badge-' + lvlClass + '">' + lvl + '</span> ' +
+                        '<span class="log-mod">[' + l.module + ']</span> ' +
+                        '<span class="log-txt">' + (l.message || '').replace(/</g, '&lt;') + '</span>' +
+                        tbHtml +
+                    '</div>';
+                });
+                term.innerHTML = html;
+            }
+            function showTab(tabId) {
+                document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+                document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+                const target = document.getElementById(tabId);
+                const btn = document.getElementById('btn-' + tabId);
+                if (target) target.style.display = 'block';
+                if (btn) btn.classList.add('active');
+            }
+            function openSellComboModal(comboId, comboName) {
+                document.getElementById('modal-combo-id').value = comboId;
+                document.getElementById('modal-combo-title').innerText = '⚡ Vender ' + comboName;
+                document.getElementById('modal-sell-combo').style.display = 'flex';
+            }
+            function closeSellComboModal() {
+                document.getElementById('modal-sell-combo').style.display = 'none';
+            }
+            async function openClient360Modal(clientId) {
+                const modal = document.getElementById('modal-client-360');
+                if (!modal) return;
+                modal.style.display = 'flex';
+                document.getElementById('m360-name').innerText = 'Cargando perfil...';
+                
+                try {
+                    const res = await fetch('/api/client/360/' + encodeURIComponent(clientId));
+                    if (!res.ok) {
+                        alert('No se pudo cargar la información del cliente.');
+                        closeClient360Modal();
+                        return;
+                    }
+                    const data = await res.json();
+                    const c = data.client;
+                    const health = data.health_status;
+                    const kpis = data.financial_kpis;
+                    const billing = data.consolidated_billing;
+                    const act = data.active_accounts || [];
+                    const pays = data.payments_history || [];
+
+                    document.getElementById('m360-name').innerText = c.name;
+                    document.getElementById('m360-code').innerText = 'Código: ' + (c.client_code || '-');
+                    
+                    const typeBadge = document.getElementById('m360-type-badge');
+                    typeBadge.innerText = c.client_type_label || 'Cliente';
+                    typeBadge.style.background = c.client_type === 'revendedor' ? '#7c3aed' : '#0284c7';
+
+                    const healthBadge = document.getElementById('m360-health-badge');
+                    healthBadge.innerText = health.label;
+                    healthBadge.className = 'badge ' + (health.badge_class || 'badge-ok');
+                    document.getElementById('m360-health-summary').innerText = health.summary || '';
+
+                    // Contactos
+                    const waLink = document.getElementById('m360-wa-link');
+                    if (c.clean_whatsapp) {
+                        waLink.href = 'https://wa.me/' + c.clean_whatsapp;
+                        waLink.innerText = c.whatsapp || c.clean_whatsapp;
+                        document.getElementById('m360-wa-wrap').style.display = 'inline';
+                    } else {
+                        document.getElementById('m360-wa-wrap').style.display = 'none';
+                    }
+
+                    const tgLink = document.getElementById('m360-tg-link');
+                    if (c.telegram) {
+                        const tgUser = c.telegram.replace('@', '');
+                        tgLink.href = 'https://t.me/' + tgUser;
+                        tgLink.innerText = '@' + tgUser;
+                        document.getElementById('m360-tg-wrap').style.display = 'inline';
+                    } else {
+                        document.getElementById('m360-tg-wrap').style.display = 'none';
+                    }
+
+                    // KPIs
+                    document.getElementById('m360-ltv').innerText = kpis.ltv_formatted || '$ 0 ARS';
+                    document.getElementById('m360-payments-count').innerText = (kpis.payments_count || 0) + ' cobros';
+                    document.getElementById('m360-profit').innerText = kpis.total_profit_formatted || '$ 0 ARS';
+                    document.getElementById('m360-monthly').innerText = kpis.monthly_committed_spend_formatted || '$ 0 ARS';
+                    document.getElementById('m360-accounts-count').innerText = act.length + ' servicio(s)';
+
+                    // Cobro consolidado
+                    const consBox = document.getElementById('m360-consolidated-box');
+                    const consBtn = document.getElementById('m360-consolidated-btn');
+                    if (billing && billing.success && billing.wa_link) {
+                        consBox.style.display = 'flex';
+                        consBtn.href = billing.wa_link;
+                        document.getElementById('m360-consolidated-desc').innerText = 
+                            'Total a renovar: ' + billing.total_amount_formatted + ' (' + billing.accounts_count + ' suscripciones)';
+                    } else {
+                        consBox.style.display = 'none';
+                    }
+
+                    // Tabla de cuentas activas
+                    let accHtml = '<table style="width:100%;font-size:0.8rem;border-collapse:collapse;">';
+                    accHtml += '<thead><tr style="border-bottom:1px solid #334155;text-align:left;color:#94a3b8;">' +
+                        '<th style="padding:6px 8px;">Servicio</th>' +
+                        '<th style="padding:6px 8px;">Cuenta / Perfil</th>' +
+                        '<th style="padding:6px 8px;">Vence</th>' +
+                        '<th style="padding:6px 8px;">Estado</th>' +
+                        '<th style="padding:6px 8px;">Precio</th>' +
+                        '<th style="padding:6px 8px;">WhatsApp</th></tr></thead><tbody>';
+
+                    if (act.length === 0) {
+                        accHtml += '<tr><td colspan="6" style="text-align:center;padding:12px;color:#64748b;">No posee suscripciones activas en este momento.</td></tr>';
+                    } else {
+                        act.forEach(a => {
+                            const perf = a.profile_name ? (' (Perf: ' + a.profile_name + ')') : '';
+                            const pin = a.profile_pin ? (' [PIN: ' + a.profile_pin + ']') : '';
+                            const cobroBtn = a.wa_cobro_link ? ('<a href="' + a.wa_cobro_link + '" target="_blank" class="btn-action" style="background:#15803d;color:#fff;text-decoration:none;padding:3px 6px;border-radius:4px;font-size:0.75rem;margin-right:4px;">💬 Cobro</a>') : '';
+                            const entregaBtn = a.wa_entrega_link ? ('<a href="' + a.wa_entrega_link + '" target="_blank" class="btn-action" style="background:#0284c7;color:#fff;text-decoration:none;padding:3px 6px;border-radius:4px;font-size:0.75rem;">📩 Datos</a>') : '';
+                            accHtml += '<tr style="border-bottom:1px solid #1e293b;">' +
+                                '<td style="padding:6px 8px;"><strong>' + a.platform + '</strong></td>' +
+                                '<td style="padding:6px 8px;"><code>' + a.email + '</code>' + perf + pin + '</td>' +
+                                '<td style="padding:6px 8px;">' + (a.expiry_date || '-') + '</td>' +
+                                '<td style="padding:6px 8px;"><span class="badge ' + (a.badge_class || '') + '">' + a.days_label + '</span></td>' +
+                                '<td style="padding:6px 8px;"><strong>' + (a.price_formatted || a.price || '-') + '</strong></td>' +
+                                '<td style="padding:6px 8px;white-space:nowrap;">' + cobroBtn + entregaBtn + '</td></tr>';
+                        });
+                    }
+                    accHtml += '</tbody></table>';
+                    document.getElementById('m360-accounts-table-wrap').innerHTML = accHtml;
+
+                    // Tabla de pagos
+                    let payHtml = '<table style="width:100%;font-size:0.8rem;border-collapse:collapse;">';
+                    payHtml += '<thead><tr style="border-bottom:1px solid #334155;text-align:left;color:#94a3b8;">' +
+                        '<th style="padding:6px 8px;">Fecha</th>' +
+                        '<th style="padding:6px 8px;">Monto (ARS)</th>' +
+                        '<th style="padding:6px 8px;">Ganancia</th>' +
+                        '<th style="padding:6px 8px;">Método</th>' +
+                        '<th style="padding:6px 8px;">Detalle</th></tr></thead><tbody>';
+
+                    if (pays.length === 0) {
+                        payHtml += '<tr><td colspan="5" style="text-align:center;padding:12px;color:#64748b;">Aún no se registraron pagos previos para este cliente.</td></tr>';
+                    } else {
+                        pays.forEach(p => {
+                            const dStr = p.created_at ? p.created_at.substring(0, 16) : '-';
+                            payHtml += '<tr style="border-bottom:1px solid #1e293b;">' +
+                                '<td style="padding:6px 8px;color:#94a3b8;">' + dStr + '</td>' +
+                                '<td style="padding:6px 8px;"><strong style="color:#38bdf8;">' + p.amount_formatted + '</strong></td>' +
+                                '<td style="padding:6px 8px;color:#34d399;">' + p.profit_formatted + '</td>' +
+                                '<td style="padding:6px 8px;">' + (p.payment_method || 'Transferencia') + '</td>' +
+                                '<td style="padding:6px 8px;color:#cbd5e1;">' + (p.notes || (p.account_platform ? ('Renovación ' + p.account_platform) : '-')) + '</td>' +
+                                '</tr>';
+                        });
+                    }
+                    payHtml += '</tbody></table>';
+                    document.getElementById('m360-payments-table-wrap').innerHTML = payHtml;
+
+                } catch (err) {
+                    console.error(err);
+                    alert('Error al consultar datos del cliente.');
+                    closeClient360Modal();
+                }
+            }
+
+            function closeClient360Modal() {
+                const modal = document.getElementById('modal-client-360');
+                if (modal) modal.style.display = 'none';
+            }
+
+            function filterActiveTable() {
+                const q = (document.getElementById('filter-active-table').value || '').toLowerCase();
+                const rows = document.querySelectorAll('#tab-active tbody tr');
+                rows.forEach(r => {
+                    const txt = r.innerText.toLowerCase();
+                    r.style.display = txt.includes(q) ? '' : 'none';
+                });
+            }
+
+            let currentTemplateKey = 'cobro';
+            let cachedTemplates = {};
+            let cachedPaymentSettings = {};
+            let cachedFormattedPayment = '';
+
+            async function loadTemplatesManager() {
+                try {
+                    const res = await fetch('/api/templates/json');
+                    if (!res.ok) return;
+                    const data = await res.json();
+                    cachedTemplates = data.templates || {};
+                    cachedPaymentSettings = data.payment_settings || {};
+                    cachedFormattedPayment = data.formatted_payment_methods || '';
+                    switchTemplateTab(currentTemplateKey);
+                } catch (e) {
+                    console.error("Error cargando plantillas:", e);
+                }
+            }
+
+            function switchTemplateTab(key) {
+                currentTemplateKey = key;
+                document.querySelectorAll('.tpl-subtab-btn').forEach(b => b.classList.remove('active'));
+                const activeBtn = document.getElementById('tpl-btn-' + key);
+                if (activeBtn) activeBtn.classList.add('active');
+
+                const tpl = cachedTemplates[key];
+                if (!tpl) return;
+
+                const keyInput = document.getElementById('editor-template-key');
+                if (keyInput) keyInput.value = key;
+                const titleInput = document.getElementById('editor-template-title');
+                if (titleInput) titleInput.value = tpl.title || '';
+                const descInput = document.getElementById('editor-template-desc');
+                if (descInput) descInput.value = tpl.description || '';
+
+                const titleDisp = document.getElementById('editor-title-display');
+                if (titleDisp) titleDisp.innerText = tpl.title || key;
+                const descDisp = document.getElementById('editor-desc-display');
+                if (descDisp) descDisp.innerText = tpl.description || '';
+
+                const contentArea = document.getElementById('editor-content');
+                if (contentArea) contentArea.value = tpl.content || '';
+
+                const resetForm = document.getElementById('form-reset-template');
+                if (resetForm) resetForm.action = '/api/templates/reset/' + key;
+
+                updateTemplatePreview();
+            }
+
+            function insertTemplateTag(tag) {
+                const area = document.getElementById('editor-content');
+                if (!area) return;
+                const start = area.selectionStart;
+                const end = area.selectionEnd;
+                const text = area.value;
+                area.value = text.substring(0, start) + tag + text.substring(end);
+                area.selectionStart = area.selectionEnd = start + tag.length;
+                area.focus();
+                updateTemplatePreview();
+            }
+
+            function updateTemplatePreview() {
+                const area = document.getElementById('editor-content');
+                const previewEl = document.getElementById('wa-preview-text');
+                if (!area || !previewEl) return;
+                const rawText = area.value;
+
+                const sampleContext = {
+                    "cliente": "Lucas Martínez",
+                    "plataforma": "Netflix 4K",
+                    "email": "netflix.ultra4k@gmail.com",
+                    "password": "Password2026*",
+                    "perfil": "Perfil 2",
+                    "pin": "4421",
+                    "vencimiento": "2026-10-15",
+                    "dias_restantes": " (vence en 2 días)",
+                    "monto": "$ 5.500 ARS",
+                    "servicios_lista": "• Netflix 4K (Perfil 2) - Vence: 2026-10-15 ($ 5.500 ARS)\\n• Disney+ Premium (ESPN) - Vence: 2026-10-18 ($ 4.000 ARS)",
+                    "metodos_pago": cachedFormattedPayment || "• Mercado Pago (Alias): mi.alias.mp\\n• CBU/CVU: 0000003100012345678901\\n• Titular: Juan Ortiz\\n• Banco: Mercado Pago",
+                    "alias_mp": (cachedPaymentSettings && cachedPaymentSettings.alias_mp) || "mi.alias.mp",
+                    "cbu": (cachedPaymentSettings && cachedPaymentSettings.cvu_cbu) || "0000003100012345678901",
+                    "titular": (cachedPaymentSettings && cachedPaymentSettings.account_holder) || "Juan Ortiz",
+                    "banco": (cachedPaymentSettings && cachedPaymentSettings.bank_name) || "Mercado Pago",
+                    "usdt": (cachedPaymentSettings && cachedPaymentSettings.usdt_address) || "TYD2...BinanceUSDT",
+                    "cuentas_cantidad": "2"
+                };
+
+                let rendered = rawText;
+                for (const [k, v] of Object.entries(sampleContext)) {
+                    rendered = rendered.split('{' + k + '}').join(v || '');
+                }
+
+                const cleanLines = rendered.split('\\n').filter(line => {
+                    const t = line.trim();
+                    return !(t === '👤 *Perfil:*' || t === '👤 *Perfil Asignado:*' || t === '🔒 *PIN:*' || t === '🔒 *PIN de Perfil:*');
+                });
+                rendered = cleanLines.join('\\n');
+
+                let formatted = rendered
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/\\*(.*?)\\*/g, "<strong>$1</strong>")
+                    .replace(/`(.*?)`/g, "<code style='background:rgba(255,255,255,0.12);padding:2px 4px;border-radius:3px;'>$1</code>");
+
+                previewEl.innerHTML = formatted;
+            }
+
+            let waQrPollInterval = null;
+
+            async function checkWaStatus() {
+                const badge = document.getElementById('wa-connection-badge');
+                const btnQr = document.getElementById('btn-wa-open-qr');
+                const btnLogout = document.getElementById('btn-wa-logout');
+                if (!badge) return;
+
+                try {
+                    const res = await fetch('/api/whatsapp/status');
+                    if (!res.ok) throw new Error('HTTP ' + res.status);
+                    const data = await res.json();
+                    const st = data.status || {};
+                    if (st.connected) {
+                        badge.className = 'badge badge-ok';
+                        badge.innerHTML = '🟢 Conectado (' + (st.instance || 'bot') + ')';
+                        if (btnQr) btnQr.style.display = 'none';
+                        if (btnLogout) btnLogout.style.display = 'inline-block';
+                    } else if (st.state === 'connecting') {
+                        badge.className = 'badge badge-warn';
+                        badge.innerHTML = '🟡 Conectando...';
+                        if (btnQr) btnQr.style.display = 'inline-block';
+                        if (btnLogout) btnLogout.style.display = 'none';
+                    } else {
+                        badge.className = 'badge badge-danger';
+                        badge.innerHTML = '🔴 Desconectado (' + (st.state || 'close') + ')';
+                        if (btnQr) btnQr.style.display = 'inline-block';
+                        if (btnLogout) btnLogout.style.display = 'none';
+                    }
+                } catch (e) {
+                    badge.className = 'badge badge-danger';
+                    badge.innerHTML = '⚠️ Evolution API Desconectado';
+                    if (btnQr) btnQr.style.display = 'inline-block';
+                    if (btnLogout) btnLogout.style.display = 'none';
+                }
+            }
+
+            async function openWaQrModal() {
+                const modal = document.getElementById('modal-wa-qr');
+                if (!modal) return;
+                modal.style.display = 'flex';
+                loadWaQr();
+                if (waQrPollInterval) clearInterval(waQrPollInterval);
+                waQrPollInterval = setInterval(async () => {
+                    try {
+                        const res = await fetch('/api/whatsapp/status');
+                        if (res.ok) {
+                            const data = await res.json();
+                            if (data.status && data.status.connected) {
+                                clearInterval(waQrPollInterval);
+                                closeWaQrModal();
+                                alert('🎉 ¡WhatsApp Conectado Exitosamente!');
+                                checkWaStatus();
+                            }
+                        }
+                    } catch (e) {}
+                }, 3000);
+            }
+
+            function closeWaQrModal() {
+                const modal = document.getElementById('modal-wa-qr');
+                if (modal) modal.style.display = 'none';
+                if (waQrPollInterval) clearInterval(waQrPollInterval);
+                checkWaStatus();
+            }
+
+            async function loadWaQr() {
+                const img = document.getElementById('wa-qr-img');
+                const loading = document.getElementById('wa-qr-loading');
+                const pcode = document.getElementById('wa-qr-pairing');
+                if (loading) loading.innerHTML = '🔄 Generando código QR con Evolution API...';
+                if (img) img.style.display = 'none';
+                if (pcode) pcode.innerHTML = '';
+
+                try {
+                    const res = await fetch('/api/whatsapp/qr');
+                    const data = await res.json();
+                    if (data.connected) {
+                        if (loading) loading.innerHTML = '✅ ¡WhatsApp ya está conectado!';
+                        setTimeout(closeWaQrModal, 1500);
+                        return;
+                    }
+                    if (data.base64) {
+                        if (img) {
+                            img.src = data.base64.startsWith('data:') ? data.base64 : 'data:image/png;base64,' + data.base64;
+                            img.style.display = 'block';
+                        }
+                        if (loading) loading.innerHTML = '📲 Escanea este código desde WhatsApp > Dispositivos Vinculados:';
+                        if (data.pairingCode && pcode) {
+                            pcode.innerHTML = 'Código de vinculación: <strong>' + data.pairingCode + '</strong>';
+                        }
+                    } else {
+                        if (loading) loading.innerHTML = '⚠️ ' + (data.error || 'No se pudo obtener el QR. Verifica que Evolution API esté iniciado.');
+                    }
+                } catch (e) {
+                    if (loading) loading.innerHTML = '❌ Error al contactar al servidor: ' + e.message;
+                }
+            }
+
+            window.addEventListener('DOMContentLoaded', () => {
+                const hash = window.location.hash.replace('#', '');
+                if (hash && document.getElementById(hash)) {
+                    showTab(hash);
+                }
+                loadTemplatesManager();
+                checkWaStatus();
+            });
+        </script>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header-bar">
+                <h1>⚡ Streaming CRM & Finanzas</h1>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <span style="font-size:0.85rem; color:#94a3b8;">Admin: <strong>{{USER}}</strong></span>
+                    <a href="/logout" class="btn-logout">Cerrar Sesión</a>
+                </div>
+            </div>
+
+            {{MSG_BANNER}}
+
+            <!-- Dashboard de Finanzas y Balance -->
+            <div class="finance-grid">
+                <div class="fin-box box-income">
+                    <h4>Ingresos Cobrados (Mes)</h4>
+                    <p class="amount">{{FINANCE_INCOME}}</p>
+                    <small>{{FINANCE_TX_COUNT}} cobros registrados</small>
+                </div>
+                <div class="fin-box box-costs">
+                    <h4>Costo Proveedores</h4>
+                    <p class="amount">{{FINANCE_COSTS}}</p>
+                    <small>Costo base de cuentas</small>
+                </div>
+                <div class="fin-box box-profit">
+                    <h4>Ganancia Neta Real</h4>
+                    <p class="amount">{{FINANCE_PROFIT}}</p>
+                    <small>Beneficio líquido en el bolsillo</small>
+                </div>
+                <div class="fin-box box-pending">
+                    <h4>Por Cobrar (Próximos 7d)</h4>
+                    <p class="amount">{{FINANCE_PENDING_7D}}</p>
+                    <small>{{FINANCE_PENDING_COUNT}} cuentas por vencer</small>
+                </div>
+            </div>
+
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <form action="/api/test-telegram" method="POST" style="display: inline;">
+                            <button type="submit" class="btn" style="background:#475569;">📲 Test Telegram</button>
+                        </form>
+                        <form action="/api/check-now" method="POST" style="display: inline;">
+                            <button type="submit" class="btn" style="background:#059669;">🔍 Escanear Vencimientos</button>
+                        </form>
+                        <form action="/api/check-stock-alert" method="POST" style="display: inline;">
+                            <button type="submit" class="btn" style="background:#ea580c;">📦 Alerta Stock Telegram</button>
+                        </form>
+                    </div>
+                </div>
+                <div class="endpoint-banner">
+                    <span><strong>Conexión Gemini Spark:</strong> <code>https://mcp.joif.net/mcp/</code> {{OAUTH_HEADER_BADGE}}</span>
+                    <span>Modo Financiero & CRM Activo</span>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="tabs">
+                    <button id="btn-tab-active" class="tab-btn active" onclick="showTab('tab-active')">👥 Clientes & Activas ({{ACTIVE_ACCOUNTS_COUNT}})</button>
+                    <button id="btn-tab-screens" class="tab-btn" onclick="showTab('tab-screens')">📺 Pantallas ({{SCREENS_OVERVIEW_COUNT}})</button>
+                    <button id="btn-tab-suppliers" class="tab-btn" onclick="showTab('tab-suppliers')">🏢 Proveedores & Cuentas ({{SUPPLIERS_COUNT}}/{{MASTER_ACCOUNTS_COUNT}})</button>
+                    <button id="btn-tab-catalog" class="tab-btn" onclick="showTab('tab-catalog')">🏷️ Precios & Combos ({{CATALOG_COUNT}}/{{COMBOS_COUNT}})</button>
+                    <button id="btn-tab-finance" class="tab-btn" onclick="showTab('tab-finance')">💵 Historial de Cobros ({{TRANSACTIONS_COUNT}})</button>
+                    <button id="btn-tab-templates" class="tab-btn" onclick="showTab('tab-templates')">💬 WhatsApp & Mensajería</button>
+                    <button id="btn-tab-stock" class="tab-btn" onclick="showTab('tab-stock')">📦 Stock Libre ({{FREE_STOCK_COUNT}})</button>
+                    <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({{FALLEN_ACCOUNTS_COUNT}})</button>
+                    <button id="btn-tab-backup" class="tab-btn" onclick="showTab('tab-backup')">📁 Excel & Backups</button>
+                    <button id="btn-tab-logs" class="tab-btn" onclick="showTab('tab-logs'); refreshSystemLogs();">📋 Logs & Diagnóstico</button>
+                    <button id="btn-tab-oauth" class="tab-btn" onclick="showTab('tab-oauth')">🤖 Gemini Spark (OAuth)</button>
+                </div>
+
+                <div id="tab-active" class="tab-content" style="display:block;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:12px; flex-wrap:wrap;">
+                        <input type="text" id="filter-active-table" onkeyup="filterActiveTable()" placeholder="🔍 Filtrar por cliente, servicio, correo, WhatsApp..." style="flex:1; min-width:240px; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 12px; font-size:0.85rem;">
+                        <div style="display:flex; gap:8px; align-items:center;">
+                            <select onchange="if(this.value) openClient360Modal(this.value); this.value='';" style="background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 12px; font-size:0.85rem;">
+                                <option value="">👤 Abrir Ficha 360° de...</option>
+                                {{CLIENT_SELECT_OPTIONS}}
+                            </select>
+                        </div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Cliente</th>
+                                <th>Contacto</th>
+                                <th>Servicio</th>
+                                <th>Credenciales</th>
+                                <th>Vence</th>
+                                <th>Estado</th>
+                                <th>Precio</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{ACTIVE_ROWS}}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-screens" class="tab-content" style="display:none;">
+                    <div class="screens-grid">
+                        {{SCREENS_HTML}}
+                    </div>
+                </div>
+
+                <div id="tab-catalog" class="tab-content" style="display:none;">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-bottom: 24px;">
+                        <!-- Card: Agregar o Modificar Precio al Catálogo -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:18px;">
+                            <h3 style="margin:0 0 12px 0; font-size:1rem; color:#38bdf8;">➕ Agregar o Actualizar Precio (ARS)</h3>
+                            <form action="/api/catalog/save" method="POST" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Plataforma / Servicio *</label>
+                                    <input type="text" name="platform" placeholder="Ej: Netflix 4K, Max, Disney+" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Tipo de Servicio</label>
+                                    <select name="service_type" style="width:100%;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px;font-size:0.85rem;">
+                                        <option value="pantalla">📱 Pantalla (Perfil)</option>
+                                        <option value="cuenta_completa">👑 Cuenta Completa</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Costo Proveedor ($ ARS)</label>
+                                    <input type="number" name="cost_price" step="any" placeholder="3200" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Final ($ ARS) *</label>
+                                    <input type="number" name="price_final" step="any" placeholder="5500" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Revendedor ($ ARS) *</label>
+                                    <input type="number" name="price_reseller" step="any" placeholder="4200" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Notas / Observaciones</label>
+                                    <input type="text" name="notes" placeholder="Perfil UHD con PIN individual" style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1; margin-top:4px;">
+                                    <button type="submit" class="btn" style="background:#059669;width:100%;padding:8px;">💾 Guardar Precio en Catálogo</button>
+                                </div>
+                            </form>
+                        </div>
+
+                        <!-- Card: Crear Nuevo Combo -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:18px;">
+                            <h3 style="margin:0 0 12px 0; font-size:1rem; color:#38bdf8;">📦 Crear Nuevo Pack o Combo (ARS)</h3>
+                            <form action="/api/combos/save" method="POST" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Nombre del Pack *</label>
+                                    <input type="text" name="name" placeholder="Ej: Combo Dúo Cine (Netflix + Disney+)" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Plataformas Requeridas (separadas por coma) *</label>
+                                    <input type="text" name="platforms" placeholder="Netflix 4K, Disney+ Premium" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Pack Final ($ ARS) *</label>
+                                    <input type="number" name="price_final" step="any" placeholder="8500" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Precio Pack Revendedor ($ ARS) *</label>
+                                    <input type="number" name="price_reseller" step="any" placeholder="6800" required style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1;">
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:3px;">Descripción Promocional</label>
+                                    <input type="text" name="description" placeholder="1 Pantalla Netflix 4K + 1 Pantalla Disney+ con ESPN" style="width:100%;box-sizing:border-box;background:#161e2e;border:1px solid #334155;color:#fff;border-radius:6px;padding:6px 10px;font-size:0.85rem;">
+                                </div>
+                                <div style="grid-column: 1 / -1; margin-top:4px;">
+                                    <button type="submit" class="btn" style="background:#0284c7;width:100%;padding:8px;">✨ Crear Pack / Combo</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <h3 style="margin:20px 0 12px 0; font-size:1.05rem; color:#e2e8f0;">📦 Packs y Combos Disponibles ({{COMBOS_COUNT}})</h3>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:30px;">
+                        {{COMBOS_HTML}}
+                    </div>
+
+                    <h3 style="margin:20px 0 12px 0; font-size:1.05rem; color:#e2e8f0;">🏷️ Lista de Precios Oficiales ({{CATALOG_COUNT}} plataformas)</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plataforma</th>
+                                <th>Tipo</th>
+                                <th>Costo Prov.</th>
+                                <th>Precio Final (ARS)</th>
+                                <th>Precio Revendedor (ARS)</th>
+                                <th>Margen Ganancia</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{CATALOG_ROWS}}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-finance" class="tab-content" style="display:none;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Cliente</th>
+                                <th>Servicio</th>
+                                <th>Cobrado</th>
+                                <th>Costo Prov.</th>
+                                <th>Ganancia Neta</th>
+                                <th>Método</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{TX_ROWS}}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-stock" class="tab-content" style="display:none;">
+                    <div style="margin-bottom: 24px;">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                            <h3 style="margin:0;font-size:1.05rem;color:#38bdf8;">🚦 Semáforo de Salud del Inventario</h3>
+                            <span style="font-size:0.8rem;color:#94a3b8;">Umbrales mínimos configurables por plataforma</span>
+                        </div>
+                        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(210px, 1fr));gap:12px;">
+                            {{STOCK_HEALTH_HTML}}
+                        </div>
+                    </div>
+                    <h3 style="margin:20px 0 10px 0;font-size:1rem;color:#e2e8f0;">📋 Listado de Cuentas y Perfiles Libres</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plataforma</th>
+                                <th>Correo</th>
+                                <th>Contraseña</th>
+                                <th>Costo</th>
+                                <th>Estado</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{STOCK_ROWS}}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-fallen" class="tab-content" style="display:none;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Plataforma</th>
+                                <th>Correo Caído</th>
+                                <th>Cliente</th>
+                                <th>Detalle</th>
+                                <th>Acción Inmediata</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{FALLEN_ROWS}}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="tab-backup" class="tab-content" style="display:none;">
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px;">
+                        <!-- Card 1: Descargas Excel/CSV -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; display:flex; flex-direction:column; justify-content:space-between;">
+                            <div>
+                                <h3 style="margin:0 0 10px 0; color:#38bdf8; font-size:1.1rem; display:flex; align-items:center; gap:8px;">
+                                    📥 Exportar a Excel (CSV)
+                                </h3>
+                                <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:16px;">
+                                    Descarga tus reportes en formato universal compatible con Excel y Google Sheets (codificación UTF-8 con BOM):
+                                </p>
+                                <div style="display:flex; flex-direction:column; gap:10px;">
+                                    <a href="/api/export/active.csv" class="btn" style="background:#15803d; text-align:center; padding:10px; font-weight:600;" download>
+                                        📊 Descargar Clientes & Cuentas Activas
+                                    </a>
+                                    <a href="/api/export/stock.csv" class="btn" style="background:#0284c7; text-align:center; padding:10px; font-weight:600;" download>
+                                        📦 Descargar Inventario de Stock Libre
+                                    </a>
+                                    <a href="/api/export/transactions.csv" class="btn" style="background:#4338ca; text-align:center; padding:10px; font-weight:600;" download>
+                                        💵 Descargar Balance y Cobros
+                                    </a>
+                                </div>
+                            </div>
+                            <form action="/api/trigger-backup" method="POST" style="margin-top:16px; border-top:1px solid #1e293b; padding-top:14px;">
+                                <button type="submit" class="btn" style="width:100%; background:#7c3aed; padding:10px; font-weight:600;" title="Enviar los 3 archivos CSV directo a tu Telegram">
+                                    📲 Enviar Copia de Seguridad a Telegram
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Card 2: Carga Masiva de Stock -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <h3 style="margin:0; color:#10b981; font-size:1.1rem;">📦 Importar Stock Libre</h3>
+                                <a href="/api/export/template-stock.csv" style="font-size:0.75rem; color:#38bdf8; text-decoration:none;" download>📥 Plantilla Ejemplo</a>
+                            </div>
+                            <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:12px;">
+                                Carga cuentas y perfiles libres subiendo un archivo <code>.csv</code> o pegando filas de Excel:
+                            </p>
+                            <form action="/api/import/stock" method="POST" enctype="multipart/form-data">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">Archivo CSV:</label>
+                                <input type="file" name="file" accept=".csv,.txt" style="display:block; width:100%; font-size:0.8rem; margin-bottom:12px; color:#cbd5e1;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">O pegar texto directo:</label>
+                                <textarea name="csv_text" placeholder="Plataforma, Correo, Clave, Perfil, PIN, Costo..." style="width:100%; height:75px; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px; font-size:0.8rem; box-sizing:border-box; margin-bottom:12px;"></textarea>
+                                <button type="submit" class="btn" style="width:100%; background:#059669; padding:10px; font-weight:600;">
+                                    🚀 Procesar Carga de Stock
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Card 3: Migración de Ventas / Clientes -->
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <h3 style="margin:0; color:#f59e0b; font-size:1.1rem;">👥 Importar Clientes & Ventas</h3>
+                                <a href="/api/export/template-sales.csv" style="font-size:0.75rem; color:#38bdf8; text-decoration:none;" download>📥 Plantilla Ejemplo</a>
+                            </div>
+                            <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:12px;">
+                                Migra tu cartera con nombres, WhatsApp, vencimientos y precios asignados:
+                            </p>
+                            <form action="/api/import/sales" method="POST" enctype="multipart/form-data">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">Archivo CSV:</label>
+                                <input type="file" name="file" accept=".csv,.txt" style="display:block; width:100%; font-size:0.8rem; margin-bottom:12px; color:#cbd5e1;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px;">O pegar texto directo:</label>
+                                <textarea name="csv_text" placeholder="Cliente, WhatsApp, Tipo, Plataforma, Correo, Vencimiento, Precio..." style="width:100%; height:75px; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px; font-size:0.8rem; box-sizing:border-box; margin-bottom:12px;"></textarea>
+                                <button type="submit" class="btn" style="width:100%; background:#d97706; padding:10px; font-weight:600;">
+                                    🚀 Procesar Migración de Ventas
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pestaña 💬 Plantillas WhatsApp y Datos de Cobro -->
+                <div id="tab-templates" class="tab-content" style="display:none;">
+                    <!-- 0. Conexión Evolution API & Bot Automático WhatsApp -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; margin-bottom:24px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; border-bottom:1px solid #1e293b; padding-bottom:12px; flex-wrap:wrap; gap:12px;">
+                            <div>
+                                <h3 style="margin:0; color:#25d366; font-size:1.2rem; display:flex; align-items:center; gap:8px;">
+                                    💬 WhatsApp Evolution API v2 & Bot de Mensajería
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Envío automático de cobros (09:00 AM), entrega de credenciales en ventas y auto-respuesta con Webhooks.
+                                </p>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                <span id="wa-connection-badge" class="badge badge-warn">⏳ Verificando...</span>
+                                <button type="button" id="btn-wa-open-qr" onclick="openWaQrModal()" class="btn" style="background:#25d366; color:#000; font-weight:bold; padding:8px 14px; border-radius:6px; cursor:pointer;">
+                                    📲 Vincular WhatsApp (QR)
+                                </button>
+                                <button type="button" onclick="checkWaStatus()" class="btn-action" style="background:#1e293b; border:1px solid #334155; color:#38bdf8; padding:8px 12px; cursor:pointer;" title="Refrescar estado de conexión">
+                                    🔄
+                                </button>
+                                <form action="/api/whatsapp/logout" method="POST" style="display:inline;" onsubmit="return confirm('¿Seguro que deseas cerrar la sesión de WhatsApp?');">
+                                    <button type="submit" id="btn-wa-logout" class="btn-action btn-warn" style="display:none; padding:8px 12px; cursor:pointer;" title="Cerrar sesión de WhatsApp">
+                                        🚪 Desconectar
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Formulario de Configuración y Toggles -->
+                        <form action="/api/whatsapp/settings" method="POST" style="margin-bottom:20px;">
+                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:14px; margin-bottom:16px;">
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">URL Servidor Evolution API</label>
+                                    <input type="text" name="api_url" value="{{WA_API_URL}}" placeholder="http://evolution-api:8080" required style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Global API Key (Token)</label>
+                                    <input type="text" name="api_key" value="{{WA_API_KEY}}" placeholder="mcp-evolution-key-2026" required style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Nombre de Instancia</label>
+                                    <input type="text" name="instance_name" value="{{WA_INSTANCE_NAME}}" placeholder="streaming-bot" required style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                            </div>
+
+                            <!-- Toggles de Automatización -->
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px; margin-bottom:16px;">
+                                <div style="font-size:0.85rem; color:#f8fafc; font-weight:bold; margin-bottom:10px;">
+                                    ⚙️ Automatizaciones Inteligentes:
+                                </div>
+                                <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+                                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" name="auto_send_expiry" value="1" {{WA_AUTO_EXPIRY_CHECKED}} style="margin-top:3px; transform:scale(1.2);">
+                                        <div>
+                                            <strong style="color:#38bdf8; font-size:0.85rem;">⏰ Auto-Cobro 09:00 AM</strong>
+                                            <span style="display:block; font-size:0.75rem; color:#94a3b8;">Envía recordatorios diarios con delay anti-ban a clientes que vencen hoy o en 2 días.</span>
+                                        </div>
+                                    </label>
+
+                                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" name="auto_send_sales" value="1" {{WA_AUTO_SALES_CHECKED}} style="margin-top:3px; transform:scale(1.2);">
+                                        <div>
+                                            <strong style="color:#10b981; font-size:0.85rem;">🚀 Auto-Envío en Ventas</strong>
+                                            <span style="display:block; font-size:0.75rem; color:#94a3b8;">Despacha credenciales y accesos por WhatsApp automáticamente al vender combos o perfiles.</span>
+                                        </div>
+                                    </label>
+
+                                    <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" name="auto_reply_enabled" value="1" {{WA_AUTO_REPLY_CHECKED}} style="margin-top:3px; transform:scale(1.2);">
+                                        <div>
+                                            <strong style="color:#a78bfa; font-size:0.85rem;">🤖 Bot de Auto-Respuesta</strong>
+                                            <span style="display:block; font-size:0.75rem; color:#94a3b8;">Responde consultas de vencimientos, claves, datos CBU y notifica comprobantes a Telegram.</span>
+                                        </div>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                                <button type="submit" class="btn" style="background:#059669; padding:9px 18px; font-weight:bold;">
+                                    💾 Guardar Configuración de WhatsApp
+                                </button>
+                                <span style="font-size:0.8rem; color:#94a3b8;">
+                                    Actualizado: <strong>{{WA_UPDATED_AT}}</strong>
+                                </span>
+                            </div>
+                        </form>
+
+                        <!-- Fila: Webhook & Prueba Rápida -->
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:16px; border-top:1px solid #1e293b; padding-top:16px;">
+                            <!-- Webhook Box -->
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <h4 style="margin:0 0 8px 0; font-size:0.9rem; color:#38bdf8; display:flex; align-items:center; gap:6px;">
+                                    🔗 Webhook para Auto-Respuesta (MESSAGES_UPSERT)
+                                </h4>
+                                <p style="font-size:0.75rem; color:#94a3b8; margin:0 0 10px 0;">
+                                    Evolution API enviará los mensajes entrantes a este endpoint para procesar auto-respuestas y comprobantes:
+                                </p>
+                                <form action="/api/whatsapp/setup-webhook" method="POST" style="display:flex; gap:8px; flex-wrap:wrap;">
+                                    <input type="text" name="webhook_url" value="https://mcp.juanconnect.online/api/webhook/whatsapp" style="flex:1; min-width:220px; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                    <button type="submit" class="btn" style="background:#0284c7; padding:6px 12px; font-size:0.8rem; font-weight:600;">
+                                        ⚡ Vincular Webhook
+                                    </button>
+                                </form>
+                            </div>
+
+                            <!-- Prueba Rápida de Envío -->
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <h4 style="margin:0 0 8px 0; font-size:0.9rem; color:#10b981; display:flex; align-items:center; gap:6px;">
+                                    🧪 Enviar Mensaje de Prueba
+                                </h4>
+                                <form action="/api/whatsapp/test" method="POST" style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                                    <input type="text" name="test_phone" placeholder="Teléfono (ej: 5491112345678)" required style="background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 8px; font-size:0.8rem;">
+                                    <input type="text" name="test_message" placeholder="Texto de prueba..." value="Hola! Prueba de conexion exitosa con Streaming CRM." required style="background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 8px; font-size:0.8rem;">
+                                    <div style="grid-column: 1 / -1;">
+                                        <button type="submit" class="btn" style="width:100%; background:#059669; padding:6px 12px; font-size:0.8rem; font-weight:600;">
+                                            📤 Enviar WhatsApp de Prueba
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Fila 2: Chatwoot CRM Mobile Inbox -->
+                        <div style="margin-top:16px; background:#161e2e; border:1px solid #334155; border-radius:8px; padding:16px;">
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+                                <div>
+                                    <h4 style="margin:0 0 4px 0; font-size:0.95rem; color:#818cf8; display:flex; align-items:center; gap:6px;">
+                                        📱 Chatwoot (Atención de Clientes desde la App Móvil)
+                                    </h4>
+                                    <p style="font-size:0.78rem; color:#94a3b8; margin:0;">
+                                        Sincroniza WhatsApp con la app de Chatwoot (iOS/Android) para responder desde el celular con respuestas rápidas y notas privadas.
+                                    </p>
+                                </div>
+                                <span style="background:#1e1b4b; color:#a5b4fc; border:1px solid #6366f1; font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:12px;">
+                                    Bandeja Unificada
+                                </span>
+                            </div>
+                            <form action="/api/whatsapp/setup-chatwoot" method="POST" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; align-items:end;">
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">URL de Chatwoot</label>
+                                    <input type="text" name="chatwoot_url" value="{{CW_URL}}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Token de Acceso (Chatwoot)</label>
+                                    <input type="password" name="chatwoot_token" value="{{CW_TOKEN}}" placeholder="Ajustes de Perfil -> Access Token" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">ID de Cuenta</label>
+                                    <input type="text" name="account_id" value="{{CW_ACCOUNT_ID}}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                </div>
+                                <div>
+                                    <button type="submit" class="btn" style="width:100%; background:#4f46e5; padding:7px 12px; font-size:0.8rem; font-weight:600;">
+                                        ⚡ Vincular con Chatwoot
+                                    </button>
+                                </div>
+                            </form>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid #1e293b; flex-wrap:wrap; gap:10px;">
+                                <div style="font-size:0.75rem; color:#94a3b8; display:flex; align-items:center; gap:6px;">
+                                    <span>Estado: <strong style="color:{{CW_STATUS_COLOR}};">{{CW_STATUS_LABEL}}</strong></span>
+                                </div>
+                                <form action="/api/chatwoot/sync" method="POST" style="margin:0;">
+                                    <button type="submit" class="btn" style="background:#059669; padding:6px 14px; font-size:0.8rem; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                        🔄 Sincronizar Contactos de Chatwoot al CRM Ahora
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 1. Configuración de Cobro y CBU -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #1e293b; padding-bottom:10px;">
+                            <div>
+                                <h3 style="margin:0; color:#38bdf8; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+                                    💳 Configuración de Datos de Cobro (CBU / Alias / MP)
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Estos datos se inyectarán en tus mensajes en la etiqueta <code>{metodos_pago}</code> o en sus variables individuales.
+                                </p>
+                            </div>
+                        </div>
+
+                        <form action="/api/settings/payment" method="POST">
+                            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:16px;">
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Alias Mercado Pago / Billetera</label>
+                                    <input type="text" name="alias_mp" value="{{PAYMENT_ALIAS_MP}}" placeholder="ej: juan.streaming.mp" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">CBU / CVU Bancario (22 dígitos)</label>
+                                    <input type="text" name="cvu_cbu" value="{{PAYMENT_CVU_CBU}}" placeholder="ej: 0000003100012345678901" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Titular de la Cuenta</label>
+                                    <input type="text" name="account_holder" value="{{PAYMENT_ACCOUNT_HOLDER}}" placeholder="ej: Juan Manuel Ortiz" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Banco / Entidad Receptora</label>
+                                    <input type="text" name="bank_name" value="{{PAYMENT_BANK_NAME}}" placeholder="ej: Mercado Pago / Banco Galicia" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Binance Pay / USDT Address (Opcional)</label>
+                                    <input type="text" name="usdt_address" value="{{PAYMENT_USDT_ADDRESS}}" placeholder="ej: Binance Pay ID o red TRC20" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Instrucciones Adicionales</label>
+                                    <input type="text" name="extra_instructions" value="{{PAYMENT_EXTRA_INSTRUCTIONS}}" placeholder="ej: Enviar comprobante por WhatsApp" style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                                <button type="submit" class="btn" style="background:#059669; padding:9px 18px; font-weight:bold;">
+                                    💾 Guardar Datos de Cobro
+                                </button>
+                                <span style="font-size:0.8rem; color:#94a3b8;">
+                                    Última actualización: <strong>{{PAYMENT_UPDATED_AT}}</strong>
+                                </span>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- 2. Editor de Plantillas de WhatsApp -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <h3 id="editor-title-display" style="margin:0; color:#38bdf8; font-size:1.15rem;">
+                                    Cobro / Recordatorio Individual
+                                </h3>
+                                <p id="editor-desc-display" style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Plantilla enviada cuando vence una suscripción individual.
+                                </p>
+                            </div>
+                            <!-- Selector de Plantillas -->
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <button type="button" id="tpl-btn-cobro" class="tpl-subtab-btn active" onclick="switchTemplateTab('cobro')">🔔 Cobro Individual</button>
+                                <button type="button" id="tpl-btn-cobro_consolidado" class="tpl-subtab-btn" onclick="switchTemplateTab('cobro_consolidado')">🧾 Cobro Consolidado</button>
+                                <button type="button" id="tpl-btn-entrega" class="tpl-subtab-btn" onclick="switchTemplateTab('entrega')">🍿 Entrega de Accesos</button>
+                                <button type="button" id="tpl-btn-reemplazo" class="tpl-subtab-btn" onclick="switchTemplateTab('reemplazo')">🛠️ Reemplazo por Caída</button>
+                            </div>
+                        </div>
+
+                        <!-- Barra de Etiquetas Dinámicas (Chips interactivos) -->
+                        <div style="margin-bottom:14px; background:#161e2e; border:1px solid #334155; border-radius:8px; padding:12px;">
+                            <div style="font-size:0.8rem; color:#cbd5e1; margin-bottom:8px; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                <span>🏷️ Etiquetas Dinámicas (Haz clic para insertar en la posición del cursor):</span>
+                            </div>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{cliente}')">+ {cliente}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{plataforma}')">+ {plataforma}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{email}')">+ {email}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{password}')">+ {password}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{perfil}')">+ {perfil}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{pin}')">+ {pin}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{vencimiento}')">+ {vencimiento}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{dias_restantes}')">+ {dias_restantes}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{monto}')">+ {monto}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{metodos_pago}')" style="border-color:#10b981; color:#10b981;">+ {metodos_pago}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{alias_mp}')">+ {alias_mp}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{cbu}')">+ {cbu}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{titular}')">+ {titular}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{banco}')">+ {banco}</button>
+                                <button type="button" class="template-chip" onclick="insertTemplateTag('{servicios_lista}')" style="border-color:#f59e0b; color:#f59e0b;">+ {servicios_lista}</button>
+                            </div>
+                        </div>
+
+                        <!-- Editor a 2 Columnas: Textarea y Vista Previa WhatsApp -->
+                        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap:20px; align-items:start;">
+                            <!-- Columna 1: Editor Formulario -->
+                            <div>
+                                <form action="/api/templates/save" method="POST" id="form-save-template">
+                                    <input type="hidden" name="template_key" id="editor-template-key" value="cobro">
+                                    <input type="hidden" name="title" id="editor-template-title" value="">
+                                    <input type="hidden" name="description" id="editor-template-desc" value="">
+                                    <textarea name="content" id="editor-content" rows="18" oninput="updateTemplatePreview()" placeholder="Escribe el texto de la plantilla aquí..." style="width:100%; box-sizing:border-box; background:#161e2e; border:1px solid #334155; color:#f8fafc; border-radius:8px; padding:12px; font-family:monospace; font-size:0.85rem; line-height:1.5; resize:vertical;"></textarea>
+                                    <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap; align-items:center;">
+                                        <button type="submit" class="btn" style="background:#059669; padding:10px 20px; font-weight:bold; font-size:0.9rem;">
+                                            💾 Guardar Cambios en Plantilla
+                                        </button>
+                                        <button type="submit" form="form-reset-template" class="btn btn-warn" style="padding:10px 14px; font-size:0.85rem;" onclick="return confirm('¿Restaurar esta plantilla a los textos predeterminados de fábrica?')">
+                                            🔄 Restaurar Predeterminada
+                                        </button>
+                                    </div>
+                                </form>
+                                <form id="form-reset-template" action="/api/templates/reset/cobro" method="POST" style="display:none;"></form>
+                            </div>
+
+                            <!-- Columna 2: Vista Previa en Vivo WhatsApp -->
+                            <div>
+                                <div class="wa-preview-card">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid #222e35; padding-bottom:8px;">
+                                        <span style="color:#aebac1; font-size:0.85rem; font-weight:600;">💬 Vista Previa en Vivo (Estilo WhatsApp)</span>
+                                        <span style="background:#1f2c34; color:#25d366; font-size:0.75rem; padding:3px 8px; border-radius:12px; font-weight:bold;">● Simulación</span>
+                                    </div>
+                                    <div class="wa-bubble">
+                                        <div id="wa-preview-text">Cargando vista previa...</div>
+                                        <div class="wa-bubble-time">
+                                            <span>19:45</span>
+                                            <span style="color:#53bdeb;">✓✓</span>
+                                        </div>
+                                    </div>
+                                    <div style="margin-top:14px; font-size:0.75rem; color:#8696a0; text-align:center;">
+                                        💡 Las variables se sustituirán automáticamente con los datos reales de cada cuenta y cliente al enviar el mensaje.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-suppliers" class="tab-content" style="display:none;">
+                    <!-- 1. Cuentas Madre ante Proveedores Mayoristas -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px; margin-bottom:24px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <h3 style="margin:0; color:#38bdf8; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+                                    📺 Cuentas Madre & Vencimientos Mayoristas
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Monitoreo centralizado para prevenir cortes masivos: compara el vencimiento con tu proveedor vs el vencimiento de tus clientes.
+                                </p>
+                            </div>
+                            <div>
+                                <span class="badge badge-ok" style="font-size:0.8rem;">{{MASTER_ACCOUNTS_COUNT}} Cuentas Madre</span>
+                            </div>
+                        </div>
+
+                        <div style="overflow-x:auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Plataforma</th>
+                                        <th>Correo Cuenta Madre</th>
+                                        <th>Proveedor</th>
+                                        <th>Vence Proveedor</th>
+                                        <th>Perfiles Asignados</th>
+                                        <th>Costo Mayorista</th>
+                                        <th>Riesgo Desfase</th>
+                                        <th>Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {{MASTER_ACCOUNTS_TABLE_ROWS}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 2. Directorio de Proveedores Mayoristas -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #1e293b; padding-bottom:10px; flex-wrap:wrap; gap:10px;">
+                            <div>
+                                <h3 style="margin:0; color:#38bdf8; font-size:1.15rem; display:flex; align-items:center; gap:8px;">
+                                    🏢 Directorio de Proveedores Mayoristas
+                                </h3>
+                                <p style="margin:4px 0 0 0; font-size:0.85rem; color:#94a3b8;">
+                                    Gestiona contactos directos, medios de pago (Alias / CBU / USDT) y gastos acumulados con cada mayorista.
+                                </p>
+                            </div>
+                            <button type="button" onclick="openSupplierModal()" class="btn" style="background:#059669; font-weight:bold;">
+                                ➕ Registrar Proveedor Mayorista
+                            </button>
+                        </div>
+
+                        <div style="overflow-x:auto;">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Proveedor</th>
+                                        <th>Contacto</th>
+                                        <th>Datos de Pago</th>
+                                        <th>Cuentas / Perfiles</th>
+                                        <th>Total Abonado</th>
+                                        <th>Notas / Garantía</th>
+                                        <th>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {{SUPPLIERS_TABLE_ROWS}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-logs" class="tab-content" style="display:none;">
+                    <!-- Tarjetas de Diagnóstico y Salud -->
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:14px; margin-bottom:20px;">
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Estado General</small>
+                            <div style="margin-top:6px; display:flex; align-items:center; gap:8px;">
+                                <span id="health-overall-status" class="badge {{HEALTH_BADGE_CLASS}}" style="font-size:0.95rem; padding:4px 10px;">
+                                    {{HEALTH_STATUS}}
+                                </span>
+                            </div>
+                            <small id="health-uptime" style="color:#64748b; margin-top:4px; display:block;">Uptime: {{HEALTH_UPTIME}}</small>
+                        </div>
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Base de Datos SQLite</small>
+                            <div style="margin-top:6px; font-size:1.1rem; font-weight:700; color:#38bdf8;">
+                                {{HEALTH_DB_TOTAL}} cuentas
+                            </div>
+                            <small style="color:#64748b; margin-top:4px; display:block;">{{HEALTH_DB_SIZE}} | {{HEALTH_DB_STATUS}}</small>
+                        </div>
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Bot de Telegram</small>
+                            <div style="margin-top:6px; font-size:1.1rem; font-weight:700; color:#10b981;">
+                                {{HEALTH_TG_STATUS}}
+                            </div>
+                            <small style="color:#64748b; margin-top:4px; display:block;">Polling interactivo activo</small>
+                        </div>
+                        <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:10px; padding:14px;">
+                            <small style="color:#94a3b8; text-transform:uppercase; font-size:0.7rem; font-weight:700;">Errores / Advertencias</small>
+                            <div style="margin-top:6px; font-size:1.1rem; font-weight:700; color:{{HEALTH_ERRORS_COLOR}};">
+                                <span id="health-errors-count">{{HEALTH_ERRORS_COUNT}}</span> err / <span id="health-warns-count">{{HEALTH_WARNINGS_COUNT}}</span> warn
+                            </div>
+                            <small style="color:#64748b; margin-top:4px; display:block;">{{HEALTH_TOTAL_BUFFERED}} eventos en buffer</small>
+                        </div>
+                    </div>
+
+                    <!-- Barra de Controles del Terminal de Logs -->
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:18px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:12px;">
+                            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                                <span style="font-size:0.8rem; color:#94a3b8; font-weight:600; margin-right:4px;">Nivel:</span>
+                                <button type="button" id="filter-btn-all" class="filter-btn active" onclick="setLogFilterLevel('ALL')">TODOS</button>
+                                <button type="button" id="filter-btn-error" class="filter-btn" onclick="setLogFilterLevel('ERROR')">🚨 ERRORES</button>
+                                <button type="button" id="filter-btn-warning" class="filter-btn" onclick="setLogFilterLevel('WARNING')">⚠️ ADVERTENCIAS</button>
+                                <button type="button" id="filter-btn-info" class="filter-btn" onclick="setLogFilterLevel('INFO')">ℹ️ INFO</button>
+                            </div>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <input type="text" id="log-search-input" onkeyup="filterLogsLocally()" placeholder="🔍 Buscar texto o excepción..." style="background:#161e2e; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem; min-width:200px;">
+                                <button type="button" onclick="refreshSystemLogs()" class="btn" style="background:#1e293b; border:1px solid #334155; padding:6px 12px; font-size:0.8rem;">🔄 Actualizar</button>
+                                <a href="/api/logs/download" class="btn" style="background:#0284c7; padding:6px 12px; font-size:0.8rem; text-decoration:none;">📥 Descargar TXT</a>
+                                <form action="/api/logs/clear" method="POST" style="display:inline;" onsubmit="return confirm('¿Limpiar buffer de eventos en memoria? El archivo en disco se mantendrá.');">
+                                    <button type="submit" class="btn" style="background:#7f1d1d; padding:6px 12px; font-size:0.8rem;">🧹 Limpiar</button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Terminal Negro Interactivo -->
+                        <div id="logs-terminal" class="log-terminal">
+                            {{INITIAL_LOGS_HTML}}
+                        </div>
+                    </div>
+                </div>
+
+                <div id="tab-oauth" class="tab-content" style="display:none;">
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:24px; margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom:20px; border-bottom:1px solid #1e293b; padding-bottom:16px;">
+                            <div>
+                                <h3 style="margin:0 0 6px 0; color:#38bdf8; font-size:1.2rem; display:flex; align-items:center; gap:8px;">
+                                    🤖 Conexión Segura con Gemini Spark (OAuth 2.0)
+                                    <span class="badge {{OAUTH_BADGE_CLASS}}" style="font-size:0.75rem;">
+                                        {{OAUTH_STATUS_LABEL}}
+                                    </span>
+                                </h3>
+                                <p style="margin:0; color:#94a3b8; font-size:0.85rem; line-height:1.4;">
+                                    Tu servidor MCP exige autenticación estándar OAuth 2.0 (Client ID y Client Secret). Nadie en internet puede usar tus herramientas MCP sin estas credenciales.
+                                </p>
+                            </div>
+                            <form action="/api/oauth/regenerate" method="POST" onsubmit="return confirm('¿Seguro que deseas regenerar el Client Secret? Deberás actualizarlo en Gemini Spark.');">
+                                <button type="submit" class="btn" style="background:#1e293b; border:1px solid #eab308; color:#facc15; font-size:0.82rem; padding:8px 14px; cursor:pointer; border-radius:6px;">
+                                    🔄 Regenerar Secreto de Cliente
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Campos para Copiar en Gemini Spark -->
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:24px;">
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:600; text-transform:uppercase;">
+                                    1. Enlace de aplicación (MCP URL)
+                                </label>
+                                <div style="display:flex; gap:8px;">
+                                    <input type="text" id="copy-mcp-url" value="https://mcp.joif.net/mcp/" readonly style="flex:1; background:#0b0f19; border:1px solid #475569; color:#38bdf8; border-radius:6px; padding:8px 10px; font-size:0.88rem; font-family:monospace;">
+                                    <button type="button" onclick="navigator.clipboard.writeText('https://mcp.joif.net/mcp/'); alert('¡Enlace MCP copiado!');" style="background:#0284c7; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:600; font-size:0.8rem;">Copiar</button>
+                                </div>
+                            </div>
+
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:600; text-transform:uppercase;">
+                                    2. ID de cliente (OAuth)
+                                </label>
+                                <div style="display:flex; gap:8px;">
+                                    <input type="text" id="copy-client-id" value="{{OAUTH_CLIENT_ID}}" readonly style="flex:1; background:#0b0f19; border:1px solid #475569; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.88rem; font-family:monospace;">
+                                    <button type="button" onclick="navigator.clipboard.writeText('{{OAUTH_CLIENT_ID}}'); alert('¡ID de cliente copiado!');" style="background:#0284c7; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:600; font-size:0.8rem;">Copiar</button>
+                                </div>
+                            </div>
+
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:600; text-transform:uppercase;">
+                                    3. Secreto de cliente (OAuth)
+                                </label>
+                                <div style="display:flex; gap:8px;">
+                                    <input type="password" id="copy-client-secret" value="{{OAUTH_CLIENT_SECRET}}" readonly style="flex:1; background:#0b0f19; border:1px solid #475569; color:#facc15; border-radius:6px; padding:8px 10px; font-size:0.88rem; font-family:monospace;">
+                                    <button type="button" onclick="var el=document.getElementById('copy-client-secret'); el.type = el.type==='password'?'text':'password';" style="background:#334155; color:#cbd5e1; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-size:0.8rem;">👁️</button>
+                                    <button type="button" onclick="navigator.clipboard.writeText('{{OAUTH_CLIENT_SECRET}}'); alert('¡Secreto de cliente copiado!');" style="background:#0284c7; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:600; font-size:0.8rem;">Copiar</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Configuración Avanzada -->
+                        <form action="/api/oauth/settings" method="POST" style="background:#161e2e; border:1px solid #1e293b; border-radius:10px; padding:20px;">
+                            <h4 style="margin:0 0 14px 0; color:#cbd5e1; font-size:0.95rem;">⚙️ Configuración del Servidor OAuth 2.0</h4>
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:16px; margin-bottom:16px;">
+                                <div>
+                                    <label style="display:block; font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">ID de Cliente</label>
+                                    <input type="text" name="client_id" value="{{OAUTH_CLIENT_ID}}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">Secreto de Cliente</label>
+                                    <input type="text" name="client_secret" value="{{OAUTH_CLIENT_SECRET}}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">URI de Redirección Autorizadas</label>
+                                    <input type="text" name="redirect_uris" value="{{OAUTH_REDIRECT_URIS}}" style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                            </div>
+
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:#cbd5e1; cursor:pointer;">
+                                    <input type="checkbox" name="enabled" value="1" {{OAUTH_CHECKED}} style="width:16px; height:16px;">
+                                    <b>Exigir autenticación OAuth 2.0 para el servidor MCP</b>
+                                </label>
+                                <button type="submit" class="btn" style="background:#0284c7; color:#fff; padding:8px 16px; border:none; border-radius:6px; font-weight:600; cursor:pointer;">Guardar Ajustes OAuth</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal para Vender Combo Rápido -->
+        <div id="modal-sell-combo" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:12px;padding:24px;width:90%;max-width:480px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #334155;padding-bottom:10px;">
+                    <h3 id="modal-combo-title" style="margin:0;color:#38bdf8;font-size:1.15rem;">⚡ Vender Combo</h3>
+                    <button type="button" onclick="closeSellComboModal()" style="background:none;border:none;color:#94a3b8;font-size:1.3rem;cursor:pointer;">✕</button>
+                </div>
+                <form action="/api/combos/sell" method="POST">
+                    <input type="hidden" id="modal-combo-id" name="combo_id" value="">
+                    
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Nombre del Cliente *</label>
+                        <input type="text" name="client_name" required placeholder="Ej: Lucas Martínez" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.9rem;">
+                    </div>
+                    
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">WhatsApp (con código de país) *</label>
+                        <input type="text" name="whatsapp" required placeholder="+54 9 11 2233 4455" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.9rem;">
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px;">
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Tipo de Cliente</label>
+                            <select name="client_type" style="width:100%;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                                <option value="consumidor_final">👤 Final</option>
+                                <option value="revendedor">👔 Revendedor</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Medio de Pago</label>
+                            <select name="payment_method" style="width:100%;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                                <option value="Transferencia">Transferencia / CVU</option>
+                                <option value="Mercado Pago">Mercado Pago</option>
+                                <option value="Efectivo">Efectivo</option>
+                                <option value="Binance USDT">Binance USDT</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Días de Validez</label>
+                            <input type="number" name="duration_days" value="30" min="1" max="365" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                        </div>
+                        <div>
+                            <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Telegram (opcional)</label>
+                            <input type="text" name="telegram" placeholder="@usuario" style="width:100%;box-sizing:border-box;background:#0b0f19;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px;font-size:0.85rem;">
+                        </div>
+                    </div>
+
+                    <div style="display:flex;justify-content:flex-end;gap:10px;border-top:1px solid #334155;padding-top:14px;">
+                        <button type="button" onclick="closeSellComboModal()" class="btn" style="background:#475569;padding:8px 16px;">Cancelar</button>
+                        <button type="submit" class="btn" style="background:#059669;padding:8px 16px;font-weight:bold;">🚀 Confirmar Venta de Combo</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal Ficha 360° del Cliente -->
+        <div id="modal-client-360" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center;padding:16px;box-sizing:border-box;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:14px;padding:22px;width:100%;max-width:760px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.7);max-height:90vh;overflow-y:auto;box-sizing:border-box;">
+                <!-- Header del Modal -->
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;border-bottom:1px solid #334155;padding-bottom:12px;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                            <h2 id="m360-name" style="margin:0;color:#f8fafc;font-size:1.3rem;">Cargando perfil...</h2>
+                            <span id="m360-type-badge" class="badge" style="background:#0284c7;color:#fff;">Tipo</span>
+                            <span id="m360-health-badge" class="badge">Estado</span>
+                        </div>
+                        <div style="display:flex;gap:14px;margin-top:6px;font-size:0.8rem;color:#94a3b8;flex-wrap:wrap;">
+                            <span id="m360-code">Código: -</span>
+                            <span id="m360-wa-wrap">WhatsApp: <a id="m360-wa-link" href="#" target="_blank" style="color:#22c55e;">-</a></span>
+                            <span id="m360-tg-wrap">Telegram: <a id="m360-tg-link" href="#" target="_blank" style="color:#38bdf8;">-</a></span>
+                        </div>
+                    </div>
+                    <button type="button" onclick="closeClient360Modal()" style="background:none;border:none;color:#94a3b8;font-size:1.5rem;cursor:pointer;padding:0 6px;">✕</button>
+                </div>
+
+                <!-- Botón Destacado: Cobro Consolidado WhatsApp (1 Clic) -->
+                <div id="m360-consolidated-box" style="background:linear-gradient(90deg, #064e3b, #047857);border:1px solid #059669;border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+                    <div>
+                        <div style="font-weight:bold;color:#ecfdf5;font-size:0.95rem;">📲 Cobro Consolidado WhatsApp (1 Clic)</div>
+                        <div id="m360-consolidated-desc" style="font-size:0.8rem;color:#a7f3d0;margin-top:2px;">Envía un recordatorio único agrupando todas sus suscripciones en ARS.</div>
+                    </div>
+                    <a id="m360-consolidated-btn" href="#" target="_blank" class="btn" style="background:#10b981;color:#022c22;font-weight:bold;padding:8px 14px;text-decoration:none;border-radius:7px;display:inline-block;white-space:nowrap;">
+                        💬 Enviar Cobro Consolidado
+                    </a>
+                </div>
+
+                <!-- Grid de KPIs Financieros -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));gap:10px;margin-bottom:16px;">
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">LTV (Total Cobrado)</span>
+                        <strong id="m360-ltv" style="font-size:1.1rem;color:#38bdf8;">$ 0 ARS</strong>
+                        <small id="m360-payments-count" style="display:block;font-size:0.7rem;color:#64748b;">0 pagos</small>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Ganancia Neta Real</span>
+                        <strong id="m360-profit" style="font-size:1.1rem;color:#34d399;">$ 0 ARS</strong>
+                        <small style="display:block;font-size:0.7rem;color:#64748b;">margen neto</small>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Facturación Mensual</span>
+                        <strong id="m360-monthly" style="font-size:1.1rem;color:#facc15;">$ 0 ARS</strong>
+                        <small style="display:block;font-size:0.7rem;color:#64748b;">por mes</small>
+                    </div>
+                    <div style="background:#0f172a;border:1px solid #334155;border-radius:8px;padding:10px;text-align:center;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Suscripciones Activas</span>
+                        <strong id="m360-accounts-count" style="font-size:1.1rem;color:#e2e8f0;">0</strong>
+                        <small id="m360-health-summary" style="display:block;font-size:0.7rem;color:#94a3b8;">-</small>
+                    </div>
+                </div>
+
+                <!-- Secciones: Cuentas Activas e Historial -->
+                <div style="margin-bottom:16px;">
+                    <h4 style="margin:0 0 8px 0;font-size:0.9rem;color:#e2e8f0;">📺 Suscripciones Activas</h4>
+                    <div id="m360-accounts-table-wrap" style="overflow-x:auto;"></div>
+                </div>
+
+                <div>
+                    <h4 style="margin:14px 0 8px 0;font-size:0.9rem;color:#e2e8f0;">💵 Historial de Pagos Anteriores</h4>
+                    <div id="m360-payments-table-wrap" style="overflow-x:auto;"></div>
+                </div>
+
+                <div style="display:flex;justify-content:flex-end;margin-top:16px;border-top:1px solid #334155;padding-top:12px;">
+                    <button type="button" onclick="closeClient360Modal()" class="btn" style="background:#475569;padding:8px 16px;">Cerrar Ficha</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal: Registrar / Editar Proveedor Mayorista -->
+        <div id="modal-supplier" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:12px;padding:24px;width:90%;max-width:500px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #334155;padding-bottom:10px;">
+                    <h3 id="sup-modal-title" style="margin:0;color:#38bdf8;font-size:1.15rem;">🏢 Proveedor Mayorista</h3>
+                    <button type="button" onclick="closeSupplierModal()" style="background:none;border:none;color:#94a3b8;font-size:1.3rem;cursor:pointer;">✕</button>
+                </div>
+                <form action="/api/suppliers/save" method="POST">
+                    <input type="hidden" id="sup-modal-id" name="supplier_id" value="">
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Nombre del Proveedor *</label>
+                        <input type="text" id="sup-modal-name" name="name" required placeholder="Ej: Streaming Mayorista ARG" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Contacto (WhatsApp o @Telegram)</label>
+                        <input type="text" id="sup-modal-contact" name="contact" placeholder="+54911... o @proveedor_streaming" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Datos de Pago (CBU / Alias / USDT)</label>
+                        <input type="text" id="sup-modal-payment" name="payment_info" placeholder="Alias MP, CVU o Binance Pay" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Condiciones / Notas de Garantía</label>
+                        <textarea id="sup-modal-notes" name="notes" rows="3" placeholder="Garantía de 30 días, horario de reposición 9 a 21hs..." style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;resize:vertical;"></textarea>
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;">
+                        <button type="button" onclick="closeSupplierModal()" class="btn" style="background:#475569;">Cancelar</button>
+                        <button type="submit" class="btn" style="background:#059669;font-weight:bold;">💾 Guardar Proveedor</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal: Renovar Cuenta Madre ante Proveedor -->
+        <div id="modal-renew-master" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#1e293b;border:1px solid #475569;border-radius:12px;padding:24px;width:90%;max-width:480px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #334155;padding-bottom:10px;">
+                    <h3 style="margin:0;color:#38bdf8;font-size:1.15rem;">🔄 Renovar Cuenta Madre</h3>
+                    <button type="button" onclick="closeRenewMasterModal()" style="background:none;border:none;color:#94a3b8;font-size:1.3rem;cursor:pointer;">✕</button>
+                </div>
+                <form action="/api/master-accounts/renew" method="POST">
+                    <input type="hidden" id="rm-modal-email" name="email" value="">
+                    <input type="hidden" id="rm-modal-plat" name="platform" value="">
+                    <div style="margin-bottom:14px;background:#0f172a;padding:10px 14px;border-radius:8px;border:1px solid #334155;">
+                        <span style="font-size:0.75rem;color:#94a3b8;display:block;">Cuenta a Renovar:</span>
+                        <strong id="rm-display-account" style="color:#f8fafc;font-size:0.95rem;">-</strong>
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Nueva Fecha de Vencimiento Mayorista *</label>
+                        <input type="date" id="rm-modal-expiry" name="new_supplier_expiry" required style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Costo Pagado al Proveedor ($ ARS)</label>
+                        <input type="number" step="any" id="rm-modal-cost" name="cost" placeholder="3200" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="margin-bottom:12px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Método de Pago Empleado</label>
+                        <select name="payment_method" style="width:100%;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                            <option value="Transferencia Bancaria">Transferencia Bancaria / CBU</option>
+                            <option value="Mercado Pago">Mercado Pago</option>
+                            <option value="Binance USDT">Binance / USDT</option>
+                            <option value="Efectivo">Efectivo</option>
+                        </select>
+                    </div>
+                    <div style="margin-bottom:16px;">
+                        <label style="display:block;font-size:0.75rem;color:#94a3b8;margin-bottom:4px;">Notas o Comprobante</label>
+                        <input type="text" name="notes" placeholder="Ej: Comprobante MP #827391" style="width:100%;box-sizing:border-box;background:#0f172a;border:1px solid #334155;color:#fff;border-radius:6px;padding:8px 10px;font-size:0.85rem;">
+                    </div>
+                    <div style="display:flex;justify-content:flex-end;gap:10px;">
+                        <button type="button" onclick="closeRenewMasterModal()" class="btn" style="background:#475569;">Cancelar</button>
+                        <button type="submit" class="btn" style="background:#0284c7;font-weight:bold;">⚡ Confirmar Renovación</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Modal: Escanear QR WhatsApp Evolution API -->
+        <div id="modal-wa-qr" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);z-index:9999;align-items:center;justify-content:center;">
+            <div style="background:#161e2e;border:1px solid #334155;border-radius:16px;padding:28px;width:90%;max-width:440px;box-shadow:0 25px 50px -12px rgba(0,0,0,0.7);text-align:center;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;border-bottom:1px solid #1e293b;padding-bottom:12px;">
+                    <h3 style="margin:0;color:#25d366;font-size:1.2rem;display:flex;align-items:center;gap:8px;">
+                        📲 Vincular WhatsApp
+                    </h3>
+                    <button type="button" onclick="closeWaQrModal()" style="background:none;border:none;color:#94a3b8;font-size:1.4rem;cursor:pointer;">✕</button>
+                </div>
+                <p id="wa-qr-loading" style="font-size:0.9rem;color:#cbd5e1;margin-bottom:16px;">
+                    🔄 Obteniendo código QR...
+                </p>
+                <div style="display:flex;justify-content:center;margin-bottom:16px;">
+                    <img id="wa-qr-img" src="" alt="WhatsApp QR Code" style="display:none;width:260px;height:260px;border-radius:12px;background:#ffffff;padding:12px;box-shadow:0 4px 12px rgba(0,0,0,0.4);" />
+                </div>
+                <div id="wa-qr-pairing" style="font-size:0.85rem;color:#38bdf8;margin-bottom:16px;"></div>
+                <p style="font-size:0.8rem;color:#94a3b8;line-height:1.4;margin-bottom:20px;">
+                    1. Abre WhatsApp en tu celular.<br>
+                    2. Ve a <strong>Ajustes > Dispositivos vinculados</strong>.<br>
+                    3. Toca en <strong>Vincular un dispositivo</strong> y apunta al código.
+                </p>
+                <div style="display:flex;justify-content:center;gap:10px;">
+                    <button type="button" onclick="loadWaQr()" class="btn" style="background:#1e293b;border:1px solid #334155;color:#38bdf8;">🔄 Recargar QR</button>
+                    <button type="button" onclick="closeWaQrModal()" class="btn" style="background:#475569;">Cerrar</button>
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>

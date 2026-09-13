@@ -1,0 +1,38 @@
+import os
+from typing import Optional
+from dotenv import load_dotenv
+
+# Cargar variables de entorno desde .env si existe
+load_dotenv()
+
+class Settings:
+    # Directorios y almacenamiento
+    DATA_DIR: str = os.getenv("DATA_DIR", "/app/data")
+    DB_PATH: str = os.path.join(DATA_DIR, "services.db")
+    LOG_PATH: str = os.path.join(DATA_DIR, "system.log")
+
+    # Servidor Web
+    PORT: int = int(os.getenv("PORT", "8000"))
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+
+    # Seguridad y Sesiones
+    SESSION_SECRET_KEY: str = os.getenv("SESSION_SECRET_KEY", "mcp-super-secret-key-change-in-prod-2026")
+    ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin").strip().lower()
+    ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123").strip()
+
+    # Bot de Telegram
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    TELEGRAM_CHAT_ID: str = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+
+    # Tareas Programadas y Alertas
+    DAYS_BEFORE_ALERT: int = int(os.getenv("DAYS_BEFORE_ALERT", "7"))
+    ALERT_HOUR: int = int(os.getenv("ALERT_HOUR", "9"))
+    ALERT_MINUTE: int = int(os.getenv("ALERT_MINUTE", "0"))
+    TIMEZONE: str = os.getenv("TIMEZONE", "America/Argentina/Buenos_Aires")
+
+    # Integración WhatsApp (Evolution API)
+    EVOLUTION_API_URL: str = os.getenv("EVOLUTION_API_URL", "http://evolution-api:8080").strip().rstrip("/")
+    EVOLUTION_API_KEY: str = os.getenv("EVOLUTION_API_KEY", "mcp-evolution-key-2026").strip()
+    EVOLUTION_INSTANCE_NAME: str = os.getenv("EVOLUTION_INSTANCE_NAME", "streaming-bot").strip()
+
+settings = Settings()

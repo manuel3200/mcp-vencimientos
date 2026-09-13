@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autorizar Gemini Spark - Streaming CRM & MCP</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+        .oauth-card { background: #161e2e; border: 1px solid #1e293b; border-radius: 16px; padding: 36px; width: 100%; max-width: 460px; box-shadow: 0 15px 35px -5px rgba(0,0,0,0.6); }
+        .logo-box { background: #1e293b; width: 64px; height: 64px; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px auto; font-size: 32px; border: 1px solid #38bdf833; }
+        h2 { text-align: center; margin: 0 0 8px 0; font-size: 1.35rem; color: #38bdf8; }
+        p.desc { text-align: center; color: #94a3b8; font-size: 0.9rem; line-height: 1.5; margin: 0 0 20px 0; }
+        .scope-box { background: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+        .scope-item { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; font-size: 0.85rem; color: #cbd5e1; }
+        .scope-item:last-child { margin-bottom: 0; }
+        .scope-icon { color: #10b981; font-weight: bold; }
+        .info-row { font-size: 0.78rem; color: #64748b; margin-top: 12px; padding-top: 10px; border-top: 1px solid #1e293b; word-break: break-all; }
+        .btn-group { display: flex; gap: 12px; margin-top: 12px; }
+        .btn { flex: 1; padding: 12px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; }
+        .btn-primary { background: #0284c7; color: white; }
+        .btn-primary:hover { background: #0369a1; }
+        .btn-secondary { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+        .btn-secondary:hover { background: #334155; color: #f1f5f9; }
+        .form-group { margin-bottom: 14px; text-align: left; }
+        label { display: block; margin-bottom: 6px; font-size: 0.82rem; color: #cbd5e1; font-weight: 500; }
+        input[type="text"], input[type="password"] { width: 100%; box-sizing: border-box; background: #0b0f19; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; color: #fff; font-size: 0.9rem; outline: none; }
+        input:focus { border-color: #38bdf8; }
+        .alert-error { background: #7f1d1d33; border: 1px solid #ef4444; color: #fca5a5; padding: 10px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 16px; text-align: center; }
+        .logged-user { display: inline-flex; align-items: center; gap: 6px; background: #0284c722; color: #38bdf8; border: 1px solid #0284c744; padding: 5px 12px; border-radius: 20px; font-size: 0.82rem; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <div class="oauth-card">
+        <div class="logo-box">🤖</div>
+        <h2>Autorizar Gemini Spark</h2>
+        <p class="desc">La aplicación conectada solicita vincularse a tu servidor MCP para gestionar streaming y mensajería.</p>
+        
+        {USER_BLOCK}
+
+        <div class="scope-box">
+            <div class="scope-item">
+                <span class="scope-icon">✓</span>
+                <div><b>Herramientas MCP:</b> Consultar cuentas, clientes, stock y balance financiero.</div>
+            </div>
+            <div class="scope-item">
+                <span class="scope-icon">✓</span>
+                <div><b>WhatsApp & Chatwoot:</b> Despachar cobros y mensajes mediante Evolution API.</div>
+            </div>
+            <div class="scope-item">
+                <span class="scope-icon">✓</span>
+                <div><b>Automatizaciones:</b> Asignar perfiles y reemplazar suscripciones caídas con IA.</div>
+            </div>
+            <div class="info-row">
+                <b>ID de Cliente:</b> <code>{CLIENT_ID}</code><br>
+                <b>URI Redirección:</b> <code>{REDIRECT_URI}</code>
+            </div>
+        </div>
+
+        <form method="POST" action="/oauth/authorize">
+            <input type="hidden" name="client_id" value="{CLIENT_ID}">
+            <input type="hidden" name="redirect_uri" value="{REDIRECT_URI}">
+            <input type="hidden" name="state" value="{STATE}">
+            <input type="hidden" name="code_challenge" value="{CODE_CHALLENGE}">
+            <input type="hidden" name="code_challenge_method" value="{CODE_CHALLENGE_METHOD}">
+            <input type="hidden" name="scope" value="{SCOPE}">
+            
+            {LOGIN_FIELDS}
+
+            <div class="btn-group">
+                <button type="submit" name="action" value="deny" class="btn btn-secondary">Cancelar</button>
+                <button type="submit" name="action" value="allow" class="btn btn-primary">Autorizar Conexión</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

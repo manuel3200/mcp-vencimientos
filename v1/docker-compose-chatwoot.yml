@@ -52,7 +52,7 @@ services:
     command: ["sh", "-c", "bundle exec rails db:chatwoot_prepare && bundle exec rails runner \"InstallationConfig.find_or_initialize_by(name: 'WEBHOOK_TIMEOUT').update!(value: '30')\" && bundle exec rails s -p 3000 -b 0.0.0.0"]
     environment:
       - SECRET_KEY_BASE=j2ZWinsXioaVhCGTbxm7OSQTgJkxNGs0VIEh6DKEl80KUXzzIEhG87mewbYEHfw4
-      - FRONTEND_URL=http://129.213.26.89:3000
+      - FRONTEND_URL=https://chat.joif.net
       - DEFAULT_LOCALE=es
       - FORCE_SSL_MAILER=false
       - ENABLE_ACCOUNT_SIGNUP=true
@@ -89,7 +89,7 @@ services:
     command: ["sh", "-c", "sleep 10 && bundle exec sidekiq -C config/sidekiq.yml"]
     environment:
       - SECRET_KEY_BASE=j2ZWinsXioaVhCGTbxm7OSQTgJkxNGs0VIEh6DKEl80KUXzzIEhG87mewbYEHfw4
-      - FRONTEND_URL=http://129.213.26.89:3000
+      - FRONTEND_URL=https://chat.joif.net
       - DEFAULT_LOCALE=es
       - FORCE_SSL_MAILER=false
       - REDIS_URL=redis://chatwoot-redis:6379

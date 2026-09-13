@@ -289,9 +289,16 @@ async def whatsapp_webhook(request: Request):
             acc_id = target_acc["id"]
             price_str = target_acc.get("price") or "-"
             exp_date = target_acc.get("expiry_date") or "-"
+            days_left = target_acc.get("days_remaining", 0)
+            is_new_purchase = days_left is not None and days_left > 15
+
+            action_btn_text = f"💵 Confirmar Pago de Compra ({price_str})" if is_new_purchase else f"🔄 Confirmar Renovación ({price_str}) +30d"
+            callback_key = f"payinit_{acc_id}" if is_new_purchase else f"pay_{acc_id}"
+            service_action_label = "Compra Nueva" if is_new_purchase else "Renovación"
+
             service_lines = (
-                f"• Servicio a Renovar: <b>{target_acc['platform']}</b> (<code>{target_acc['email']}</code>)\n"
-                f"• Tarifa Acordada: <b>{price_str}</b> | Vence: <code>{exp_date}</code>\n"
+                f"• Servicio: <b>{target_acc['platform']}</b> (<code>{target_acc['email']}</code>)\n"
+                f"• Tarifa Acordada: <b>{price_str}</b> | Vence: <code>{exp_date}</code> ({service_action_label})\n"
             )
             # Teclado interactivo para Telegram (1 Clic)
             client_id_val = client_profile.get("client", {}).get("id")
@@ -299,7 +306,7 @@ async def whatsapp_webhook(request: Request):
             kb = {
                 "inline_keyboard": [
                     [
-                        {"text": f"💵 Confirmar Pago ({price_str}) y Renovar (+30d)", "callback_data": f"pay_{acc_id}"}
+                        {"text": action_btn_text, "callback_data": callback_key}
                     ],
                     client_btn + [{"text": "💬 Abrir WhatsApp", "url": f"https://wa.me/{sender_phone}"}]
                 ]

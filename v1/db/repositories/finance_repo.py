@@ -9,9 +9,10 @@ def register_customer_payment(
     amount: Optional[float] = None,
     payment_method: str = "Transferencia",
     new_expiry_date: Optional[str] = None,
+    extend_expiry: Optional[bool] = None,
     notes: str = ""
 ) -> Dict[str, Any]:
-    """Registra el cobro de una mensualidad o renovación a un cliente y actualiza el balance."""
+    """Registra el cobro de una cuenta (compra inicial o renovación mensual) y actualiza el balance."""
     conn = get_connection()
     q = email_or_id.strip()
     try:
@@ -36,25 +37,46 @@ def register_customer_payment(
             cost_num = parse_money(acc.get("cost"))
             profit_num = final_amount - cost_num
 
-            # Nueva fecha si se renueva
+            # Determinar si es confirmación de compra inicial o renovación
+            curr_exp_str = acc.get("expiry_date") or ""
+            days_left = None
+            curr_exp_date = None
+            if curr_exp_str:
+                try:
+                    curr_exp_date = datetime.strptime(curr_exp_str, "%Y-%m-%d").date()
+                    days_left = (curr_exp_date - date.today()).days
+                except Exception:
+                    pass
+
+            # Si extend_expiry es False o si la cuenta vence en más de 15 días (recién creada a 30d):
+            # Es PAGO INICIAL -> Mantiene la fecha de vencimiento ya otorgada al cliente.
+            is_initial = False
+            if extend_expiry is False:
+                is_initial = True
+            elif extend_expiry is None and days_left is not None and days_left > 15:
+                is_initial = True
+
             if new_expiry_date:
                 final_expiry = new_expiry_date.strip()
+            elif is_initial and curr_exp_str:
+                final_expiry = curr_exp_str
             else:
                 try:
-                    curr_exp = datetime.strptime(acc["expiry_date"], "%Y-%m-%d").date()
-                    # Si ya estaba vencida, renueva 30 días desde hoy; si no, 30 días desde el vencimiento
-                    base_date = max(curr_exp, date.today())
+                    base_date = max(curr_exp_date, date.today()) if curr_exp_date else date.today()
                     final_expiry = (base_date + timedelta(days=30)).isoformat()
                 except Exception:
                     final_expiry = (date.today() + timedelta(days=30)).isoformat()
+
+            action_label = "Pago inicial de compra" if is_initial else "Renovación mensual"
+            final_notes = notes.strip() or action_label
 
             # Insertar en tabla de pagos
             conn.execute("""
                 INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (acc_id, client_id, final_amount, cost_num, profit_num, payment_method.strip(), notes.strip() or "Renovación pagada"))
+            """, (acc_id, client_id, final_amount, cost_num, profit_num, payment_method.strip(), final_notes))
 
-            # Actualizar cuenta como pagada con nuevo vencimiento
+            # Actualizar cuenta como pagada
             conn.execute("""
                 UPDATE streaming_accounts 
                 SET expiry_date = ?, payment_status = 'pagado', status = 'ocupada',
@@ -72,6 +94,8 @@ def register_customer_payment(
                 "amount": final_amount,
                 "profit": profit_num,
                 "new_expiry": final_expiry,
+                "is_initial": is_initial,
+                "action_label": action_label,
                 "payment_method": payment_method
             }
     finally:

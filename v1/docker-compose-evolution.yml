@@ -1,10 +1,25 @@
 version: '3.8'
 
 services:
+  evolution-postgres:
+    image: postgres:15-alpine
+    container_name: evolution-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: evolution
+      POSTGRES_PASSWORD: evolution_pass_2026
+      POSTGRES_DB: evolution_db
+    volumes:
+      - evolution_postgres_data:/var/lib/postgresql/data
+    networks:
+      - evolution-net
+
   evolution-api:
-    image: atendai/evolution-api:v2.1.2
+    image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution-api
     restart: unless-stopped
+    depends_on:
+      - evolution-postgres
     ports:
       - "8081:8080"
     environment:
@@ -15,10 +30,24 @@ services:
       # Clave Secreta Global (API Key) para autenticar las peticiones del CRM
       - AUTHENTICATION_API_KEY=mcp-evolution-key-2026
       
-      # Configuracion de Logging y almacenamiento local ligero (sin necesidad de PostgreSQL/Redis)
+      # Base de Datos PostgreSQL integrada
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://evolution:evolution_pass_2026@evolution-postgres:5432/evolution_db?schema=evolution_api
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      - DATABASE_SAVE_DATA_LABELS=true
+      - DATABASE_SAVE_DATA_HISTORIC=false
+      - DATABASE_SAVE_IS_ON_WHATSAPP=true
+      - DATABASE_SAVE_IS_ON_WHATSAPP_DAYS=7
+      - DATABASE_DELETE_MESSAGE=true
+
+      # Configuracion de Logging
       - LOG_LEVEL=ERROR,WARN,INFO
       - DEL_INSTANCE=false
-      - DATABASE_ENABLED=false
       - CACHE_REDIS_ENABLED=false
       
       # Nombre visible en WhatsApp Web
@@ -27,7 +56,15 @@ services:
     volumes:
       # Persistencia de credenciales de WhatsApp y sesiones activas
       - evolution_instances:/evolution/instances
+    networks:
+      - evolution-net
 
 volumes:
   evolution_instances:
     name: evolution_instances_data
+  evolution_postgres_data:
+    name: evolution_postgres_data
+
+networks:
+  evolution-net:
+    name: evolution-net

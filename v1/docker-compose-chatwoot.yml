@@ -68,6 +68,8 @@ services:
       - INSTALLATION_ENV=docker
       # Notificaciones push oficiales en la App de Celular (Android / iOS)
       - ENABLE_PUSH_RELAY_SERVER=true
+      # Permitir enviar webhooks a contenedores Docker en la red interna
+      - SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true
     volumes:
       - chatwoot_storage_data:/app/storage
     networks:
@@ -101,6 +103,8 @@ services:
       - RAILS_ENV=production
       - INSTALLATION_ENV=docker
       - ENABLE_PUSH_RELAY_SERVER=true
+      # Permitir enviar webhooks a contenedores Docker en la red interna
+      - SAFE_FETCH_ALLOW_PRIVATE_NETWORK=true
     volumes:
       - chatwoot_storage_data:/app/storage
     networks:

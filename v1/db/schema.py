@@ -345,15 +345,18 @@ def init_db():
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS chatwoot_settings (
                     id INTEGER PRIMARY KEY DEFAULT 1,
-                    url TEXT DEFAULT 'http://chatwoot-rails:3000',
-                    token TEXT DEFAULT 'ZRzCpt75vxkyiUC7H1otEoog',
+                    url TEXT DEFAULT 'https://chat.joif.net',
+                    token TEXT DEFAULT '',
                     account_id TEXT DEFAULT '1',
                     enabled INTEGER DEFAULT 1,
                     auto_sync INTEGER DEFAULT 1,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            conn.execute("INSERT OR IGNORE INTO chatwoot_settings (id, url, token, account_id) VALUES (1, 'http://chatwoot-rails:3000', 'ZRzCpt75vxkyiUC7H1otEoog', '1')")
+            conn.execute("INSERT OR IGNORE INTO chatwoot_settings (id, url, token, account_id) VALUES (1, 'https://chat.joif.net', '', '1')")
+            # Limpiar token de prueba inválido si quedó guardado en la base de datos
+            conn.execute("UPDATE chatwoot_settings SET token = '' WHERE token = 'ZRzCpt75vxkyiUC7H1otEoog'")
+            conn.execute("UPDATE chatwoot_settings SET url = 'https://chat.joif.net' WHERE url = 'http://chatwoot-rails:3000'")
 
             # 14. Configuración y Tokens OAuth 2.0 (Gemini Spark)
             conn.execute("""

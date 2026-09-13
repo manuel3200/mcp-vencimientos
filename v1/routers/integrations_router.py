@@ -417,7 +417,7 @@ async def whatsapp_webhook(request: Request):
 @router.post("/api/settings/chatwoot")
 async def api_settings_chatwoot(
     request: Request,
-    url: str = Form("http://chatwoot-rails:3000"),
+    url: str = Form("https://chat.joif.net"),
     token: str = Form(""),
     account_id: str = Form("1"),
     enabled: Optional[str] = Form(None),
@@ -426,13 +426,29 @@ async def api_settings_chatwoot(
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
+
+    clean_url = url.strip() or "https://chat.joif.net"
+    clean_token = token.strip()
+    clean_acc = account_id.strip() or "1"
+
     database.save_chatwoot_settings(
-        url=url.strip(),
-        token=token.strip(),
-        account_id=account_id.strip() or "1",
+        url=clean_url,
+        token=clean_token,
+        account_id=clean_acc,
         enabled=1 if enabled in ("1", "on", "true") else (1 if enabled is None else 0),
         auto_sync=1 if auto_sync in ("1", "on", "true") else (1 if auto_sync is None else 0)
     )
+
+    if clean_token and clean_token != "ZRzCpt75vxkyiUC7H1otEoog":
+        test_res = await whatsapp_client.test_chatwoot_connection(url=clean_url, token=clean_token, account_id=clean_acc)
+        if test_res.get("success"):
+            user_info = test_res.get("user") or {}
+            user_name = user_info.get("name") or user_info.get("email") or "Usuario"
+            return RedirectResponse(url=f"/?msg=chatwoot_connected&user={urllib.parse.quote(user_name)}#integrations", status_code=302)
+        else:
+            err = urllib.parse.quote(test_res.get("error", "Error autenticando con Chatwoot"))
+            return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
+
     return RedirectResponse(url="/?msg=chatwoot_settings_saved#integrations", status_code=302)
 
 

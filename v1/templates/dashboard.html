@@ -872,15 +872,18 @@
               <input type="text" name="url" value="{{CW_URL}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
             </div>
             <div>
-              <label class="font-label-code text-xs text-on-surface-variant">Access Token:</label>
-              <input type="password" name="token" value="{{CW_TOKEN}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+              <label class="font-label-code text-xs text-on-surface-variant">Access Token de Usuario (Personal):</label>
+              <input type="password" name="token" value="{{CW_TOKEN}}" placeholder="Pega tu Token de acceso de Chatwoot" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
             </div>
             <div>
               <label class="font-label-code text-xs text-on-surface-variant">Account ID:</label>
               <input type="number" name="account_id" value="{{CW_ACCOUNT_ID}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
             </div>
-            <div class="sm:col-span-3 flex justify-end">
-              <button type="submit" class="h-8 px-4 bg-secondary-container text-white text-xs font-semibold rounded hover:bg-secondary">Guardar Chatwoot</button>
+            <div class="sm:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-surface-container/50">
+              <span class="text-[11px] text-amber-300">
+                📌 <b>¿Dónde encontrarlo?</b> Entra a <a href="https://chat.joif.net" target="_blank" class="underline text-sky-400 font-semibold">chat.joif.net</a> ➡️ Clic en tu nombre (abajo a la izquierda) ➡️ <b>Configuración de perfil</b> ➡️ Baja al final de la página, copia tu <b>Token de acceso</b> y pégalo aquí.
+              </span>
+              <button type="submit" class="h-8 px-4 bg-secondary-container text-white text-xs font-semibold rounded hover:bg-secondary shrink-0">Guardar y Probar Chatwoot</button>
             </div>
           </form>
 

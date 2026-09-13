@@ -16,18 +16,27 @@ async def collect_payment_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    res = database.register_customer_payment(email_or_id=str(account_id), payment_method="Panel Web")
+    extend_param = request.query_params.get("extend")
+    extend_bool = (extend_param == "1") if extend_param in ("0", "1") else None
+    res = database.register_customer_payment(
+        email_or_id=str(account_id),
+        payment_method="Panel Web",
+        extend_expiry=extend_bool
+    )
     if res.get("success"):
+        is_initial = res.get("is_initial", False)
+        title = "💵 <b>Pago de Compra Registrado</b>" if is_initial else "🔄 <b>Cobro y Renovación (+30d) Registrados</b>"
+        expiry_info = f"• Vencimiento: {res['new_expiry']} (al día)" if is_initial else f"• Próximo vencimiento: {res['new_expiry']} (+30 días)"
         wa_data = database.generate_whatsapp_message(str(account_id), message_type="entrega")
         wa_url = wa_data.get("wa_link", "")
         wa_link_html = f"\n\n📲 <a href=\"{wa_url}\"><b>👉 ENVIAR COMPROBANTE Y DATOS POR WHATSAPP (1 Clic)</b></a>" if wa_url else ""
         await send_telegram_message(
-            f"💵 <b>Cobro y Renovación Registrados</b>\n\n"
+            f"{title}\n\n"
             f"• Cliente: {res['client_name']}\n"
             f"• Servicio: {res['platform']}\n"
             f"• Monto cobrado: {database.format_ars(res['amount'])}\n"
             f"• Ganancia Neta: +{database.format_ars(res['profit'])}\n"
-            f"• Próximo vencimiento: {res['new_expiry']}"
+            f"{expiry_info}"
             f"{wa_link_html}"
         )
     return RedirectResponse(url="/#accounts", status_code=303)

@@ -271,35 +271,56 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
 
         if res.get("success"):
             amt_fmt = database.format_ars(res['amount'])
-            # 1. Enviar confirmación al cliente por WhatsApp (Chat público)
-            msg_client = (
-                f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
-                f"para tu servicio *{res['platform']}*.\n\n"
-                f"Tu suscripción ha sido renovada con éxito hasta el *{res['new_expiry']}* (30 días extendidos). "
-                f"¡Muchas gracias por tu pago y preferencia! 🙌✨"
-            )
-            await whatsapp_client.send_chatwoot_message(conv_id, msg_client, private=False)
-
-            # 2. Enviar nota privada para el agente en Chatwoot
+            is_initial = res.get("is_initial", False)
             badge_type = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
-            await whatsapp_client.send_chatwoot_message(
-                conv_id,
-                f"✅ <b>[StreamVault CRM] ¡Pago Registrado y Servicio Renovado!</b>\n"
-                f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
-                f"• Servicio: <b>{res['platform']}</b> (<code>{res['email']}</code>)\n"
-                f"• Cobrado: <b>+{amt_fmt}</b> (Ganancia: +{database.format_ars(res['profit'])})\n"
-                f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (+30 días)\n"
-                f"• Transacción registrada en el libro contable de finanzas.",
-                private=True
-            )
+
+            if is_initial:
+                # 1. Mensaje al cliente para pago de compra inicial
+                msg_client = (
+                    f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
+                    f"para tu compra de *{res['platform']}*.\n\n"
+                    f"Tu suscripción está confirmada y activa hasta el *{res['new_expiry']}*. "
+                    f"¡Muchas gracias por tu compra y preferencia! 🙌✨"
+                )
+                # 2. Nota privada para el agente
+                note_agent = (
+                    f"✅ <b>[StreamVault CRM] ¡Pago de Compra Registrado!</b>\n"
+                    f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
+                    f"• Servicio: <b>{res['platform']}</b> (<code>{res['email']}</code>)\n"
+                    f"• Cobrado: <b>+{amt_fmt}</b> (Ganancia: +{database.format_ars(res['profit'])})\n"
+                    f"• Vencimiento: <code>{res['new_expiry']}</code> (Suscripción al día)\n"
+                    f"• Transacción registrada en el libro contable de finanzas."
+                )
+                tg_title = "💵 <b>¡PAGO DE COMPRA CONFIRMADO DESDE CHATWOOT!</b>"
+            else:
+                # 1. Mensaje al cliente para renovación mensual
+                msg_client = (
+                    f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
+                    f"para la renovación de *{res['platform']}*.\n\n"
+                    f"Tu suscripción ha sido renovada con éxito hasta el *{res['new_expiry']}* (30 días extendidos). "
+                    f"¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                )
+                # 2. Nota privada para el agente
+                note_agent = (
+                    f"✅ <b>[StreamVault CRM] ¡Pago y Renovación Registrados!</b>\n"
+                    f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
+                    f"• Servicio: <b>{res['platform']}</b> (<code>{res['email']}</code>)\n"
+                    f"• Cobrado: <b>+{amt_fmt}</b> (Ganancia: +{database.format_ars(res['profit'])})\n"
+                    f"• Nuevo Vencimiento: <code>{res['new_expiry']}</code> (+30 días)\n"
+                    f"• Transacción registrada en el libro contable de finanzas."
+                )
+                tg_title = "🔄 <b>¡RENOVACIÓN (+30D) REGISTRADA DESDE CHATWOOT!</b>"
+
+            await whatsapp_client.send_chatwoot_message(conv_id, msg_client, private=False)
+            await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
 
             # 3. Notificar a Telegram
             await send_telegram_message(
-                f"💵 <b>¡COBRO Y RENOVACIÓN DESDE CHATWOOT!</b>\n\n"
+                f"{tg_title}\n\n"
                 f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
                 f"• Servicio: <b>{res['platform']}</b>\n"
                 f"• Cobrado: <b>+{amt_fmt}</b>\n"
-                f"• Próximo Vencimiento: <code>{res['new_expiry']}</code>"
+                f"• Vencimiento: <code>{res['new_expiry']}</code>"
             )
             return {"status": "ok", "action": "payment_collected", "details": res}
         else:

@@ -183,14 +183,16 @@ def get_chatwoot_settings() -> Dict[str, Any]:
         if not row:
             conn.execute("""
                 INSERT OR IGNORE INTO chatwoot_settings (id, url, token, account_id, enabled, auto_sync)
-                VALUES (1, 'http://chatwoot-rails:3000', 'ZRzCpt75vxkyiUC7H1otEoog', '1', 1, 1)
+                VALUES (1, 'https://chat.joif.net', '', '1', 1, 1)
             """)
             conn.commit()
             row = conn.execute("SELECT * FROM chatwoot_settings WHERE id = 1").fetchone()
         
         data = dict(row) if row else {}
-        url = (data.get("url") or os.getenv("CHATWOOT_URL") or "http://chatwoot-rails:3000").strip().rstrip("/")
-        token = (data.get("token") or os.getenv("CHATWOOT_TOKEN") or "ZRzCpt75vxkyiUC7H1otEoog").strip()
+        url = (data.get("url") or os.getenv("CHATWOOT_URL") or "https://chat.joif.net").strip().rstrip("/")
+        token = (data.get("token") or os.getenv("CHATWOOT_TOKEN") or "").strip()
+        if token == "ZRzCpt75vxkyiUC7H1otEoog":
+            token = ""
         account_id = str(data.get("account_id") or os.getenv("CHATWOOT_ACCOUNT_ID") or "1").strip()
         return {
             "id": 1,
@@ -204,7 +206,7 @@ def get_chatwoot_settings() -> Dict[str, Any]:
         conn.close()
 
 def save_chatwoot_settings(
-    url: str = "http://chatwoot-rails:3000",
+    url: str = "https://chat.joif.net",
     token: str = "",
     account_id: str = "1",
     enabled: int = 1,
@@ -213,7 +215,7 @@ def save_chatwoot_settings(
     """Guarda o actualiza las credenciales y URL de Chatwoot."""
     conn = get_connection()
     try:
-        clean_url = (url or "http://chatwoot-rails:3000").strip().rstrip("/")
+        clean_url = (url or "https://chat.joif.net").strip().rstrip("/")
         clean_token = token.strip()
         clean_acc = str(account_id or "1").strip()
         with conn:

@@ -91,6 +91,9 @@ async def dashboard(request: Request):
             imp = request.query_params.get("imported", "0")
             upd = request.query_params.get("updated", "0")
             msg_text = f"🔄 ¡Sincronización con Chatwoot completada! {imp} nuevos clientes dados de alta en el CRM, {upd} actualizados."
+        elif msg_raw == "chatwoot_connected":
+            user_val = request.query_params.get("user", "Usuario")
+            msg_text = f"🎉 ¡Conexión con Chatwoot verificada exitosamente! Autenticado como {user_val}."
         elif msg_raw == "chatwoot_settings_saved":
             msg_text = "✅ Configuración de Chatwoot guardada con éxito."
         elif msg_raw == "chatwoot_webhook_configured":
@@ -98,7 +101,7 @@ async def dashboard(request: Request):
         elif msg_raw == "chatwoot_canned_synced":
             created = request.query_params.get("created", "0")
             existing = request.query_params.get("existing", "0")
-            msg_text = f"⚡ ¡Atajos de Chatwoot sincronizados! ({created} creados, {existing} existentes). Ya puedes escribir /nc en cualquier chat."
+            msg_text = f"⚡ ¡Atajos de Chatwoot sincronizados! ({created} creados, {existing} ya existentes). Ya puedes escribir /nc en cualquier chat."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -138,6 +141,21 @@ async def dashboard(request: Request):
         wa_entrega = database.generate_whatsapp_message(a, message_type="entrega")
         wa_link_entrega = wa_entrega.get("wa_link", "#")
 
+        # Botón inteligente: Pago inicial de compra vs Renovación mensual (+30d)
+        is_recent_purchase = (days is not None and days > 15)
+        if is_recent_purchase:
+            btn_pago = f"""
+            <form action="/api/collect-payment/{a['id']}?extend=0" method="POST" style="display:inline;" onsubmit="return confirm('¿Confirmar que {a['client_name']} pagó su compra inicial? (Mantiene el vencimiento actual en {a['expiry_date']})');">
+                <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Confirmar Pago de Compra">💵 Pagó Compra</button>
+            </form>
+            """
+        else:
+            btn_pago = f"""
+            <form action="/api/collect-payment/{a['id']}?extend=1" method="POST" style="display:inline;" onsubmit="return confirm('¿Registrar cobro y renovar 30 días para {a['client_name']}?');">
+                <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Registrar Cobro y Renovar +30 días">🔄 Renovar (+30d)</button>
+            </form>
+            """
+
         active_rows += f"""
         <tr>
             <td><strong {client_click}>{client_tag}</strong><br><small style="color:#64748b;">{a.get('client_code') or ''}</small></td>
@@ -151,9 +169,7 @@ async def dashboard(request: Request):
                 {btn_360}
                 <a href="{wa_link_cobro}" target="_blank" class="btn-action" style="background:#15803d;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con mensaje de cobro listo">💬 Cobro</a>
                 <a href="{wa_link_entrega}" target="_blank" class="btn-action" style="background:#0284c7;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con credenciales listas">📩 Datos</a>
-                <form action="/api/collect-payment/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Registrar cobro y renovar 30 días para {a['client_name']}?');">
-                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Registrar cobro y renovar">💵 Pagó</button>
-                </form>
+                {btn_pago}
                 <form action="/api/mark-fallen/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Marcar {a['email']} como caída?');">
                     <button type="submit" class="btn-action btn-warn" style="padding:4px 7px;border-radius:5px;font-size:0.75rem;" title="Reportar Caída">🚨</button>
                 </form>
@@ -533,11 +549,11 @@ async def dashboard(request: Request):
         "WA_AUTO_SALES_CHECKED": 'checked' if wa_settings.get('auto_send_sales') == 1 else '',
         "WA_AUTO_REPLY_CHECKED": 'checked' if wa_settings.get('auto_reply_enabled', 1) == 1 else '',
         "WA_UPDATED_AT": wa_settings.get('updated_at', 'Predeterminado'),
-        "CW_URL": cw_settings.get('url', 'http://chatwoot-rails:3000'),
+        "CW_URL": cw_settings.get('url', 'https://chat.joif.net'),
         "CW_TOKEN": cw_settings.get('token', ''),
         "CW_ACCOUNT_ID": cw_settings.get('account_id', '1'),
-        "CW_STATUS_COLOR": '#34d399' if cw_settings.get('token') else '#fbbf24',
-        "CW_STATUS_LABEL": '🟢 Configurado y Vinculado' if cw_settings.get('token') else '⚠️ Pendiente de Token',
+        "CW_STATUS_COLOR": '#34d399' if (cw_settings.get('token') and cw_settings.get('token') != 'ZRzCpt75vxkyiUC7H1otEoog') else '#fbbf24',
+        "CW_STATUS_LABEL": '🟢 Configurado y Vinculado' if (cw_settings.get('token') and cw_settings.get('token') != 'ZRzCpt75vxkyiUC7H1otEoog') else '⚠️ Falta Token de Acceso',
         "PAYMENT_ALIAS_MP": payment_settings.get('alias_mp', ''),
         "PAYMENT_CVU_CBU": payment_settings.get('cvu_cbu', ''),
         "PAYMENT_ACCOUNT_HOLDER": payment_settings.get('account_holder', ''),

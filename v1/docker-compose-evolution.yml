@@ -53,6 +53,12 @@ services:
       # Nombre visible en WhatsApp Web
       - CONFIG_SESSION_PHONE_CLIENT=Streaming CRM Bot
       - QRCODE_LIMIT=30
+
+      # Integración con Chatwoot
+      - CHATWOOT_ENABLED=true
+      - CHATWOOT_MESSAGE_READ=true
+      - CHATWOOT_MESSAGE_DELETE=true
+      - CHATWOOT_BOT_CONTACT=true
     volumes:
       # Persistencia de credenciales de WhatsApp y sesiones activas
       - evolution_instances:/evolution/instances

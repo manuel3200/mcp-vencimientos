@@ -563,7 +563,7 @@ async def fetch_evolution_contacts() -> List[Dict[str, Any]]:
 
     for method, url, body in endpoints:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=15.0) as client:
                 if method == "POST":
                     resp = await client.post(url, headers=headers, json=body or {})
                 else:
@@ -576,8 +576,13 @@ async def fetch_evolution_contacts() -> List[Dict[str, Any]]:
                         if valid_items:
                             logger.info(f"Se obtuvieron {len(valid_items)} contactos de WhatsApp vía Evolution API ({url}).")
                             return valid_items
-                    elif isinstance(data, dict) and "contacts" in data and isinstance(data["contacts"], list):
-                        return [x for x in data["contacts"] if isinstance(x, dict)]
+                    elif isinstance(data, dict):
+                        for key in ("contacts", "payload", "data"):
+                            if key in data and isinstance(data[key], list):
+                                valid_items = [x for x in data[key] if isinstance(x, dict)]
+                                if valid_items:
+                                    logger.info(f"Se obtuvieron {len(valid_items)} contactos de WhatsApp vía Evolution API ({url}).")
+                                    return valid_items
         except Exception as e:
             logger.debug(f"Endpoint Evolution {url} no disponible: {e}")
             continue
@@ -587,7 +592,7 @@ async def fetch_evolution_contacts() -> List[Dict[str, Any]]:
 
 async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
     """Sincroniza los nombres reales de la agenda de WhatsApp y del CRM hacia los contactos de Chatwoot.
-    Reemplaza nombres que provienen del 'pushName' (ej: 'Samu☠️') por el nombre real de agenda (ej: 'Samuel Martinez').
+    Reemplaza nombres que provienen del 'pushName' (ej: 'Samu☠️', '😴😴') por el nombre real de agenda (ej: 'Samuel Martinez', 'Lautaro Yahari').
     """
     try:
         cfg = get_chatwoot_config()
@@ -596,24 +601,51 @@ async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
 
         # 1. Obtener contactos de la agenda de WhatsApp (Evolution API)
         evo_name_by_phone: Dict[str, str] = {}
+        evo_by_last8: Dict[str, str] = {}
         try:
             evo_contacts = await fetch_evolution_contacts()
             for ec in evo_contacts:
                 if not isinstance(ec, dict):
                     continue
-                num = re.sub(r'[^0-9]', '', str(ec.get("number") or ec.get("id") or ""))
-                agenda_name = str(ec.get("name") or "").strip()
-                if agenda_name and agenda_name != num:
-                    if len(num) >= 8:
-                        evo_name_by_phone[num] = agenda_name
-                        if num.startswith("549") and len(num) > 10:
-                            evo_name_by_phone[num[3:]] = agenda_name
-                            evo_name_by_phone["54" + num[3:]] = agenda_name
+                raw_ident = str(ec.get("remoteJid") or ec.get("jid") or ec.get("id") or ec.get("number") or "")
+                if "@g.us" in raw_ident:
+                    continue  # Ignorar grupos
+                raw_num = raw_ident.split("@")[0]
+                num = re.sub(r'[^0-9]', '', raw_num)
+                if not num or len(num) < 8 or len(num) > 16:
+                    continue
+
+                # Prioridad para el nombre: name (agenda) > verifiedName > pushName (si es texto legible)
+                agenda_name = str(ec.get("name") or ec.get("verifiedName") or "").strip()
+                if not agenda_name:
+                    p_name = str(ec.get("pushName") or "").strip()
+                    if p_name and re.search(r'[a-zA-ZáéíóúÁÉÍÓÚñÑ]{3,}', p_name):
+                        agenda_name = p_name
+
+                if not agenda_name or agenda_name == num:
+                    continue
+
+                # Mapear variaciones
+                evo_name_by_phone[num] = agenda_name
+                if num.startswith("549") and len(num) >= 12:
+                    nat10 = num[3:]
+                    evo_name_by_phone[nat10] = agenda_name
+                    evo_name_by_phone["54" + nat10] = agenda_name
+                elif num.startswith("54") and len(num) >= 11:
+                    nat10 = num[2:]
+                    evo_name_by_phone[nat10] = agenda_name
+                    evo_name_by_phone["549" + nat10] = agenda_name
+
+                if len(num) >= 8:
+                    evo_by_last8[num[-8:]] = agenda_name
+
+            logger.info(f"Cargados {len(evo_name_by_phone)} índices telefónicos de agenda WhatsApp ({len(evo_by_last8)} sufijos únicos).")
         except Exception as e:
             logger.warning(f"No se pudieron cargar contactos de Evolution API: {e}")
 
         # 2. Obtener clientes del CRM local
         crm_name_by_phone: Dict[str, str] = {}
+        crm_by_last8: Dict[str, str] = {}
         try:
             crm_clients = database.list_all_clients()
             for cl in crm_clients:
@@ -621,11 +653,18 @@ async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
                     continue
                 cl_phone = database.clean_whatsapp_phone(cl.get("whatsapp", ""))
                 cl_name = str(cl.get("name") or "").strip()
-                if cl_phone and cl_name and not cl_name.lower().startswith("whatsapp"):
+                if cl_phone and cl_name and not cl_name.lower().startswith("whatsapp") and len(cl_phone) >= 8:
                     crm_name_by_phone[cl_phone] = cl_name
-                    if cl_phone.startswith("549") and len(cl_phone) > 10:
-                        crm_name_by_phone[cl_phone[3:]] = cl_name
-                        crm_name_by_phone["54" + cl_phone[3:]] = cl_name
+                    if cl_phone.startswith("549") and len(cl_phone) >= 12:
+                        nat10 = cl_phone[3:]
+                        crm_name_by_phone[nat10] = cl_name
+                        crm_name_by_phone["54" + nat10] = cl_name
+                    elif cl_phone.startswith("54") and len(cl_phone) >= 11:
+                        nat10 = cl_phone[2:]
+                        crm_name_by_phone[nat10] = cl_name
+                        crm_name_by_phone["549" + nat10] = cl_name
+                    if len(cl_phone) >= 8:
+                        crm_by_last8[cl_phone[-8:]] = cl_name
         except Exception as e:
             logger.warning(f"No se pudieron cargar clientes del CRM: {e}")
 
@@ -662,29 +701,46 @@ async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
                         continue
 
                 clean_p = re.sub(r'[^0-9]', '', cw_phone_raw)
-                # Un número válido de WhatsApp tiene entre 8 y 15 dígitos
-                if not clean_p or len(clean_p) < 8 or len(clean_p) > 15:
+                # Un número válido de WhatsApp tiene entre 8 y 16 dígitos
+                if not clean_p or len(clean_p) < 8 or len(clean_p) > 16:
                     continue
 
                 target_name = None
                 source = ""
 
-                # Prioridad 1: Agenda de WhatsApp (Evolution)
-                for k, v in evo_name_by_phone.items():
-                    if k in clean_p or clean_p in k:
-                        target_name = v
-                        source = "Agenda WhatsApp"
-                        break
+                # Prioridad 1: Agenda de WhatsApp (Evolution API)
+                if clean_p in evo_name_by_phone:
+                    target_name = evo_name_by_phone[clean_p]
+                    source = "Agenda WhatsApp (Directo)"
+                elif clean_p.startswith("549") and ("54" + clean_p[3:]) in evo_name_by_phone:
+                    target_name = evo_name_by_phone["54" + clean_p[3:]]
+                    source = "Agenda WhatsApp (54 normalizado)"
+                elif clean_p.startswith("549") and clean_p[3:] in evo_name_by_phone:
+                    target_name = evo_name_by_phone[clean_p[3:]]
+                    source = "Agenda WhatsApp (Nacional 10d)"
+                elif clean_p.startswith("54") and not clean_p.startswith("549") and ("549" + clean_p[2:]) in evo_name_by_phone:
+                    target_name = evo_name_by_phone["549" + clean_p[2:]]
+                    source = "Agenda WhatsApp (549 normalizado)"
+                elif len(clean_p) >= 8 and clean_p[-8:] in evo_by_last8:
+                    target_name = evo_by_last8[clean_p[-8:]]
+                    source = "Agenda WhatsApp (Sufijo 8d)"
 
                 # Prioridad 2: CRM Local
                 if not target_name:
-                    for k, v in crm_name_by_phone.items():
-                        if k in clean_p or clean_p in k:
-                            target_name = v
-                            source = "CRM"
-                            break
+                    if clean_p in crm_name_by_phone:
+                        target_name = crm_name_by_phone[clean_p]
+                        source = "CRM (Directo)"
+                    elif clean_p.startswith("549") and ("54" + clean_p[3:]) in crm_name_by_phone:
+                        target_name = crm_name_by_phone["54" + clean_p[3:]]
+                        source = "CRM (54 normalizado)"
+                    elif clean_p.startswith("549") and clean_p[3:] in crm_name_by_phone:
+                        target_name = crm_name_by_phone[clean_p[3:]]
+                        source = "CRM (Nacional 10d)"
+                    elif len(clean_p) >= 8 and clean_p[-8:] in crm_by_last8:
+                        target_name = crm_by_last8[clean_p[-8:]]
+                        source = "CRM (Sufijo 8d)"
 
-                # Prioridad 3: Búsqueda flexible en CRM
+                # Prioridad 3: Búsqueda flexible en DB
                 if not target_name:
                     try:
                         c_found = database.search_client(clean_p)
@@ -694,7 +750,9 @@ async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
                     except Exception:
                         pass
 
-                if target_name and target_name != cw_name:
+                # Comprobar si el nombre actual en Chatwoot difiere o si es un pushName/emoji
+                is_emoji_or_special = bool(re.search(r'[\U00010000-\U0010ffff]', cw_name) or cw_name.count('?') >= 2)
+                if target_name and (target_name != cw_name or is_emoji_or_special):
                     try:
                         up_res = await update_chatwoot_contact(contact_id=int(cw_id), name=target_name)
                         if up_res.get("success"):
@@ -706,13 +764,14 @@ async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
                                 "new_name": target_name,
                                 "source": source
                             })
+                            logger.info(f"Chatwoot #{cw_id} ({cw_phone_raw}) actualizado: '{cw_name}' -> '{target_name}' vía {source}")
                     except Exception as e:
                         logger.warning(f"Error actualizando contacto Chatwoot #{cw_id}: {e}")
 
             if len(cw_contacts) < 15:
                 break
             page += 1
-            if page > 20:
+            if page > 50:
                 break
 
         return {
@@ -786,7 +845,7 @@ async def send_chatwoot_message(conversation_id: int, content: str, private: boo
 async def setup_chatwoot_webhook(webhook_url: str = "") -> Dict[str, Any]:
     """Registra o actualiza el webhook en Chatwoot para recibir eventos de mensajes de agentes."""
     cfg = get_chatwoot_config()
-    token = (cfg.get("token") or "").strip()
+    token = (cfg.get("token") or "ZRzCpt75vxkyiUC7H1otEoog").strip()
     if not cfg.get("enabled") or not token:
         return {
             "success": False,
@@ -818,10 +877,24 @@ async def setup_chatwoot_webhook(webhook_url: str = "") -> Dict[str, Any]:
                 # Comprobar si ya existe
                 check_resp = await client.get(url, headers=headers)
                 if check_resp.status_code == 200:
-                    existing = check_resp.json().get("payload", [])
-                    for w in existing:
-                        if w.get("url") == target_url:
+                    raw_data = check_resp.json()
+                    webhooks_list = []
+                    if isinstance(raw_data, list):
+                        webhooks_list = raw_data
+                    elif isinstance(raw_data, dict):
+                        p = raw_data.get("payload")
+                        if isinstance(p, dict):
+                            webhooks_list = p.get("webhooks", [])
+                        elif isinstance(p, list):
+                            webhooks_list = p
+                        elif "webhooks" in raw_data and isinstance(raw_data["webhooks"], list):
+                            webhooks_list = raw_data["webhooks"]
+
+                    for w in webhooks_list:
+                        if isinstance(w, dict) and w.get("url") == target_url:
+                            logger.info(f"Webhook ya registrado en Chatwoot: #{w.get('id')} -> {target_url}")
                             return {"success": True, "data": w, "already_exists": True}
+
                 elif check_resp.status_code == 401:
                     return {
                         "success": False,

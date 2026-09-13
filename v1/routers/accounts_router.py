@@ -41,6 +41,18 @@ async def mark_fallen_api(account_id: int, request: Request):
     database.mark_account_fallen(str(account_id), reason="Marcada desde el Panel")
     return RedirectResponse(url="/", status_code=302)
 
+@router.post("/api/report-master-fallen")
+async def report_master_fallen_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    email = str(form.get("email", "")).strip()
+    if email:
+        database.mark_entire_master_account_fallen(email, reason="Caída de cuenta completa reportada desde el Panel")
+    return RedirectResponse(url="/#screens", status_code=303)
+
+
 @router.post("/api/auto-replace/{account_id}")
 async def auto_replace_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))

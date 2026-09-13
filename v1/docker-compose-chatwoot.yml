@@ -8,10 +8,10 @@ version: '3.8'
 
 services:
   # ----------------------------------------------------------------------------
-  # 1. Base de datos PostgreSQL con soporte Vectorial (Oficial Chatwoot ARM64)
+  # 1. Base de datos PostgreSQL 15 (Probada y 100% compatible con ARM64)
   # ----------------------------------------------------------------------------
   chatwoot-postgres:
-    image: pgvector/pgvector:pg16
+    image: postgres:15-alpine
     container_name: chatwoot-postgres
     restart: always
     environment:
@@ -19,7 +19,7 @@ services:
       POSTGRES_USER: chatwoot
       POSTGRES_PASSWORD: chatwoot_db_pass_2026
     volumes:
-      - chatwoot_postgres_data:/var/lib/postgresql/data
+      - chatwoot_db_data:/var/lib/postgresql/data
     networks:
       - chatwoot-net
 
@@ -84,7 +84,7 @@ services:
       - chatwoot-postgres
       - chatwoot-redis
     entrypoint: docker/entrypoints/rails.sh
-    command: ["sh", "-c", "sleep 8 && bundle exec sidekiq -C config/sidekiq.yml"]
+    command: ["sh", "-c", "sleep 10 && bundle exec sidekiq -C config/sidekiq.yml"]
     environment:
       - SECRET_KEY_BASE=j2ZWinsXioaVhCGTbxm7OSQTgJkxNGs0VIEh6DKEl80KUXzzIEhG87mewbYEHfw4
       - FRONTEND_URL=http://localhost:3000
@@ -110,8 +110,8 @@ services:
 # Persistencia de Datos
 # ------------------------------------------------------------------------------
 volumes:
-  chatwoot_postgres_data:
-    name: chatwoot_postgres_data
+  chatwoot_db_data:
+    name: chatwoot_db_data
   chatwoot_redis_data:
     name: chatwoot_redis_data
   chatwoot_storage_data:

@@ -1,6 +1,7 @@
 version: '3.8'
 
 services:
+  # Base de Datos PostgreSQL integrada y liviana (~80MB RAM)
   evolution-postgres:
     image: postgres:15-alpine
     container_name: evolution-postgres
@@ -14,6 +15,7 @@ services:
     networks:
       - evolution-net
 
+  # Microservicio Oficial Evolution API v2 (WhatsApp Baileys)
   evolution-api:
     image: evoapicloud/evolution-api:v2.3.7
     container_name: evolution-api
@@ -23,14 +25,14 @@ services:
     ports:
       - "8081:8080"
     environment:
-      # URL publica o interna de acceso a la API
+      # URL pública o interna de acceso a la API
       - SERVER_URL=http://localhost:8081
       - DOCKER_ENV=true
       
       # Clave Secreta Global (API Key) para autenticar las peticiones del CRM
-      - AUTHENTICATION_API_KEY=mcp-evolution-key-2026
+      - AUTHENTICATION_API_KEY=st@sFXf3gcz!C$
       
-      # Base de Datos PostgreSQL integrada
+      # Conexión a la base de datos PostgreSQL integrada
       - DATABASE_PROVIDER=postgresql
       - DATABASE_CONNECTION_URI=postgresql://evolution:evolution_pass_2026@evolution-postgres:5432/evolution_db?schema=evolution_api
       - DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange
@@ -45,7 +47,7 @@ services:
       - DATABASE_SAVE_IS_ON_WHATSAPP_DAYS=7
       - DATABASE_DELETE_MESSAGE=true
 
-      # Configuracion de Logging
+      # Configuración de Logging
       - LOG_LEVEL=ERROR,WARN,INFO
       - DEL_INSTANCE=false
       - CACHE_REDIS_ENABLED=false
@@ -54,7 +56,7 @@ services:
       - CONFIG_SESSION_PHONE_CLIENT=Streaming CRM Bot
       - QRCODE_LIMIT=30
 
-      # Integración con Chatwoot
+      # Habilitar integración nativa con Chatwoot
       - CHATWOOT_ENABLED=true
       - CHATWOOT_MESSAGE_READ=true
       - CHATWOOT_MESSAGE_DELETE=true
@@ -64,6 +66,7 @@ services:
       - evolution_instances:/evolution/instances
     networks:
       - evolution-net
+      - chatwoot-net
 
 volumes:
   evolution_instances:
@@ -74,3 +77,5 @@ volumes:
 networks:
   evolution-net:
     name: evolution-net
+  chatwoot-net:
+    external: true

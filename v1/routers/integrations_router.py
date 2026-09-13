@@ -439,7 +439,7 @@ async def api_settings_chatwoot(
         auto_sync=1 if auto_sync in ("1", "on", "true") else (1 if auto_sync is None else 0)
     )
 
-    if clean_token and clean_token != "ZRzCpt75vxkyiUC7H1otEoog":
+    if clean_token:
         test_res = await whatsapp_client.test_chatwoot_connection(url=clean_url, token=clean_token, account_id=clean_acc)
         if test_res.get("success"):
             user_info = test_res.get("user") or {}

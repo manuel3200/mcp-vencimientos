@@ -291,7 +291,9 @@ def get_chatwoot_config() -> Dict[str, Any]:
 
 def get_chatwoot_headers(token: str) -> Dict[str, str]:
     return {
+        "api-access-token": token,
         "api_access_token": token,
+        "HTTP_API_ACCESS_TOKEN": token,
         "Content-Type": "application/json"
     }
 
@@ -303,7 +305,7 @@ async def test_chatwoot_connection(url: str = "", token: str = "", account_id: s
     target_token = (token or cfg.get("token") or "").strip()
     target_acc = str(account_id or cfg.get("account_id") or "1").strip()
 
-    if not target_token or target_token == "ZRzCpt75vxkyiUC7H1otEoog":
+    if not target_token:
         return {
             "success": False,
             "error": "Falta ingresar el Token de acceso de Chatwoot. En chat.joif.net ve a Perfil (abajo a la izquierda) -> Configuración de perfil -> Token de acceso y cópialo."
@@ -498,7 +500,7 @@ async def send_chatwoot_message(conversation_id: int, content: str, private: boo
     """Envía un mensaje o una nota privada a una conversación en Chatwoot."""
     cfg = get_chatwoot_config()
     token = (cfg.get("token") or "").strip()
-    if not cfg.get("enabled") or not token or token == "ZRzCpt75vxkyiUC7H1otEoog":
+    if not cfg.get("enabled") or not token:
         return {"success": False, "error": "Chatwoot no está habilitado o falta un Token de acceso válido."}
 
     base_urls = [cfg["url"]]
@@ -538,7 +540,7 @@ async def setup_chatwoot_webhook(webhook_url: str = "") -> Dict[str, Any]:
     """Registra o actualiza el webhook en Chatwoot para recibir eventos de mensajes de agentes."""
     cfg = get_chatwoot_config()
     token = (cfg.get("token") or "").strip()
-    if not cfg.get("enabled") or not token or token == "ZRzCpt75vxkyiUC7H1otEoog":
+    if not cfg.get("enabled") or not token:
         return {
             "success": False,
             "error": "Falta configurar un Token de acceso válido de Chatwoot. Configúralo primero en la pestaña de integraciones."
@@ -602,7 +604,7 @@ async def setup_chatwoot_canned_responses() -> Dict[str, Any]:
     """Crea los atajos y respuestas predefinidas /nc en Chatwoot para autocompletado en el chat."""
     cfg = get_chatwoot_config()
     token = (cfg.get("token") or "").strip()
-    if not cfg.get("enabled") or not token or token == "ZRzCpt75vxkyiUC7H1otEoog":
+    if not cfg.get("enabled") or not token:
         return {
             "success": False,
             "error": "Falta configurar tu Token de acceso de Chatwoot. Ve a Chatwoot (chat.joif.net) -> Perfil (abajo a la izquierda) -> Configuración de perfil -> Token de acceso, pégalo en el CRM y haz clic en Guardar Chatwoot."

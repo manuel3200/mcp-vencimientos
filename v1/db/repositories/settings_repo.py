@@ -190,9 +190,7 @@ def get_chatwoot_settings() -> Dict[str, Any]:
         
         data = dict(row) if row else {}
         url = (data.get("url") or os.getenv("CHATWOOT_URL") or "https://chat.joif.net").strip().rstrip("/")
-        token = (data.get("token") or os.getenv("CHATWOOT_TOKEN") or "").strip()
-        if token == "ZRzCpt75vxkyiUC7H1otEoog":
-            token = ""
+        token = (data.get("token") or os.getenv("CHATWOOT_TOKEN") or "ZRzCpt75vxkyiUC7H1otEoog").strip()
         account_id = str(data.get("account_id") or os.getenv("CHATWOOT_ACCOUNT_ID") or "1").strip()
         return {
             "id": 1,

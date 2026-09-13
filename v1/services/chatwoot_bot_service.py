@@ -75,21 +75,29 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
     if not content.startswith("/"):
         return {"status": "ignored", "reason": "not_a_command"}
 
-    # Seguridad: Sólo procesar comandos emitidos por un usuario o agente humano (no contactos ni bots)
+    logger.info(f"Comando de Chatwoot recibido: '{content}'")
+
+    # Seguridad: Sólo procesar comandos emitidos por un agente o notas privadas internas
+    is_private = bool(body.get("private", False))
+    message_type = (body.get("message_type") or "").lower()
     sender = body.get("sender") or {}
     sender_type = (sender.get("type") or "").lower()
-    if sender_type not in ("user", "agent"):
+
+    is_agent = is_private or sender_type in ("user", "agent") or message_type == "outgoing"
+    if not is_agent:
+        logger.info(f"Comando Chatwoot omitido: no es de agente (sender_type={sender_type}, is_private={is_private})")
         return {"status": "ignored", "reason": "not_from_agent"}
 
     conversation = body.get("conversation") or {}
-    conv_id = conversation.get("id")
+    conv_id = conversation.get("id") or body.get("conversation_id")
     if not conv_id:
+        logger.warning("Comando Chatwoot omitido: falta conversation_id")
         return {"status": "ignored", "reason": "no_conversation_id"}
 
-    meta = conversation.get("meta") or {}
-    sender_meta = meta.get("sender") or {}
+    meta = conversation.get("meta") or body.get("meta") or {}
+    sender_meta = meta.get("sender") or conversation.get("contact") or {}
     contact_name = (sender_meta.get("name") or "").strip() or "Cliente"
-    contact_phone_raw = (sender_meta.get("phone_number") or "").strip()
+    contact_phone_raw = (sender_meta.get("phone_number") or sender_meta.get("identifier") or "").strip()
     clean_phone = database.clean_whatsapp_phone(contact_phone_raw) if contact_phone_raw else ""
 
     # Localizar o registrar al cliente en el CRM

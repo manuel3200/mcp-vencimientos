@@ -433,11 +433,30 @@ def vender_o_asignar_servicio(
         return f"❌ Error al registrar venta: {str(e)}"
 
 @mcp.tool()
-def buscar_cliente(query: str) -> str:
-    """Busca un cliente por nombre/alias ('Maik'), código (CLI-001), WhatsApp o Telegram."""
+async def buscar_cliente(query: str) -> str:
+    """Busca un cliente por nombre/alias ('Carlos', 'Maik'), código (CLI-001), WhatsApp o Telegram."""
     client = database.search_client(query)
     if not client:
-        return f"❌ No se encontró ningún cliente que coincida con '{query}'."
+        # Fallback inteligente: buscar en la libreta de contactos de Chatwoot (WhatsApp)
+        cw_contacts = await whatsapp_client.search_chatwoot_contacts(query)
+        if cw_contacts:
+            c = cw_contacts[0]
+            loc_attr = c.get("additional_attributes") or {}
+            loc_parts = [loc_attr.get("city"), loc_attr.get("country")]
+            loc = ", ".join([p for p in loc_parts if p]) or "No especificada"
+            return (
+                f"📱 <b>Contacto encontrado en Chatwoot (WhatsApp):</b>\n"
+                f"• Nombre: <b>{c.get('name') or 'Sin nombre'}</b>\n"
+                f"• WhatsApp: <code>{c.get('phone_number') or 'No registrado'}</code>\n"
+                f"• Ubicación: {loc}\n"
+                f"• Chatwoot ID: #{c.get('id')}\n\n"
+                f"ℹ️ <i>Este contacto existe en Chatwoot/WhatsApp pero <b>aún no tiene suscripciones o cuenta comercial activa en el CRM</b>.</i>\n\n"
+                f"👉 <b>Acciones que puedes pedirme:</b>\n"
+                f"• <i>'Registra a {c.get('name')} como cliente'</i> para darlo de alta en el CRM.\n"
+                f"• <i>'Mándale un mensaje a {c.get('name')} por WhatsApp diciéndole...'</i>\n"
+                f"• <i>'Véndele una cuenta a {c.get('name')}...'</i>"
+            )
+        return f"❌ No se encontró ningún cliente ni contacto en Chatwoot que coincida con '{query}'."
 
     tipo = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
     lines = [
@@ -1233,8 +1252,8 @@ async def enviar_whatsapp_cliente(
     telefono: str = "",
     delay_segundos: float = 2.0
 ) -> str:
-    """Envía un mensaje de texto por WhatsApp directamente a un cliente usando Evolution API:
-    - destinatario: Puede ser el NOMBRE o alias del cliente registrado (ej: 'Juan Prueba Ortiz', 'Maik', 'CLI-001') o directamente su número de teléfono (+549...).
+    """Envía un mensaje de texto por WhatsApp directamente a un cliente o contacto usando Evolution API:
+    - destinatario: Puede ser el NOMBRE o alias del cliente en el CRM, contacto en Chatwoot, o directamente su número de teléfono (+549...).
     - mensaje: Texto del mensaje a enviar.
     - telefono: (Opcional) Número del cliente si no se especificó en destinatario.
     - delay_segundos: Simulación de escritura anti-baneo en segundos (por defecto 2.0).
@@ -1252,19 +1271,87 @@ async def enviar_whatsapp_cliente(
     clean_digits = re.sub(r'[^0-9]', '', target)
     if re.search(r'[a-zA-Z]', target) or len(clean_digits) < 8:
         client = database.search_client(target)
-        if not client:
-            return f"❌ No se encontró ningún cliente en el sistema con el nombre o código '{target}'."
-        phone_reg = client.get("whatsapp")
-        if not phone_reg:
-            return f"❌ El cliente '{client.get('name')}' ({client.get('client_code')}) está registrado pero no tiene número de WhatsApp configurado."
-        phone_to_send = phone_reg
-        client_name_str = f" a {client.get('name')}"
+        if client:
+            phone_reg = client.get("whatsapp")
+            if not phone_reg:
+                return f"❌ El cliente '{client.get('name')}' ({client.get('client_code')}) está registrado en el CRM pero no tiene número de WhatsApp configurado."
+            phone_to_send = phone_reg
+            client_name_str = f" a {client.get('name')}"
+        else:
+            # Fallback inteligente: buscar en la libreta de contactos de Chatwoot
+            cw_contacts = await whatsapp_client.search_chatwoot_contacts(target)
+            if cw_contacts and cw_contacts[0].get("phone_number"):
+                c = cw_contacts[0]
+                phone_to_send = c["phone_number"]
+                client_name_str = f" a {c.get('name', target)} (Contacto de Chatwoot)"
+            else:
+                return f"❌ No se encontró ningún cliente en el CRM ni contacto en Chatwoot que coincida con '{target}'."
 
     res = await whatsapp_client.send_text_message(phone_to_send, mensaje, delay_seconds=delay_segundos)
     if res.get("success"):
         return f"✅ Mensaje de WhatsApp enviado exitosamente{client_name_str} ({res.get('phone')}) (ID: {res.get('message_id')})."
     else:
         return f"❌ Error al enviar WhatsApp{client_name_str} ({phone_to_send}): {res.get('error')}"
+
+@mcp.tool()
+async def sincronizar_contactos_chatwoot() -> str:
+    """Sincroniza e importa automáticamente todos los contactos de Chatwoot a la base de datos de clientes del CRM."""
+    res = await whatsapp_client.sync_chatwoot_contacts_to_crm()
+    if not res.get("success"):
+        return f"❌ Error al sincronizar contactos de Chatwoot: {res.get('error')}"
+
+    imported = res.get("imported", 0)
+    updated = res.get("updated", 0)
+    contacts = res.get("contacts", [])
+
+    lines = [
+        "🔄 <b>SINCRONIZACIÓN CON CHATWOOT COMPLETADA:</b>",
+        f"• Nuevos clientes dados de alta en el CRM: <b>{imported}</b>",
+        f"• Clientes actualizados: <b>{updated}</b>",
+        f"• Total de contactos procesados: <b>{len(contacts)}</b>\n"
+    ]
+    if contacts:
+        lines.append("👥 <b>Clientes registrados / actualizados:</b>")
+        for c in contacts[:10]:
+            lines.append(f"• [{c['code']}] {c['name']} (WhatsApp: <code>{c.get('whatsapp') or '-'}</code>)")
+        if len(contacts) > 10:
+            lines.append(f"  <i>... y {len(contacts) - 10} más.</i>")
+
+    lines.append("\n🎉 Todos los contactos de Chatwoot ahora están disponibles en el CRM para consultar balances, asignar servicios o enviar mensajes.")
+    return "\n".join(lines)
+
+@mcp.tool()
+def registrar_cliente(
+    nombre: str,
+    whatsapp: str = "",
+    telegram: str = "",
+    tipo_cliente: str = "consumidor_final",
+    notas: str = ""
+) -> str:
+    """Registra o da de alta un nuevo cliente en el CRM asignándole automáticamente su código único CLI-XXX:
+    - nombre: Nombre completo o alias del cliente (ej: 'Carlos Gómez').
+    - whatsapp: Número de teléfono con código de país (ej: '+5493704418231').
+    - telegram: (Opcional) Usuario de Telegram (@usuario).
+    - tipo_cliente: 'consumidor_final' o 'revendedor'.
+    - notas: Notas adicionales sobre el cliente o procedencia.
+    """
+    res = database.find_or_create_client(
+        name=nombre,
+        whatsapp=whatsapp,
+        telegram=telegram,
+        client_type=tipo_cliente,
+        notes=notas
+    )
+    tipo = "👔 Revendedor" if res.get("client_type") == "revendedor" else "👤 Consumidor Final"
+    return (
+        f"✅ CLIENTE REGISTRADO CON ÉXITO EN EL CRM:\n"
+        f"• Código: <code>{res['client_code']}</code>\n"
+        f"• Nombre: <b>{res['name']}</b>\n"
+        f"• Tipo: {tipo}\n"
+        f"• WhatsApp: <code>{res.get('whatsapp') or 'No registrado'}</code>\n"
+        f"• Telegram: {res.get('telegram') or 'No registrado'}\n"
+        f"• Notas: {res.get('notes') or '-'}"
+    )
 
 @mcp.tool()
 def configurar_automatizacion_whatsapp(
@@ -1945,6 +2032,7 @@ async def dashboard(request: Request):
     system_health = system_logger.get_system_health_report()
     recent_logs = system_logger.get_recent_logs(limit=120)
     wa_settings = database.get_whatsapp_api_settings()
+    cw_settings = database.get_chatwoot_settings()
     oauth_cfg = database.get_oauth_settings()
     oauth_client_id = oauth_cfg.get("client_id", "gemini-spark-joif")
     oauth_client_secret = oauth_cfg.get("client_secret", "")
@@ -1971,22 +2059,16 @@ async def dashboard(request: Request):
         """
     elif msg_raw:
         msg_text = "¡Cambios guardados con éxito!"
-        if msg_raw == "catalog_saved":
-            msg_text = "✅ Precio de catálogo guardado correctamente."
-        elif msg_raw == "catalog_deleted":
-            msg_text = "🗑️ Precio eliminado del catálogo."
-        elif msg_raw == "combo_saved":
-            msg_text = "✅ Combo promocional guardado correctamente."
+        if msg_raw == "price_saved":
+            msg_text = "✅ Precio de catálogo configurado correctamente."
+        elif msg_raw == "price_deleted":
+            msg_text = "🗑️ Precio de catálogo eliminado."
+        elif msg_raw == "combo_created":
+            msg_text = "🎉 ¡Combo multipantalla creado con éxito! Ya puedes ofrecerlo en el catálogo."
         elif msg_raw == "combo_deleted":
-            msg_text = "🗑️ Combo promocional eliminado."
-        elif msg_raw == "payment_settings_saved":
-            msg_text = "✅ Datos de cobro (CBU / Alias / MP) actualizados correctamente."
-        elif msg_raw == "template_saved":
-            msg_text = "✅ Plantilla de WhatsApp guardada con éxito."
-        elif msg_raw == "template_reset":
-            msg_text = "🔄 Plantilla restaurada a los valores predeterminados de fábrica."
+            msg_text = "🗑️ Combo eliminado del catálogo."
         elif msg_raw == "supplier_saved":
-            msg_text = "✅ Proveedor mayorista guardado correctamente."
+            msg_text = "👔 Proveedor mayorista guardado con éxito."
         elif msg_raw == "supplier_deleted":
             msg_text = "🗑️ Proveedor mayorista eliminado."
         elif msg_raw == "master_renewed":
@@ -2003,6 +2085,10 @@ async def dashboard(request: Request):
             msg_text = "🔗 Webhook configurado exitosamente en Evolution API."
         elif msg_raw == "wa_chatwoot_configured":
             msg_text = "🎉 ¡Chatwoot vinculado exitosamente con Evolution API! Ya puedes gestionar tus clientes desde la app móvil."
+        elif msg_raw == "chatwoot_synced":
+            imp = request.query_params.get("imported", "0")
+            upd = request.query_params.get("updated", "0")
+            msg_text = f"🔄 ¡Sincronización con Chatwoot completada! {imp} nuevos clientes dados de alta en el CRM, {upd} actualizados."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -3598,15 +3684,15 @@ async def dashboard(request: Request):
                             <form action="/api/whatsapp/setup-chatwoot" method="POST" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; align-items:end;">
                                 <div>
                                     <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">URL de Chatwoot</label>
-                                    <input type="text" name="chatwoot_url" value="http://chatwoot-rails:3000" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                    <input type="text" name="chatwoot_url" value="{cw_settings.get('url', 'http://chatwoot-rails:3000')}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
                                 </div>
                                 <div>
                                     <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Token de Acceso (Chatwoot)</label>
-                                    <input type="password" name="chatwoot_token" placeholder="Ajustes de Perfil -> Access Token" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                    <input type="password" name="chatwoot_token" value="{cw_settings.get('token', '')}" placeholder="Ajustes de Perfil -> Access Token" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
                                 </div>
                                 <div>
                                     <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">ID de Cuenta</label>
-                                    <input type="text" name="account_id" value="1" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                    <input type="text" name="account_id" value="{cw_settings.get('account_id', '1')}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
                                 </div>
                                 <div>
                                     <button type="submit" class="btn" style="width:100%; background:#4f46e5; padding:7px 12px; font-size:0.8rem; font-weight:600;">
@@ -3614,6 +3700,16 @@ async def dashboard(request: Request):
                                     </button>
                                 </div>
                             </form>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid #1e293b; flex-wrap:wrap; gap:10px;">
+                                <div style="font-size:0.75rem; color:#94a3b8; display:flex; align-items:center; gap:6px;">
+                                    <span>Estado: <strong style="color:{'#34d399' if cw_settings.get('token') else '#fbbf24'};">{'🟢 Configurado y Vinculado' if cw_settings.get('token') else '⚠️ Pendiente de Token'}</strong></span>
+                                </div>
+                                <form action="/api/chatwoot/sync" method="POST" style="margin:0;">
+                                    <button type="submit" class="btn" style="background:#059669; padding:6px 14px; font-size:0.8rem; font-weight:600; display:flex; align-items:center; gap:6px;">
+                                        🔄 Sincronizar Contactos de Chatwoot al CRM Ahora
+                                    </button>
+                                </form>
+                            </div>
                         </div>
                     </div>
 
@@ -4792,6 +4888,20 @@ async def api_whatsapp_setup_chatwoot(
         return RedirectResponse(url="/?msg=wa_chatwoot_configured#tab-templates", status_code=302)
     else:
         err = urllib.parse.quote(res.get("error", "Error vinculando Chatwoot con Evolution API"))
+        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+
+@app.post("/api/chatwoot/sync")
+async def api_chatwoot_sync(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = await whatsapp_client.sync_chatwoot_contacts_to_crm()
+    if res.get("success"):
+        imp = res.get("imported", 0)
+        upd = res.get("updated", 0)
+        return RedirectResponse(url=f"/?msg=chatwoot_synced&imported={imp}&updated={upd}#tab-templates", status_code=302)
+    else:
+        err = urllib.parse.quote(res.get("error", "Error sincronizando contactos de Chatwoot"))
         return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
 
 @app.post("/api/whatsapp/test")

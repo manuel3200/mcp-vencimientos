@@ -444,6 +444,20 @@ def init_db():
             """)
             conn.execute("INSERT OR IGNORE INTO whatsapp_api_settings (id) VALUES (1)")
 
+            # 13b. Configuración de Integración Chatwoot
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS chatwoot_settings (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    url TEXT DEFAULT 'http://chatwoot-rails:3000',
+                    token TEXT DEFAULT 'ZRzCpt75vxkyiUC7H1otEoog',
+                    account_id TEXT DEFAULT '1',
+                    enabled INTEGER DEFAULT 1,
+                    auto_sync INTEGER DEFAULT 1,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("INSERT OR IGNORE INTO chatwoot_settings (id, url, token, account_id) VALUES (1, 'http://chatwoot-rails:3000', 'ZRzCpt75vxkyiUC7H1otEoog', '1')")
+
             # 14. Configuración y Tokens OAuth 2.0 (Gemini Spark)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS oauth_clients (
@@ -1367,6 +1381,82 @@ def save_whatsapp_api_settings(
         return get_whatsapp_api_settings()
     finally:
         conn.close()
+
+# ==========================================
+# Integración Chatwoot API
+# ==========================================
+def get_chatwoot_settings() -> Dict[str, Any]:
+    """Obtiene la configuración activa de conexión con Chatwoot."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM chatwoot_settings WHERE id = 1").fetchone()
+        if not row:
+            conn.execute("""
+                INSERT OR IGNORE INTO chatwoot_settings (id, url, token, account_id, enabled, auto_sync)
+                VALUES (1, 'http://chatwoot-rails:3000', 'ZRzCpt75vxkyiUC7H1otEoog', '1', 1, 1)
+            """)
+            conn.commit()
+            row = conn.execute("SELECT * FROM chatwoot_settings WHERE id = 1").fetchone()
+        
+        data = dict(row) if row else {}
+        url = (data.get("url") or os.getenv("CHATWOOT_URL") or "http://chatwoot-rails:3000").strip().rstrip("/")
+        token = (data.get("token") or os.getenv("CHATWOOT_TOKEN") or "ZRzCpt75vxkyiUC7H1otEoog").strip()
+        account_id = str(data.get("account_id") or os.getenv("CHATWOOT_ACCOUNT_ID") or "1").strip()
+        return {
+            "id": 1,
+            "url": url,
+            "token": token,
+            "account_id": account_id,
+            "enabled": int(data.get("enabled", 1)),
+            "auto_sync": int(data.get("auto_sync", 1))
+        }
+    finally:
+        conn.close()
+
+def save_chatwoot_settings(
+    url: str = "http://chatwoot-rails:3000",
+    token: str = "",
+    account_id: str = "1",
+    enabled: int = 1,
+    auto_sync: int = 1
+) -> Dict[str, Any]:
+    """Guarda o actualiza las credenciales y URL de Chatwoot."""
+    conn = get_connection()
+    try:
+        clean_url = (url or "http://chatwoot-rails:3000").strip().rstrip("/")
+        clean_token = token.strip()
+        clean_acc = str(account_id or "1").strip()
+        with conn:
+            conn.execute("""
+                INSERT INTO chatwoot_settings (id, url, token, account_id, enabled, auto_sync, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    url = excluded.url,
+                    token = CASE WHEN length(excluded.token) > 0 THEN excluded.token ELSE chatwoot_settings.token END,
+                    account_id = excluded.account_id,
+                    enabled = excluded.enabled,
+                    auto_sync = excluded.auto_sync,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (clean_url, clean_token, clean_acc, int(enabled), int(auto_sync)))
+        return get_chatwoot_settings()
+    finally:
+        conn.close()
+
+def register_or_update_client(
+    name: str,
+    whatsapp: str = "",
+    telegram: str = "",
+    client_type: str = "consumidor_final",
+    notes: str = ""
+) -> Dict[str, Any]:
+    """Registra un nuevo cliente o actualiza uno existente."""
+    return find_or_create_client(
+        name=name,
+        whatsapp=whatsapp,
+        telegram=telegram,
+        client_type=client_type,
+        notes=notes
+    )
 
 # ==========================================
 # Autenticación y Tokens OAuth 2.0 (Gemini Spark)

@@ -26,7 +26,14 @@ services:
     volumes:
       # Volumen persistente para la base de datos SQLite y usuarios
       - mcp_data:/app/data
+    networks:
+      - default
+      - chatwoot-net
 
 volumes:
   mcp_data:
     name: gemini_mcp_data
+
+networks:
+  chatwoot-net:
+    external: true

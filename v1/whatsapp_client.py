@@ -257,6 +257,12 @@ async def configure_chatwoot(
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code in (200, 201):
                 logger.info(f"Chatwoot configurado exitosamente en Evolution API para '{config['instance_name']}'")
+                database.save_chatwoot_settings(
+                    url=chatwoot_url.strip(),
+                    token=chatwoot_token.strip(),
+                    account_id=str(account_id).strip(),
+                    enabled=1
+                )
                 return {"success": True, "data": resp.json()}
             else:
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
@@ -277,5 +283,158 @@ async def get_chatwoot_status() -> Dict[str, Any]:
             else:
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
     except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def get_chatwoot_config() -> Dict[str, Any]:
+    """Obtiene la configuración activa de Chatwoot desde la base de datos."""
+    return database.get_chatwoot_settings()
+
+def get_chatwoot_headers(token: str) -> Dict[str, str]:
+    return {
+        "api_access_token": token,
+        "Content-Type": "application/json"
+    }
+
+async def search_chatwoot_contacts(query: str) -> List[Dict[str, Any]]:
+    """Busca contactos en Chatwoot por nombre, teléfono o correo."""
+    cfg = get_chatwoot_config()
+    token = cfg.get("token") or ""
+    if not cfg.get("enabled") or not token:
+        return []
+
+    clean_q = str(query or "").strip()
+    if not clean_q:
+        return []
+
+    # Probar primero URL configurada (interna docker o externa)
+    base_urls = [cfg["url"]]
+    if "chatwoot-rails" in cfg["url"]:
+        base_urls.append("https://chat.joif.net")
+    elif "chat.joif.net" in cfg["url"]:
+        base_urls.append("http://chatwoot-rails:3000")
+
+    for base_url in base_urls:
+        url = f"{base_url.rstrip('/')}/api/v1/accounts/{cfg['account_id']}/contacts/search"
+        headers = get_chatwoot_headers(token)
+        params = {"q": clean_q}
+
+        try:
+            async with httpx.AsyncClient(timeout=8.0, verify=False) as client:
+                resp = await client.get(url, headers=headers, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    payload = data.get("payload", [])
+                    if payload:
+                        return payload
+                elif resp.status_code == 401:
+                    logger.warning("Token de Chatwoot inválido o expirado.")
+                    break
+        except Exception as e:
+            logger.debug(f"Fallo al conectar con Chatwoot ({base_url}): {e}")
+            continue
+
+    return []
+
+async def list_chatwoot_contacts(page: int = 1) -> List[Dict[str, Any]]:
+    """Lista contactos registrados en Chatwoot con paginación."""
+    cfg = get_chatwoot_config()
+    token = cfg.get("token") or ""
+    if not cfg.get("enabled") or not token:
+        return []
+
+    base_urls = [cfg["url"]]
+    if "chatwoot-rails" in cfg["url"]:
+        base_urls.append("https://chat.joif.net")
+    elif "chat.joif.net" in cfg["url"]:
+        base_urls.append("http://chatwoot-rails:3000")
+
+    for base_url in base_urls:
+        url = f"{base_url.rstrip('/')}/api/v1/accounts/{cfg['account_id']}/contacts"
+        headers = get_chatwoot_headers(token)
+        params = {"page": page}
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                resp = await client.get(url, headers=headers, params=params)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    return data.get("payload", [])
+        except Exception as e:
+            logger.debug(f"Fallo al listar contactos de Chatwoot ({base_url}): {e}")
+            continue
+
+    return []
+
+async def sync_chatwoot_contacts_to_crm() -> Dict[str, Any]:
+    """Importa o actualiza todos los contactos de Chatwoot a la tabla de clientes del CRM."""
+    cfg = get_chatwoot_config()
+    if not cfg.get("enabled"):
+        return {"success": False, "error": "La integración con Chatwoot no está habilitada."}
+
+    page = 1
+    total_imported = 0
+    total_updated = 0
+    processed_contacts = []
+
+    try:
+        while True:
+            contacts = await list_chatwoot_contacts(page=page)
+            if not contacts:
+                break
+
+            for c in contacts:
+                name = (c.get("name") or "").strip()
+                phone = (c.get("phone_number") or "").strip()
+                email = (c.get("email") or "").strip()
+                add_attr = c.get("additional_attributes") or {}
+                location = add_attr.get("city") or add_attr.get("country") or ""
+
+                if not name and not phone:
+                    continue
+
+                client_name = name if name else f"WhatsApp {phone}"
+                notes = f"Contacto de Chatwoot (ID: #{c.get('id')})"
+                if location:
+                    notes += f" | Ubicación: {location}"
+                if email:
+                    notes += f" | Email: {email}"
+
+                target_search = phone if phone else client_name
+                existing = database.search_client(target_search)
+                
+                res_client = database.find_or_create_client(
+                    name=client_name,
+                    whatsapp=phone,
+                    client_type="consumidor_final",
+                    notes=notes
+                )
+                if existing:
+                    total_updated += 1
+                else:
+                    total_imported += 1
+
+                processed_contacts.append({
+                    "name": res_client["name"],
+                    "code": res_client["client_code"],
+                    "whatsapp": res_client.get("whatsapp"),
+                    "chatwoot_id": c.get("id"),
+                    "is_new": existing is None
+                })
+
+            if len(contacts) < 15:
+                break
+            page += 1
+            if page > 20:
+                break
+
+        return {
+            "success": True,
+            "imported": total_imported,
+            "updated": total_updated,
+            "total_processed": len(processed_contacts),
+            "contacts": processed_contacts
+        }
+    except Exception as e:
+        logger.error(f"Error sincronizando contactos de Chatwoot: {e}")
         return {"success": False, "error": str(e)}
 

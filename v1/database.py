@@ -3,6 +3,7 @@ import re
 import csv
 import io
 import json
+import base64
 import sqlite3
 import hashlib
 import secrets
@@ -442,6 +443,49 @@ def init_db():
                 )
             """)
             conn.execute("INSERT OR IGNORE INTO whatsapp_api_settings (id) VALUES (1)")
+
+            # 14. Configuración y Tokens OAuth 2.0 (Gemini Spark)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_clients (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    client_id TEXT UNIQUE NOT NULL,
+                    client_secret TEXT NOT NULL,
+                    client_name TEXT DEFAULT 'Gemini Spark',
+                    redirect_uris TEXT DEFAULT '',
+                    enabled INTEGER DEFAULT 1,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+                    code TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    code_challenge TEXT DEFAULT '',
+                    code_challenge_method TEXT DEFAULT '',
+                    user_id TEXT DEFAULT 'admin',
+                    expires_at REAL NOT NULL,
+                    used INTEGER DEFAULT 0
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_tokens (
+                    access_token TEXT PRIMARY KEY,
+                    refresh_token TEXT UNIQUE,
+                    client_id TEXT NOT NULL,
+                    user_id TEXT DEFAULT 'admin',
+                    expires_at REAL NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            oauth_row = conn.execute("SELECT COUNT(*) as count FROM oauth_clients").fetchone()
+            if oauth_row and oauth_row["count"] == 0:
+                def_client_id = "gemini-spark-joif"
+                def_client_secret = f"sec_{secrets.token_hex(20)}"
+                conn.execute("""
+                    INSERT INTO oauth_clients (id, client_id, client_secret, client_name, redirect_uris)
+                    VALUES (1, ?, ?, 'Gemini Spark Connected App', 'https://gemini.google.com')
+                """, (def_client_id, def_client_secret))
     finally:
         conn.close()
 
@@ -1321,6 +1365,173 @@ def save_whatsapp_api_settings(
                     updated_at = CURRENT_TIMESTAMP
             """, (api_url.strip(), api_key.strip(), instance_name.strip(), int(auto_send_expiry), int(auto_send_sales), int(auto_reply_enabled)))
         return get_whatsapp_api_settings()
+    finally:
+        conn.close()
+
+# ==========================================
+# Autenticación y Tokens OAuth 2.0 (Gemini Spark)
+# ==========================================
+def get_oauth_settings() -> Dict[str, Any]:
+    """Obtiene la configuración del cliente OAuth (Client ID y Client Secret)."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM oauth_clients WHERE id = 1").fetchone()
+        if not row:
+            def_client_id = "gemini-spark-joif"
+            def_client_secret = f"sec_{secrets.token_hex(20)}"
+            with conn:
+                conn.execute("""
+                    INSERT OR REPLACE INTO oauth_clients (id, client_id, client_secret, client_name, redirect_uris, enabled)
+                    VALUES (1, ?, ?, 'Gemini Spark Connected App', 'https://gemini.google.com', 1)
+                """, (def_client_id, def_client_secret))
+            row = conn.execute("SELECT * FROM oauth_clients WHERE id = 1").fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+def save_oauth_settings(client_id: str, client_secret: str, redirect_uris: str = "", enabled: int = 1) -> Dict[str, Any]:
+    """Actualiza las credenciales OAuth en la base de datos."""
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO oauth_clients (id, client_id, client_secret, redirect_uris, enabled, updated_at)
+                VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    client_id = excluded.client_id,
+                    client_secret = excluded.client_secret,
+                    redirect_uris = excluded.redirect_uris,
+                    enabled = excluded.enabled,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (client_id.strip(), client_secret.strip(), redirect_uris.strip(), int(enabled)))
+        return get_oauth_settings()
+    finally:
+        conn.close()
+
+def regenerate_oauth_secret() -> Dict[str, Any]:
+    """Regenera un nuevo Client Secret aleatorio y seguro."""
+    new_secret = f"sec_{secrets.token_hex(20)}"
+    current = get_oauth_settings()
+    return save_oauth_settings(current["client_id"], new_secret, current.get("redirect_uris", ""), current.get("enabled", 1))
+
+def validate_oauth_client(client_id: str, client_secret: str) -> bool:
+    """Verifica si el Client ID y Client Secret coinciden con los registrados."""
+    settings = get_oauth_settings()
+    if not settings.get("enabled", 1):
+        return False
+    valid_id = secrets.compare_digest(str(client_id).strip(), str(settings["client_id"]).strip())
+    valid_secret = secrets.compare_digest(str(client_secret).strip(), str(settings["client_secret"]).strip())
+    return valid_id and valid_secret
+
+def create_oauth_auth_code(client_id: str, redirect_uri: str, code_challenge: str = "", code_challenge_method: str = "", user_id: str = "admin") -> str:
+    """Genera un código de autorización OAuth de un solo uso con validez de 5 minutos."""
+    code = f"auth_{secrets.token_urlsafe(32)}"
+    expires_at = time.time() + 300.0  # 5 minutos
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO oauth_auth_codes (code, client_id, redirect_uri, code_challenge, code_challenge_method, user_id, expires_at, used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+            """, (code, client_id.strip(), redirect_uri.strip(), code_challenge.strip(), code_challenge_method.strip(), user_id.strip(), expires_at))
+        return code
+    finally:
+        conn.close()
+
+def verify_and_consume_auth_code(code: str, client_id: str, redirect_uri: str = "", code_verifier: str = "") -> Optional[Dict[str, Any]]:
+    """Verifica un código de autorización OAuth, valida PKCE si aplica, y lo marca como usado."""
+    conn = get_connection()
+    try:
+        with conn:
+            row = conn.execute("SELECT * FROM oauth_auth_codes WHERE code = ?", (code.strip(),)).fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            if data["used"] != 0 or data["expires_at"] < time.time():
+                return None
+            if not secrets.compare_digest(data["client_id"], client_id.strip()):
+                return None
+
+            challenge = data.get("code_challenge", "").strip()
+            method = (data.get("code_challenge_method") or "plain").strip().upper()
+            if challenge:
+                if not code_verifier:
+                    return None
+                if method == "S256":
+                    expected = base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
+                    if not secrets.compare_digest(expected, challenge):
+                        return None
+                elif method == "PLAIN":
+                    if not secrets.compare_digest(code_verifier.strip(), challenge):
+                        return None
+
+            conn.execute("UPDATE oauth_auth_codes SET used = 1 WHERE code = ?", (code.strip(),))
+            return data
+    finally:
+        conn.close()
+
+def create_oauth_tokens(client_id: str, user_id: str = "admin", expires_in_seconds: int = 31536000) -> Dict[str, Any]:
+    """Crea y persiste un Access Token y Refresh Token para el cliente autenticado."""
+    access_token = f"mcp_at_{secrets.token_urlsafe(32)}"
+    refresh_token = f"mcp_rt_{secrets.token_urlsafe(32)}"
+    expires_at = time.time() + expires_in_seconds
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO oauth_tokens (access_token, refresh_token, client_id, user_id, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (access_token, refresh_token, client_id.strip(), user_id.strip(), expires_at))
+        return {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "expires_in": expires_in_seconds,
+            "refresh_token": refresh_token,
+            "scope": "mcp"
+        }
+    finally:
+        conn.close()
+
+def refresh_oauth_token(refresh_token: str, client_id: str, expires_in_seconds: int = 31536000) -> Optional[Dict[str, Any]]:
+    """Renueva un Access Token usando un Refresh Token válido."""
+    conn = get_connection()
+    try:
+        with conn:
+            row = conn.execute("SELECT * FROM oauth_tokens WHERE refresh_token = ?", (refresh_token.strip(),)).fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            if not secrets.compare_digest(data["client_id"], client_id.strip()):
+                return None
+            new_access_token = f"mcp_at_{secrets.token_urlsafe(32)}"
+            new_refresh_token = f"mcp_rt_{secrets.token_urlsafe(32)}"
+            expires_at = time.time() + expires_in_seconds
+            conn.execute("""
+                UPDATE oauth_tokens SET access_token = ?, refresh_token = ?, expires_at = ? WHERE refresh_token = ?
+            """, (new_access_token, new_refresh_token, expires_at, refresh_token.strip()))
+            return {
+                "access_token": new_access_token,
+                "token_type": "Bearer",
+                "expires_in": expires_in_seconds,
+                "refresh_token": new_refresh_token,
+                "scope": "mcp"
+            }
+    finally:
+        conn.close()
+
+def verify_oauth_access_token(access_token: str) -> Optional[Dict[str, Any]]:
+    """Verifica si un Access Token Bearer es válido y no ha expirado."""
+    if not access_token:
+        return None
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM oauth_tokens WHERE access_token = ?", (access_token.strip(),)).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        if data["expires_at"] < time.time():
+            return None
+        return data
     finally:
         conn.close()
 

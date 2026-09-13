@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import base64
 import secrets
 import logging
 import urllib.parse
@@ -1343,6 +1344,366 @@ app = FastAPI(
 
 app.mount("/mcp", mcp_app)
 
+# ==========================================
+# Middleware de Protección OAuth 2.0 para /mcp
+# ==========================================
+@app.middleware("http")
+async def mcp_oauth_guard(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/mcp"):
+        # Permitir discovery público (.well-known)
+        if "/.well-known/" in path:
+            return await call_next(request)
+        
+        # Extraer token Bearer
+        auth_header = request.headers.get("Authorization", "").strip()
+        token = ""
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header[7:].strip()
+        if not token:
+            token = request.query_params.get("access_token", "").strip()
+        
+        oauth_cfg = database.get_oauth_settings()
+        if oauth_cfg.get("enabled", 1):
+            token_data = database.verify_oauth_access_token(token) if token else None
+            if not token_data:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error": "unauthorized",
+                        "message": "Acceso protegido por OAuth 2.0. Se requiere token Bearer válido generado con Client ID y Client Secret."
+                    },
+                    headers={"WWW-Authenticate": 'Bearer error="invalid_token", error_description="The access token is missing or invalid"'}
+                )
+    return await call_next(request)
+
+# ==========================================
+# Endpoints de Descubrimiento OAuth 2.0 (RFC 8414)
+# ==========================================
+@app.get("/.well-known/oauth-authorization-server")
+@app.get("/mcp/.well-known/oauth-authorization-server")
+@app.get("/.well-known/openid-configuration")
+@app.get("/mcp/.well-known/openid-configuration")
+async def oauth_discovery(request: Request):
+    proto = request.headers.get("x-forwarded-proto", "https")
+    host = request.headers.get("host", request.url.netloc)
+    server_origin = f"{proto}://{host}"
+    
+    return {
+        "issuer": server_origin,
+        "authorization_endpoint": f"{server_origin}/oauth/authorize",
+        "token_endpoint": f"{server_origin}/oauth/token",
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported": ["S256", "plain"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "scopes_supported": ["mcp"]
+    }
+
+# ==========================================
+# Plantilla y Endpoints de Autorización OAuth
+# ==========================================
+OAUTH_AUTHORIZE_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autorizar Gemini Spark - Streaming CRM & MCP</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+        .oauth-card { background: #161e2e; border: 1px solid #1e293b; border-radius: 16px; padding: 36px; width: 100%; max-width: 460px; box-shadow: 0 15px 35px -5px rgba(0,0,0,0.6); }
+        .logo-box { background: #1e293b; width: 64px; height: 64px; border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px auto; font-size: 32px; border: 1px solid #38bdf833; }
+        h2 { text-align: center; margin: 0 0 8px 0; font-size: 1.35rem; color: #38bdf8; }
+        p.desc { text-align: center; color: #94a3b8; font-size: 0.9rem; line-height: 1.5; margin: 0 0 20px 0; }
+        .scope-box { background: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
+        .scope-item { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 10px; font-size: 0.85rem; color: #cbd5e1; }
+        .scope-item:last-child { margin-bottom: 0; }
+        .scope-icon { color: #10b981; font-weight: bold; }
+        .info-row { font-size: 0.78rem; color: #64748b; margin-top: 12px; padding-top: 10px; border-top: 1px solid #1e293b; word-break: break-all; }
+        .btn-group { display: flex; gap: 12px; margin-top: 12px; }
+        .btn { flex: 1; padding: 12px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; transition: all 0.2s; text-align: center; text-decoration: none; }
+        .btn-primary { background: #0284c7; color: white; }
+        .btn-primary:hover { background: #0369a1; }
+        .btn-secondary { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+        .btn-secondary:hover { background: #334155; color: #f1f5f9; }
+        .form-group { margin-bottom: 14px; text-align: left; }
+        label { display: block; margin-bottom: 6px; font-size: 0.82rem; color: #cbd5e1; font-weight: 500; }
+        input[type="text"], input[type="password"] { width: 100%; box-sizing: border-box; background: #0b0f19; border: 1px solid #334155; border-radius: 8px; padding: 10px 12px; color: #fff; font-size: 0.9rem; outline: none; }
+        input:focus { border-color: #38bdf8; }
+        .alert-error { background: #7f1d1d33; border: 1px solid #ef4444; color: #fca5a5; padding: 10px; border-radius: 8px; font-size: 0.85rem; margin-bottom: 16px; text-align: center; }
+        .logged-user { display: inline-flex; align-items: center; gap: 6px; background: #0284c722; color: #38bdf8; border: 1px solid #0284c744; padding: 5px 12px; border-radius: 20px; font-size: 0.82rem; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <div class="oauth-card">
+        <div class="logo-box">🤖</div>
+        <h2>Autorizar Gemini Spark</h2>
+        <p class="desc">La aplicación conectada solicita vincularse a tu servidor MCP para gestionar streaming y mensajería.</p>
+        
+        {USER_BLOCK}
+
+        <div class="scope-box">
+            <div class="scope-item">
+                <span class="scope-icon">✓</span>
+                <div><b>Herramientas MCP:</b> Consultar cuentas, clientes, stock y balance financiero.</div>
+            </div>
+            <div class="scope-item">
+                <span class="scope-icon">✓</span>
+                <div><b>WhatsApp & Chatwoot:</b> Despachar cobros y mensajes mediante Evolution API.</div>
+            </div>
+            <div class="scope-item">
+                <span class="scope-icon">✓</span>
+                <div><b>Automatizaciones:</b> Asignar perfiles y reemplazar suscripciones caídas con IA.</div>
+            </div>
+            <div class="info-row">
+                <b>ID de Cliente:</b> <code>{CLIENT_ID}</code><br>
+                <b>URI Redirección:</b> <code>{REDIRECT_URI}</code>
+            </div>
+        </div>
+
+        <form method="POST" action="/oauth/authorize">
+            <input type="hidden" name="client_id" value="{CLIENT_ID}">
+            <input type="hidden" name="redirect_uri" value="{REDIRECT_URI}">
+            <input type="hidden" name="state" value="{STATE}">
+            <input type="hidden" name="code_challenge" value="{CODE_CHALLENGE}">
+            <input type="hidden" name="code_challenge_method" value="{CODE_CHALLENGE_METHOD}">
+            <input type="hidden" name="scope" value="{SCOPE}">
+            
+            {LOGIN_FIELDS}
+
+            <div class="btn-group">
+                <button type="submit" name="action" value="deny" class="btn btn-secondary">Cancelar</button>
+                <button type="submit" name="action" value="allow" class="btn btn-primary">Autorizar Conexión</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
+def render_oauth_authorize_page(
+    client_id: str,
+    redirect_uri: str,
+    state: str = "",
+    code_challenge: str = "",
+    code_challenge_method: str = "plain",
+    scope: str = "",
+    is_logged_in: bool = False,
+    username: str = "",
+    error: str = ""
+) -> str:
+    user_block = ""
+    login_fields = ""
+    
+    if error:
+        user_block += f'<div class="alert-error">⚠️ {error}</div>'
+    
+    if is_logged_in:
+        user_block += f'<div style="text-align:center;"><span class="logged-user">👤 Conectado como: <b>{username}</b></span></div>'
+    else:
+        login_fields = """
+        <div class="form-group">
+            <label>Usuario Administrador:</label>
+            <input type="text" name="username" required placeholder="admin" autocomplete="username">
+        </div>
+        <div class="form-group">
+            <label>Contraseña:</label>
+            <input type="password" name="password" required placeholder="••••••••" autocomplete="current-password">
+        </div>
+        """
+    
+    return (
+        OAUTH_AUTHORIZE_TEMPLATE
+        .replace("{CLIENT_ID}", client_id)
+        .replace("{REDIRECT_URI}", redirect_uri)
+        .replace("{STATE}", state or "")
+        .replace("{CODE_CHALLENGE}", code_challenge or "")
+        .replace("{CODE_CHALLENGE_METHOD}", code_challenge_method or "plain")
+        .replace("{SCOPE}", scope or "mcp")
+        .replace("{USER_BLOCK}", user_block)
+        .replace("{LOGIN_FIELDS}", login_fields)
+    )
+
+@app.get("/oauth/authorize", response_class=HTMLResponse)
+async def oauth_authorize_get(
+    request: Request,
+    client_id: str = "",
+    redirect_uri: str = "",
+    response_type: str = "code",
+    state: str = "",
+    scope: str = "",
+    code_challenge: str = "",
+    code_challenge_method: str = "plain"
+):
+    oauth_cfg = database.get_oauth_settings()
+    clean_client_id = client_id.strip()
+    if not clean_client_id or not secrets.compare_digest(clean_client_id, oauth_cfg["client_id"]):
+        return HTMLResponse(
+            f"<body style='background:#0b0f19;color:#f87171;font-family:sans-serif;padding:40px;text-align:center;'>"
+            f"<h2>❌ Error OAuth: Client ID Inválido</h2>"
+            f"<p>El ID de cliente recibido ('{clean_client_id}') no coincide con el configurado en tu panel.</p>"
+            f"</body>",
+            status_code=400
+        )
+    
+    if not redirect_uri.strip():
+        return HTMLResponse(
+            "<body style='background:#0b0f19;color:#f87171;font-family:sans-serif;padding:40px;text-align:center;'>"
+            "<h2>❌ Error OAuth: Falta redirect_uri</h2>"
+            "</body>",
+            status_code=400
+        )
+
+    user = verify_session_cookie(request.cookies.get("session_token") or request.cookies.get("mcp_session"))
+    return HTMLResponse(render_oauth_authorize_page(
+        client_id=clean_client_id,
+        redirect_uri=redirect_uri.strip(),
+        state=state,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        scope=scope,
+        is_logged_in=bool(user),
+        username=user or ""
+    ))
+
+@app.post("/oauth/authorize")
+async def oauth_authorize_post(
+    request: Request,
+    client_id: str = Form(...),
+    redirect_uri: str = Form(...),
+    state: str = Form(default=""),
+    code_challenge: str = Form(default=""),
+    code_challenge_method: str = Form(default="plain"),
+    scope: str = Form(default=""),
+    action: str = Form(default="allow"),
+    username: str = Form(default=""),
+    password: str = Form(default="")
+):
+    oauth_cfg = database.get_oauth_settings()
+    clean_client_id = client_id.strip()
+    clean_redirect_uri = redirect_uri.strip()
+    
+    if not secrets.compare_digest(clean_client_id, oauth_cfg["client_id"]):
+        raise HTTPException(status_code=400, detail="Client ID inválido")
+    
+    sep = "&" if "?" in clean_redirect_uri else "?"
+    if action != "allow":
+        deny_url = f"{clean_redirect_uri}{sep}error=access_denied"
+        if state:
+            deny_url += f"&state={urllib.parse.quote(state)}"
+        return RedirectResponse(deny_url, status_code=302)
+
+    user = verify_session_cookie(request.cookies.get("session_token") or request.cookies.get("mcp_session"))
+    if not user:
+        clean_u = username.strip().lower()
+        if not database.verify_admin_credentials(clean_u, password.strip()):
+            return HTMLResponse(
+                render_oauth_authorize_page(
+                    client_id=clean_client_id,
+                    redirect_uri=clean_redirect_uri,
+                    state=state,
+                    code_challenge=code_challenge,
+                    code_challenge_method=code_challenge_method,
+                    scope=scope,
+                    is_logged_in=False,
+                    error="Credenciales de administrador incorrectas."
+                ),
+                status_code=401
+            )
+        user = clean_u
+
+    code = database.create_oauth_auth_code(
+        client_id=clean_client_id,
+        redirect_uri=clean_redirect_uri,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        user_id=user
+    )
+
+    redirect_target = f"{clean_redirect_uri}{sep}code={urllib.parse.quote(code)}"
+    if state:
+        redirect_target += f"&state={urllib.parse.quote(state)}"
+    
+    return RedirectResponse(redirect_target, status_code=302)
+
+# ==========================================
+# Endpoint de Token OAuth 2.0 (RFC 6749)
+# ==========================================
+@app.post("/oauth/token")
+async def oauth_token_endpoint(request: Request):
+    content_type = request.headers.get("content-type", "")
+    params = {}
+    if "application/json" in content_type:
+        try:
+            params = await request.json()
+        except Exception:
+            params = {}
+    else:
+        form = await request.form()
+        params = dict(form)
+
+    # Autenticación HTTP Basic Auth
+    auth_header = request.headers.get("authorization", "")
+    client_id = params.get("client_id", "")
+    client_secret = params.get("client_secret", "")
+    
+    if auth_header.lower().startswith("basic "):
+        try:
+            b64_creds = auth_header[6:].strip()
+            decoded = base64.b64decode(b64_creds).decode("utf-8")
+            if ":" in decoded:
+                b_id, b_sec = decoded.split(":", 1)
+                client_id = client_id or b_id
+                client_secret = client_secret or b_sec
+        except Exception:
+            pass
+
+    grant_type = params.get("grant_type", "authorization_code")
+    
+    if not database.validate_oauth_client(client_id, client_secret):
+        return JSONResponse(
+            status_code=401,
+            content={"error": "invalid_client", "error_description": "Client ID o Client Secret no válidos."}
+        )
+
+    if grant_type == "authorization_code":
+        code = params.get("code", "")
+        redirect_uri = params.get("redirect_uri", "")
+        code_verifier = params.get("code_verifier", "")
+        
+        auth_data = database.verify_and_consume_auth_code(
+            code=code,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            code_verifier=code_verifier
+        )
+        if not auth_data:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid_grant", "error_description": "El código de autorización es inválido, ya fue usado o expiró."}
+            )
+        
+        tokens = database.create_oauth_tokens(client_id=client_id, user_id=auth_data.get("user_id", "admin"))
+        return JSONResponse(tokens)
+
+    elif grant_type == "refresh_token":
+        refresh_token = params.get("refresh_token", "")
+        tokens = database.refresh_oauth_token(refresh_token=refresh_token, client_id=client_id)
+        if not tokens:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "invalid_grant", "error_description": "Refresh token inválido o expirado."}
+            )
+        return JSONResponse(tokens)
+
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "unsupported_grant_type", "error_description": f"Tipo de concesión '{grant_type}' no soportado."}
+        )
+
+
 
 # ==========================================
 # 3. Vistas de Autenticación y 2FA
@@ -1582,8 +1943,12 @@ async def dashboard(request: Request):
     suppliers_list = database.get_suppliers()
     master_accounts_list = database.get_master_accounts_overview()
     system_health = system_logger.get_system_health_report()
-    recent_logs = system_logger.get_recent_logs(limit=120)
     wa_settings = database.get_whatsapp_api_settings()
+    oauth_cfg = database.get_oauth_settings()
+    oauth_client_id = oauth_cfg.get("client_id", "gemini-spark-joif")
+    oauth_client_secret = oauth_cfg.get("client_secret", "")
+    oauth_redirect_uris = oauth_cfg.get("redirect_uris", "https://gemini.google.com")
+    oauth_enabled = oauth_cfg.get("enabled", 1)
 
     msg_raw = request.query_params.get("msg", "")
     wa_param = request.query_params.get("wa", "")
@@ -2806,7 +3171,7 @@ async def dashboard(request: Request):
                     </div>
                 </div>
                 <div class="endpoint-banner">
-                    <span><strong>Conexión Gemini Spark:</strong> <code>https://mcp.juanconnect.online/mcp</code></span>
+                    <span><strong>Conexión Gemini Spark:</strong> <code>https://mcp.joif.net/mcp/</code> {'<span style="color:#10b981;">(OAuth 2.0 Protegido 🔒)</span>' if oauth_enabled else '<span style="color:#eab308;">(Público)</span>'}</span>
                     <span>Modo Financiero & CRM Activo</span>
                 </div>
             </div>
@@ -2823,6 +3188,7 @@ async def dashboard(request: Request):
                     <button id="btn-tab-fallen" class="tab-btn" onclick="showTab('tab-fallen')">🚨 Cuentas Caídas ({len(fallen_accounts)})</button>
                     <button id="btn-tab-backup" class="tab-btn" onclick="showTab('tab-backup')">📁 Excel & Backups</button>
                     <button id="btn-tab-logs" class="tab-btn" onclick="showTab('tab-logs'); refreshSystemLogs();">📋 Logs & Diagnóstico</button>
+                    <button id="btn-tab-oauth" class="tab-btn" onclick="showTab('tab-oauth')">🤖 Gemini Spark (OAuth)</button>
                 </div>
 
                 <div id="tab-active" class="tab-content" style="display:block;">
@@ -3523,6 +3889,90 @@ async def dashboard(request: Request):
                         <div id="logs-terminal" class="log-terminal">
                             {initial_logs_html}
                         </div>
+                    </div>
+                </div>
+
+                <div id="tab-oauth" class="tab-content" style="display:none;">
+                    <div style="background:#0b0f19; border:1px solid #1e293b; border-radius:12px; padding:24px; margin-bottom:20px;">
+                        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:16px; margin-bottom:20px; border-bottom:1px solid #1e293b; padding-bottom:16px;">
+                            <div>
+                                <h3 style="margin:0 0 6px 0; color:#38bdf8; font-size:1.2rem; display:flex; align-items:center; gap:8px;">
+                                    🤖 Conexión Segura con Gemini Spark (OAuth 2.0)
+                                    <span class="badge {'badge-ok' if oauth_enabled else 'badge-warn'}" style="font-size:0.75rem;">
+                                        {'🔒 Protección OAuth Activa' if oauth_enabled else '⚠️ Protección Desactivada'}
+                                    </span>
+                                </h3>
+                                <p style="margin:0; color:#94a3b8; font-size:0.85rem; line-height:1.4;">
+                                    Tu servidor MCP exige autenticación estándar OAuth 2.0 (Client ID y Client Secret). Nadie en internet puede usar tus herramientas MCP sin estas credenciales.
+                                </p>
+                            </div>
+                            <form action="/api/oauth/regenerate" method="POST" onsubmit="return confirm('¿Seguro que deseas regenerar el Client Secret? Deberás actualizarlo en Gemini Spark.');">
+                                <button type="submit" class="btn" style="background:#1e293b; border:1px solid #eab308; color:#facc15; font-size:0.82rem; padding:8px 14px; cursor:pointer; border-radius:6px;">
+                                    🔄 Regenerar Secreto de Cliente
+                                </button>
+                            </form>
+                        </div>
+
+                        <!-- Campos para Copiar en Gemini Spark -->
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:24px;">
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:600; text-transform:uppercase;">
+                                    1. Enlace de aplicación (MCP URL)
+                                </label>
+                                <div style="display:flex; gap:8px;">
+                                    <input type="text" id="copy-mcp-url" value="https://mcp.joif.net/mcp/" readonly style="flex:1; background:#0b0f19; border:1px solid #475569; color:#38bdf8; border-radius:6px; padding:8px 10px; font-size:0.88rem; font-family:monospace;">
+                                    <button type="button" onclick="navigator.clipboard.writeText('https://mcp.joif.net/mcp/'); alert('¡Enlace MCP copiado!');" style="background:#0284c7; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:600; font-size:0.8rem;">Copiar</button>
+                                </div>
+                            </div>
+
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:600; text-transform:uppercase;">
+                                    2. ID de cliente (OAuth)
+                                </label>
+                                <div style="display:flex; gap:8px;">
+                                    <input type="text" id="copy-client-id" value="{oauth_client_id}" readonly style="flex:1; background:#0b0f19; border:1px solid #475569; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.88rem; font-family:monospace;">
+                                    <button type="button" onclick="navigator.clipboard.writeText('{oauth_client_id}'); alert('¡ID de cliente copiado!');" style="background:#0284c7; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:600; font-size:0.8rem;">Copiar</button>
+                                </div>
+                            </div>
+
+                            <div style="background:#161e2e; border:1px solid #334155; border-radius:8px; padding:14px;">
+                                <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:6px; font-weight:600; text-transform:uppercase;">
+                                    3. Secreto de cliente (OAuth)
+                                </label>
+                                <div style="display:flex; gap:8px;">
+                                    <input type="password" id="copy-client-secret" value="{oauth_client_secret}" readonly style="flex:1; background:#0b0f19; border:1px solid #475569; color:#facc15; border-radius:6px; padding:8px 10px; font-size:0.88rem; font-family:monospace;">
+                                    <button type="button" onclick="var el=document.getElementById('copy-client-secret'); el.type = el.type==='password'?'text':'password';" style="background:#334155; color:#cbd5e1; border:none; border-radius:6px; padding:8px 10px; cursor:pointer; font-size:0.8rem;">👁️</button>
+                                    <button type="button" onclick="navigator.clipboard.writeText('{oauth_client_secret}'); alert('¡Secreto de cliente copiado!');" style="background:#0284c7; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-weight:600; font-size:0.8rem;">Copiar</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Configuración Avanzada -->
+                        <form action="/api/oauth/settings" method="POST" style="background:#161e2e; border:1px solid #1e293b; border-radius:10px; padding:20px;">
+                            <h4 style="margin:0 0 14px 0; color:#cbd5e1; font-size:0.95rem;">⚙️ Configuración del Servidor OAuth 2.0</h4>
+                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:16px; margin-bottom:16px;">
+                                <div>
+                                    <label style="display:block; font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">ID de Cliente</label>
+                                    <input type="text" name="client_id" value="{oauth_client_id}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">Secreto de Cliente</label>
+                                    <input type="text" name="client_secret" value="{oauth_client_secret}" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.78rem; color:#94a3b8; margin-bottom:4px;">URI de Redirección Autorizadas</label>
+                                    <input type="text" name="redirect_uris" value="{oauth_redirect_uris}" style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:8px 10px; font-size:0.85rem;">
+                                </div>
+                            </div>
+
+                            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                                <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; color:#cbd5e1; cursor:pointer;">
+                                    <input type="checkbox" name="enabled" value="1" {'checked' if oauth_enabled else ''} style="width:16px; height:16px;">
+                                    <b>Exigir autenticación OAuth 2.0 para el servidor MCP</b>
+                                </label>
+                                <button type="submit" class="btn" style="background:#0284c7; color:#fff; padding:8px 16px; border:none; border-radius:6px; font-weight:600; cursor:pointer;">Guardar Ajustes OAuth</button>
+                            </div>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -4362,6 +4812,43 @@ async def api_whatsapp_logout(request: Request):
         raise HTTPException(status_code=401)
     await whatsapp_client.logout_instance()
     return RedirectResponse(url="/?msg=wa_logged_out#tab-templates", status_code=302)
+
+# ==========================================
+# Endpoints de Configuración OAuth 2.0 (Gemini Spark)
+# ==========================================
+@app.get("/api/oauth/settings")
+async def api_oauth_settings_get(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token") or request.cookies.get("mcp_session"))
+    if not user:
+        raise HTTPException(status_code=401)
+    return JSONResponse(database.get_oauth_settings())
+
+@app.post("/api/oauth/settings")
+async def api_oauth_settings_post(
+    request: Request,
+    client_id: str = Form("gemini-spark-joif"),
+    client_secret: str = Form(...),
+    redirect_uris: str = Form("https://gemini.google.com"),
+    enabled: Optional[str] = Form(None)
+):
+    user = verify_session_cookie(request.cookies.get("session_token") or request.cookies.get("mcp_session"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.save_oauth_settings(
+        client_id=client_id.strip(),
+        client_secret=client_secret.strip(),
+        redirect_uris=redirect_uris.strip(),
+        enabled=1 if enabled in ("1", "on", "true") else 0
+    )
+    return RedirectResponse(url="/?msg=oauth_saved#tab-oauth", status_code=302)
+
+@app.post("/api/oauth/regenerate")
+async def api_oauth_regenerate_post(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token") or request.cookies.get("mcp_session"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.regenerate_oauth_secret()
+    return RedirectResponse(url="/?msg=oauth_secret_regenerated#tab-oauth", status_code=302)
 
 @app.post("/api/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):

@@ -115,21 +115,26 @@ async def api_chatwoot_sync(request: Request):
         err = urllib.parse.quote(res.get("error", "Error sincronizando contactos de Chatwoot"))
         return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
 
-@router.post("/api/chatwoot/sync-names")
+@router.api_route("/api/chatwoot/sync-names", methods=["GET", "POST"])
 async def api_chatwoot_sync_names(request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    res = await whatsapp_client.sync_whatsapp_names_to_chatwoot()
-    if res.get("success"):
-        upd = res.get("total_updated", 0)
-        chk = res.get("total_contacts_checked", 0)
-        return RedirectResponse(
-            url=f"/?msg=chatwoot_names_synced&updated={upd}&checked={chk}#integrations",
-            status_code=302
-        )
-    else:
-        err = urllib.parse.quote(res.get("error", "Error sincronizando nombres de WhatsApp a Chatwoot"))
+    try:
+        res = await whatsapp_client.sync_whatsapp_names_to_chatwoot()
+        if res.get("success"):
+            upd = res.get("total_updated", 0)
+            chk = res.get("total_contacts_checked", 0)
+            return RedirectResponse(
+                url=f"/?msg=chatwoot_names_synced&updated={upd}&checked={chk}#integrations",
+                status_code=302
+            )
+        else:
+            err = urllib.parse.quote(res.get("error", "Error sincronizando nombres de WhatsApp a Chatwoot"))
+            return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
+    except Exception as e:
+        logger.error(f"Error en api_chatwoot_sync_names: {e}", exc_info=True)
+        err = urllib.parse.quote(f"Error interno: {str(e)}")
         return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
 
 @router.post("/api/whatsapp/test")

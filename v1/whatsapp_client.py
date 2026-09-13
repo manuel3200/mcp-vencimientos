@@ -563,7 +563,7 @@ async def fetch_evolution_contacts() -> List[Dict[str, Any]]:
 
     for method, url, body in endpoints:
         try:
-            async with httpx.AsyncClient(timeout=12.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 if method == "POST":
                     resp = await client.post(url, headers=headers, json=body or {})
                 else:
@@ -572,10 +572,12 @@ async def fetch_evolution_contacts() -> List[Dict[str, Any]]:
                 if resp.status_code == 200:
                     data = resp.json()
                     if isinstance(data, list):
-                        logger.info(f"Se obtuvieron {len(data)} contactos de la agenda de WhatsApp vía Evolution API ({url}).")
-                        return data
+                        valid_items = [x for x in data if isinstance(x, dict)]
+                        if valid_items:
+                            logger.info(f"Se obtuvieron {len(valid_items)} contactos de WhatsApp vía Evolution API ({url}).")
+                            return valid_items
                     elif isinstance(data, dict) and "contacts" in data and isinstance(data["contacts"], list):
-                        return data["contacts"]
+                        return [x for x in data["contacts"] if isinstance(x, dict)]
         except Exception as e:
             logger.debug(f"Endpoint Evolution {url} no disponible: {e}")
             continue
@@ -587,106 +589,129 @@ async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
     """Sincroniza los nombres reales de la agenda de WhatsApp y del CRM hacia los contactos de Chatwoot.
     Reemplaza nombres que provienen del 'pushName' (ej: 'Samu☠️') por el nombre real de agenda (ej: 'Samuel Martinez').
     """
-    cfg = get_chatwoot_config()
-    if not cfg.get("enabled"):
-        return {"success": False, "error": "Chatwoot no está habilitado."}
+    try:
+        cfg = get_chatwoot_config()
+        if not cfg.get("enabled"):
+            return {"success": False, "error": "Chatwoot no está habilitado."}
 
-    # 1. Obtener contactos de la agenda de WhatsApp (Evolution API)
-    evo_contacts = await fetch_evolution_contacts()
-    evo_name_by_phone: Dict[str, str] = {}
-    for ec in evo_contacts:
-        num = re.sub(r'[^0-9]', '', str(ec.get("number") or ec.get("id") or ""))
-        agenda_name = (ec.get("name") or "").strip()
-        if agenda_name and agenda_name != num:
-            if len(num) >= 8:
-                evo_name_by_phone[num] = agenda_name
-                if num.startswith("549") and len(num) > 10:
-                    evo_name_by_phone[num[3:]] = agenda_name
-                    evo_name_by_phone["54" + num[3:]] = agenda_name
+        # 1. Obtener contactos de la agenda de WhatsApp (Evolution API)
+        evo_name_by_phone: Dict[str, str] = {}
+        try:
+            evo_contacts = await fetch_evolution_contacts()
+            for ec in evo_contacts:
+                if not isinstance(ec, dict):
+                    continue
+                num = re.sub(r'[^0-9]', '', str(ec.get("number") or ec.get("id") or ""))
+                agenda_name = str(ec.get("name") or "").strip()
+                if agenda_name and agenda_name != num:
+                    if len(num) >= 8:
+                        evo_name_by_phone[num] = agenda_name
+                        if num.startswith("549") and len(num) > 10:
+                            evo_name_by_phone[num[3:]] = agenda_name
+                            evo_name_by_phone["54" + num[3:]] = agenda_name
+        except Exception as e:
+            logger.warning(f"No se pudieron cargar contactos de Evolution API: {e}")
 
-    # 2. Obtener clientes del CRM local
-    crm_clients = database.list_all_clients()
-    crm_name_by_phone: Dict[str, str] = {}
-    for cl in crm_clients:
-        cl_phone = database.clean_whatsapp_phone(cl.get("whatsapp", ""))
-        cl_name = (cl.get("name") or "").strip()
-        if cl_phone and cl_name and not cl_name.lower().startswith("whatsapp"):
-            crm_name_by_phone[cl_phone] = cl_name
-            if cl_phone.startswith("549") and len(cl_phone) > 10:
-                crm_name_by_phone[cl_phone[3:]] = cl_name
-                crm_name_by_phone["54" + cl_phone[3:]] = cl_name
+        # 2. Obtener clientes del CRM local
+        crm_name_by_phone: Dict[str, str] = {}
+        try:
+            crm_clients = database.list_all_clients()
+            for cl in crm_clients:
+                if not isinstance(cl, dict):
+                    continue
+                cl_phone = database.clean_whatsapp_phone(cl.get("whatsapp", ""))
+                cl_name = str(cl.get("name") or "").strip()
+                if cl_phone and cl_name and not cl_name.lower().startswith("whatsapp"):
+                    crm_name_by_phone[cl_phone] = cl_name
+                    if cl_phone.startswith("549") and len(cl_phone) > 10:
+                        crm_name_by_phone[cl_phone[3:]] = cl_name
+                        crm_name_by_phone["54" + cl_phone[3:]] = cl_name
+        except Exception as e:
+            logger.warning(f"No se pudieron cargar clientes del CRM: {e}")
 
-    # 3. Recorrer contactos en Chatwoot
-    page = 1
-    total_checked = 0
-    total_updated = 0
-    updated_details = []
+        # 3. Recorrer contactos en Chatwoot
+        page = 1
+        total_checked = 0
+        total_updated = 0
+        updated_details = []
 
-    while True:
-        cw_contacts = await list_chatwoot_contacts(page=page)
-        if not cw_contacts:
-            break
+        while True:
+            cw_contacts = await list_chatwoot_contacts(page=page)
+            if not cw_contacts or not isinstance(cw_contacts, list):
+                break
 
-        for cw_c in cw_contacts:
-            total_checked += 1
-            cw_id = cw_c.get("id")
-            cw_name = (cw_c.get("name") or "").strip()
-            cw_phone_raw = str(cw_c.get("phone_number") or cw_c.get("identifier") or "")
-            clean_p = re.sub(r'[^0-9]', '', cw_phone_raw)
+            for cw_c in cw_contacts:
+                if not isinstance(cw_c, dict):
+                    continue
+                total_checked += 1
+                cw_id = cw_c.get("id")
+                if not cw_id:
+                    continue
+                cw_name = str(cw_c.get("name") or "").strip()
+                cw_phone_raw = str(cw_c.get("phone_number") or cw_c.get("identifier") or "")
+                clean_p = re.sub(r'[^0-9]', '', cw_phone_raw)
 
-            if not clean_p or len(clean_p) < 8:
-                continue
+                if not clean_p or len(clean_p) < 8:
+                    continue
 
-            target_name = None
-            source = ""
+                target_name = None
+                source = ""
 
-            # Prioridad 1: Agenda de WhatsApp (Evolution)
-            for k, v in evo_name_by_phone.items():
-                if k in clean_p or clean_p in k:
-                    target_name = v
-                    source = "Agenda WhatsApp"
-                    break
-
-            # Prioridad 2: CRM Local
-            if not target_name:
-                for k, v in crm_name_by_phone.items():
+                # Prioridad 1: Agenda de WhatsApp (Evolution)
+                for k, v in evo_name_by_phone.items():
                     if k in clean_p or clean_p in k:
                         target_name = v
-                        source = "CRM"
+                        source = "Agenda WhatsApp"
                         break
 
-            # Prioridad 3: Búsqueda flexible en CRM
-            if not target_name:
-                c_found = database.search_client(clean_p)
-                if c_found and c_found.get("name") and not c_found["name"].lower().startswith("whatsapp"):
-                    target_name = c_found["name"]
-                    source = "CRM DB"
+                # Prioridad 2: CRM Local
+                if not target_name:
+                    for k, v in crm_name_by_phone.items():
+                        if k in clean_p or clean_p in k:
+                            target_name = v
+                            source = "CRM"
+                            break
 
-            if target_name and target_name != cw_name:
-                up_res = await update_chatwoot_contact(contact_id=cw_id, name=target_name)
-                if up_res.get("success"):
-                    total_updated += 1
-                    updated_details.append({
-                        "id": cw_id,
-                        "phone": cw_phone_raw,
-                        "old_name": cw_name,
-                        "new_name": target_name,
-                        "source": source
-                    })
-                    database.register_or_update_client(name=target_name, whatsapp=clean_p)
+                # Prioridad 3: Búsqueda flexible en CRM
+                if not target_name:
+                    try:
+                        c_found = database.search_client(clean_p)
+                        if c_found and c_found.get("name") and not str(c_found["name"]).lower().startswith("whatsapp"):
+                            target_name = str(c_found["name"]).strip()
+                            source = "CRM DB"
+                    except Exception:
+                        pass
 
-        if len(cw_contacts) < 15:
-            break
-        page += 1
-        if page > 20:
-            break
+                if target_name and target_name != cw_name:
+                    try:
+                        up_res = await update_chatwoot_contact(contact_id=int(cw_id), name=target_name)
+                        if up_res.get("success"):
+                            total_updated += 1
+                            updated_details.append({
+                                "id": cw_id,
+                                "phone": cw_phone_raw,
+                                "old_name": cw_name,
+                                "new_name": target_name,
+                                "source": source
+                            })
+                    except Exception as e:
+                        logger.warning(f"Error actualizando contacto Chatwoot #{cw_id}: {e}")
 
-    return {
-        "success": True,
-        "total_contacts_checked": total_checked,
-        "total_updated": total_updated,
-        "updated_contacts": updated_details
-    }
+            if len(cw_contacts) < 15:
+                break
+            page += 1
+            if page > 20:
+                break
+
+        return {
+            "success": True,
+            "total_contacts_checked": total_checked,
+            "total_updated": total_updated,
+            "updated_contacts": updated_details
+        }
+    except Exception as e:
+        logger.error(f"Error general en sync_whatsapp_names_to_chatwoot: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
 
 
 def html_to_chatwoot_markdown(text: str) -> str:

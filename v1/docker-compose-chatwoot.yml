@@ -49,7 +49,7 @@ services:
     ports:
       - "3000:3000"
     entrypoint: docker/entrypoints/rails.sh
-    command: ["sh", "-c", "bundle exec rails db:chatwoot_prepare && bundle exec rails s -p 3000 -b 0.0.0.0"]
+    command: ["sh", "-c", "bundle exec rails db:chatwoot_prepare && bundle exec rails runner \"InstallationConfig.find_or_initialize_by(name: 'WEBHOOK_TIMEOUT').update!(value: '30')\" && bundle exec rails s -p 3000 -b 0.0.0.0"]
     environment:
       - SECRET_KEY_BASE=j2ZWinsXioaVhCGTbxm7OSQTgJkxNGs0VIEh6DKEl80KUXzzIEhG87mewbYEHfw4
       - FRONTEND_URL=http://localhost:3000

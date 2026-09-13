@@ -41,6 +41,15 @@ async def mark_fallen_api(account_id: int, request: Request):
     database.mark_account_fallen(str(account_id), reason="Marcada desde el Panel")
     return RedirectResponse(url="/", status_code=302)
 
+@router.post("/api/reactivate-fallen/{account_id}")
+async def reactivate_fallen_api(account_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.reactivate_fallen_account(str(account_id))
+    return RedirectResponse(url="/#stock", status_code=303)
+
+
 @router.post("/api/report-master-fallen")
 async def report_master_fallen_api(request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))

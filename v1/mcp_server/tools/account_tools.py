@@ -456,12 +456,34 @@ def consultar_cuentas_caidas() -> str:
             f"  Detalle: {f.get('notes') or '-'}\n"
         )
 @mcp.tool()
+def reactivar_cuenta_caida(cliente_o_correo_o_id: str) -> str:
+    """Reactiva y restaura al servicio una cuenta o pantalla que fue marcada por error como caída. Puede buscarse por nombre del cliente (ej. 'Samuel Martinez'), correo electrónico o ID de la cuenta."""
+    acc = database.reactivate_fallen_account(cliente_o_correo_o_id)
+    if not acc:
+        return f"❌ No se encontró ninguna cuenta marcada como 'caída' asociada a '{cliente_o_correo_o_id}'."
+    
+    c_name = acc.get("client_name") or "Sin cliente (disponible en stock)"
+    perf = f" (Perfil: {acc['profile_name']})" if acc.get("profile_name") else ""
+    return (
+        f"✅ CUENTA REACTIVADA Y EN SERVICIO:\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Cliente:</b> {c_name}\n"
+        f"📺 <b>Plataforma:</b> {acc['platform']}{perf}\n"
+        f"📧 <b>Correo:</b> <code>{acc['email']}</code>\n"
+        f"🟢 <b>Nuevo Estado:</b> {acc['status'].upper()}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"✨ La cuenta ya no figura como caída y vuelve a figurar como activa y operativa en el panel."
+    )
+
+
+@mcp.tool()
 def eliminar_cuenta_individual(id_cuenta: int) -> str:
     """Elimina definitivamente una cuenta de streaming o pantalla por su ID numérico."""
     ok = database.delete_account(id_cuenta)
     if ok:
         return f"✅ Cuenta con ID #{id_cuenta} eliminada correctamente de la base de datos."
     return f"❌ No se encontró ninguna cuenta con el ID #{id_cuenta}."
+
 
 
 @mcp.tool()

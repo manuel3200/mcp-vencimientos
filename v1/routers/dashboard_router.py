@@ -233,8 +233,11 @@ async def dashboard(request: Request):
             <td><strong>{client_name}</strong></td>
             <td><small style="color:#fca5a5;">{f.get('notes') or 'Reportada'}</small></td>
             <td style="white-space:nowrap;">
+                <form action="/api/reactivate-fallen/{f['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Reactivar esta cuenta y volver a ponerla en servicio (no estaba caída)?');">
+                    <button type="submit" class="btn-action" style="background:#059669;color:white;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-right:4px;" title="Reactivar cuenta (no estaba caída)">✅ Reactivar / En Servicio</button>
+                </form>
                 <form action="/api/auto-replace/{f['id']}" method="POST" style="display:inline;">
-                    <button type="submit" class="btn-action btn-replace" title="Buscar reemplazo en stock de la misma plataforma">🔄 Reemplazar Automáticamente</button>
+                    <button type="submit" class="btn-action btn-replace" title="Buscar reemplazo en stock de la misma plataforma">🔄 Reemplazar</button>
                 </form>
                 <form action="/api/delete-account/{f['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Eliminar definitivamente este registro caído?');">
                     <button type="submit" class="btn-action" style="color:#ef4444;padding:4px 7px;border-radius:5px;font-size:0.75rem;margin-left:4px;" title="Eliminar cuenta">🗑️</button>

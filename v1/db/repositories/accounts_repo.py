@@ -172,6 +172,52 @@ def mark_account_fallen(email_or_query: str, reason: str = "Suscripción caída"
     finally:
         conn.close()
 
+def reactivate_fallen_account(email_or_id_or_client: str) -> Optional[Dict[str, Any]]:
+    """Reactiva una cuenta que fue marcada por error como caída, devolviéndola al estado 'ocupada' (o 'libre' si no tenía cliente)."""
+    conn = get_connection()
+    q = email_or_id_or_client.strip()
+    try:
+        with conn:
+            # Buscar por ID numérico, email exacto o parcial, o por nombre del cliente
+            row = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE (a.id = ? OR lower(a.email) LIKE lower(?) OR lower(c.name) LIKE lower(?))
+                  AND a.status = 'caida'
+                ORDER BY a.id DESC LIMIT 1
+            """, (int(q) if q.isdigit() else -1, f"%{q}%", f"%{q}%")).fetchone()
+
+            if not row:
+                # Si no encuentra caída, verificar si ya está ocupada
+                return None
+
+            acc_id = row["id"]
+            client_id = row["client_id"]
+            new_status = "ocupada" if client_id else "libre"
+            
+            # Limpiar nota de caída
+            curr_notes = row["notes"] or ""
+            # Remover marcas de CAÍDA
+            cleaned_notes = " | ".join([part for part in curr_notes.split(" | ") if not part.startswith("CAÍDA:") and not part.startswith("Caída")]).strip(" |")
+
+            conn.execute("""
+                UPDATE streaming_accounts
+                SET status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (new_status, cleaned_notes, acc_id))
+
+            updated = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE a.id = ?
+            """, (acc_id,)).fetchone()
+            return dict(updated)
+    finally:
+        conn.close()
+
+
 def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     q = email_or_query.strip()

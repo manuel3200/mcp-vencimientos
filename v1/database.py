@@ -49,7 +49,8 @@ from db.repositories.accounts_repo import (
     get_stock_thresholds,
     get_stock_health_summary,
     update_account_price,
-    purge_accounts_except_client
+    purge_accounts_except_client,
+    reactivate_fallen_account
 )
 
 from db.repositories.finance_repo import (

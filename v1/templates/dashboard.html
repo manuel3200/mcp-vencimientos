@@ -636,18 +636,29 @@
         <!-- Formulario Rápido de Nuevo Precio -->
         <div class="bg-surface-container-low border border-surface-container rounded-xl p-4">
           <h3 class="text-sm font-semibold text-on-surface mb-3">Establecer o Modificar Precio por Plataforma</h3>
-          <form action="/api/catalog/price" method="POST" class="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <form action="/api/catalog/save" method="POST" class="grid grid-cols-1 sm:grid-cols-6 gap-3">
             <div>
               <label class="font-label-code text-xs text-on-surface-variant">Plataforma:</label>
               <input type="text" name="platform" required placeholder="Netflix, Disney+..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
             </div>
             <div>
-              <label class="font-label-code text-xs text-on-surface-variant">Precio Sugerido ($ ARS):</label>
-              <input type="text" name="suggested_price" required placeholder="5500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+              <label class="font-label-code text-xs text-on-surface-variant">Modalidad:</label>
+              <select name="service_type" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+                <option value="pantalla">📱 Casa Extra / Pantalla</option>
+                <option value="cuenta_completa">👑 Cuenta Completa (4 Pantallas)</option>
+              </select>
             </div>
             <div>
-              <label class="font-label-code text-xs text-on-surface-variant">Costo Referencia ($ ARS):</label>
-              <input type="text" name="reference_cost" placeholder="2500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+              <label class="font-label-code text-xs text-on-surface-variant">Costo Proveedor ($):</label>
+              <input type="number" step="any" name="cost_price" placeholder="5800" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Consumidor Final ($):</label>
+              <input type="number" step="any" name="price_final" required placeholder="8500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Revendedor ($):</label>
+              <input type="number" step="any" name="price_reseller" required placeholder="6500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
             </div>
             <div class="flex items-end">
               <button type="submit" class="w-full h-8 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Guardar Precio</button>
@@ -665,9 +676,11 @@
                 <thead>
                   <tr>
                     <th>Plataforma</th>
-                    <th>Precio Sugerido</th>
+                    <th>Tipo</th>
                     <th>Costo Base</th>
-                    <th>Margen</th>
+                    <th>Final</th>
+                    <th>Revendedor</th>
+                    <th>Márgenes</th>
                     <th>Acción</th>
                   </tr>
                 </thead>
@@ -1174,8 +1187,19 @@
         </div>
         <div class="grid grid-cols-2 gap-2">
           <div>
-            <label class="font-label-code text-xs text-on-surface-variant">Plataforma:</label>
-            <input type="text" name="platform" required placeholder="Netflix, Disney+, Max..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <label class="font-label-code text-xs text-on-surface-variant">Plataforma / Servicio:</label>
+            <input type="text" name="platform" list="streaming-platforms-list" required placeholder="Seleccionar o escribir..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <datalist id="streaming-platforms-list">
+              <option value="Netflix (Casa Extra)">📱 Netflix (Casa Extra - 1 Pantalla)</option>
+              <option value="Netflix (Cuenta Completa)">👑 Netflix (Cuenta Completa - 4 Pantallas)</option>
+              <option value="Disney+ Premium">Disney+ Premium</option>
+              <option value="Max (HBO)">Max (HBO)</option>
+              <option value="Amazon Prime Video">Amazon Prime Video</option>
+              <option value="Paramount+">Paramount+</option>
+              <option value="Spotify Premium">Spotify Premium</option>
+              <option value="YouTube Premium">YouTube Premium</option>
+              <option value="Crunchyroll Mega Fan">Crunchyroll Mega Fan</option>
+            </datalist>
           </div>
           <div>
             <label class="font-label-code text-xs text-on-surface-variant">Fecha Vencimiento (YYYY-MM-DD):</label>
@@ -1195,7 +1219,7 @@
         <div class="grid grid-cols-3 gap-2">
           <div>
             <label class="font-label-code text-xs text-on-surface-variant">Precio Cobrado ($):</label>
-            <input type="text" name="price" placeholder="Ej: 5500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <input type="text" name="price" placeholder="Auto catálogo si vacío" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
           </div>
           <div>
             <label class="font-label-code text-xs text-on-surface-variant">Perfil (Opcional):</label>
@@ -1225,7 +1249,7 @@
         <div class="grid grid-cols-2 gap-2">
           <div>
             <label class="font-label-code text-xs text-on-surface-variant">Plataforma:</label>
-            <input type="text" name="platform" required placeholder="Netflix, Disney+..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <input type="text" name="platform" list="streaming-platforms-list" required placeholder="Seleccionar o escribir..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
           </div>
           <div>
             <label class="font-label-code text-xs text-on-surface-variant">Costo Proveedor ($):</label>

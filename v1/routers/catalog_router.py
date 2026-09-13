@@ -128,3 +128,69 @@ async def api_combos_sell(
     else:
         err = urllib.parse.quote(res.get("error", "Error al vender combo"))
         return RedirectResponse(url=f"/?err={err}#tab-catalog", status_code=302)
+
+
+@router.post("/api/combos")
+async def api_combos_alias(
+    request: Request,
+    name: str = Form(...),
+    platforms: str = Form(...),
+    price: float = Form(...),
+    cost: Optional[float] = Form(0.0)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    plat_list = [p.strip() for p in platforms.split(",") if p.strip()]
+    database.create_or_update_combo(
+        name=name,
+        description="",
+        price_final=price,
+        price_reseller=price * 0.9,
+        platforms=plat_list
+    )
+    return RedirectResponse(url="/?msg=combo_saved#catalog", status_code=303)
+
+
+@router.post("/api/sell-combo")
+async def api_sell_combo_modal(
+    request: Request,
+    combo_name: str = Form(...),
+    client_id: Optional[str] = Form(None),
+    new_client_name: Optional[str] = Form(None),
+    client_whatsapp: Optional[str] = Form(""),
+    expiry_date: Optional[str] = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+
+    client_name = ""
+    client_phone = client_whatsapp.strip() if client_whatsapp else ""
+    client_type = "consumidor_final"
+
+    if client_id and client_id.strip():
+        try:
+            cid = int(client_id.strip())
+            c_info = database.get_client_360(cid)
+            if c_info and c_info.get("client"):
+                client_name = c_info["client"].get("name", "")
+                if not client_phone:
+                    client_phone = c_info["client"].get("whatsapp", "")
+                client_type = c_info["client"].get("client_type", "consumidor_final")
+        except Exception:
+            pass
+
+    if not client_name:
+        client_name = (new_client_name or "").strip() or "Cliente"
+
+    res = database.sell_combo(
+        combo_name_or_id=combo_name,
+        client_name=client_name,
+        whatsapp=client_phone,
+        client_type=client_type,
+        payment_method="Transferencia",
+        duration_days=30
+    )
+    return RedirectResponse(url="/?msg=combo_sold#overview", status_code=303)
+

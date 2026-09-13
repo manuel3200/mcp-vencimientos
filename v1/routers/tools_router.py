@@ -185,6 +185,19 @@ async def import_sales_api(request: Request, file: Optional[UploadFile] = None, 
         msg = urllib.parse.quote(f"❌ Error al importar: {res.get('error')}")
     return RedirectResponse(url=f"/?msg={msg}", status_code=303)
 
+
+@router.post("/api/import/csv")
+async def import_csv_dispatcher(
+    request: Request,
+    import_type: str = Form("stock"),
+    file: Optional[UploadFile] = None
+):
+    if import_type == "sales":
+        return await import_sales_api(request, file=file)
+    else:
+        return await import_stock_api(request, file=file)
+
+
 @router.post("/api/trigger-backup")
 async def trigger_backup_api(request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))

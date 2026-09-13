@@ -65,21 +65,26 @@ def vender_perfil_compartido(
     precio: str = "",
     notas: str = ""
 ) -> str:
-    """Asigna automáticamente el próximo perfil libre disponible de una cuenta madre al cliente:
+    """Asigna automáticamente el próximo perfil o pantalla libre (ej: 'Casa Extra de Netflix', 'Disney+', 'Max') al cliente:
     - cliente: Nombre o alias del cliente (ej: Carlos, Maik).
-    - plataforma: Netflix, Disney+, Max, etc.
+    - plataforma: Nombre del servicio (ej: 'Netflix (Casa Extra)', 'Casa Extra de Netflix', 'Disney+', etc.). Si se pide Casa Extra de Netflix, asigna automáticamente la tarifa correspondiente ($8.500 final / $6.500 revendedor, costo $5.800).
     - fecha_vencimiento: Formato YYYY-MM-DD.
     - whatsapp / telegram: Datos de contacto.
-    - precio: Precio de venta del perfil individual.
+    - tipo_cliente: 'consumidor_final' o 'revendedor' (si el cliente ya es revendedor en CRM, se auto-detecta).
+    - precio: (Opcional) Precio en ARS. Si se omite, se calcula automáticamente del catálogo.
     """
     # Verificación proactiva: Si el cliente ya existe en el CRM como revendedor, aplicar tarifa mayorista
     existing_client = database.search_client(cliente)
     if existing_client and "revend" in (existing_client.get("client_type") or "").lower():
         tipo_cliente = "revendedor"
 
+    clean_plat = plataforma.strip()
+    if "netflix" in clean_plat.lower() and not ("completa" in clean_plat.lower() or "full" in clean_plat.lower()):
+        clean_plat = "Netflix (Casa Extra)"
+
     acc = database.assign_next_free_profile(
         client_name=cliente,
-        platform=plataforma,
+        platform=clean_plat,
         expiry_date=fecha_vencimiento,
         whatsapp=whatsapp,
         telegram=telegram,
@@ -94,16 +99,93 @@ def vender_perfil_compartido(
     wa_url = wa.get("wa_link", "")
 
     return (
-        f"🎉 PERFIL INDIVIDUAL ASIGNADO CON ÉXITO:\n"
+        f"🎉 PERFIL / CASA EXTRA ASIGNADO CON ÉXITO:\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Cliente:</b> {acc['client_name']} ({acc.get('client_code') or ''})\n"
-        f"📺 <b>Plataforma:</b> {acc['platform']} - <b>{acc['profile_name']}</b>\n"
+        f"👤 <b>Cliente:</b> {acc['client_name']} ({acc.get('client_code') or ''}) - {'👔 Revendedor' if acc.get('client_type') == 'revendedor' else '👤 Final'}\n"
+        f"📺 <b>Plataforma:</b> {acc['platform']} - <b>{acc.get('profile_name') or '1 Pantalla / Casa Extra'}</b>\n"
         f"📧 <b>Correo Madre:</b> <code>{acc['email']}</code>\n"
         f"🔑 <b>Contraseña:</b> <code>{acc['password']}</code>" + (f" | <b>PIN:</b> <code>{acc['profile_pin']}</code>" if acc.get('profile_pin') else "") + "\n"
-        f"📅 <b>Vencimiento:</b> <code>{acc['expiry_date']}</code> | Precio: {acc.get('price') or '-'}\n"
+        f"📅 <b>Vencimiento:</b> <code>{acc['expiry_date']}</code> | <b>Precio:</b> {acc.get('price') or '-'}\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📲 <b>WhatsApp Listo para Enviar (1 Clic):</b>\n{wa_url}"
     )
+
+
+@mcp.tool()
+def vender_cuenta_completa(
+    cliente: str,
+    plataforma: str,
+    fecha_vencimiento: str,
+    correo: str = "",
+    contrasena: str = "",
+    whatsapp: str = "",
+    telegram: str = "",
+    tipo_cliente: str = "consumidor_final",
+    precio: str = "",
+    costo: str = "",
+    notas: str = ""
+) -> str:
+    """Vende o entrega una CUENTA COMPLETA (4 pantallas / FULL HD / cuenta entera) a un cliente:
+    - cliente: Nombre del cliente o revendedor.
+    - plataforma: Servicio completo (ej: 'Netflix (Cuenta Completa)', 'Netflix Full HD', 'Disney+', 'Max'). Para Netflix, aplica automáticamente la tarifa de Cuenta Completa ($25.000 final / $23.000 revendedor, costo $20.000).
+    - fecha_vencimiento: Formato YYYY-MM-DD.
+    - correo / contrasena: (Opcional) Si se especifican, registra los accesos entregados. Si se omiten, toma la próxima cuenta completa libre del stock.
+    - whatsapp / telegram: Contacto del comprador.
+    - tipo_cliente: 'consumidor_final' o 'revendedor' (si ya existe en CRM como revendedor, se auto-detecta).
+    - precio / costo: (Opcionales) Si se omiten, se aplican automáticamente las tarifas del catálogo.
+    """
+    existing_client = database.search_client(cliente)
+    if existing_client and "revend" in (existing_client.get("client_type") or "").lower():
+        tipo_cliente = "revendedor"
+
+    clean_plat = plataforma.strip()
+    if "netflix" in clean_plat.lower() and not ("completa" in clean_plat.lower() or "full" in clean_plat.lower()):
+        clean_plat = "Netflix (Cuenta Completa)"
+
+    if correo and contrasena:
+        acc = database.assign_or_sell_account(
+            client_name=cliente,
+            platform=clean_plat,
+            email=correo,
+            password=contrasena,
+            expiry_date=fecha_vencimiento,
+            whatsapp=whatsapp,
+            telegram=telegram,
+            client_type=tipo_cliente,
+            price=precio,
+            cost=costo,
+            notes=notes
+        )
+    else:
+        acc = database.assign_next_free_profile(
+            client_name=cliente,
+            platform=clean_plat,
+            expiry_date=fecha_vencimiento,
+            whatsapp=whatsapp,
+            telegram=telegram,
+            client_type=tipo_cliente,
+            price=precio,
+            notes=notes
+        )
+
+    if not acc:
+        return f"⚠️ No hay stock disponible de cuentas completas para '{clean_plat}'. Especifica el correo y contraseña o agrega stock."
+
+    wa = database.generate_whatsapp_message(acc, message_type="entrega")
+    wa_url = wa.get("wa_link", "")
+
+    return (
+        f"👑 CUENTA COMPLETA (4 PANTALLAS) ASIGNADA CON ÉXITO:\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 <b>Cliente:</b> {acc['client_name']} ({acc.get('client_code') or ''}) - {'👔 Revendedor' if acc.get('client_type') == 'revendedor' else '👤 Final'}\n"
+        f"📺 <b>Modalidad:</b> {acc['platform']} (Cuenta Completa Full HD / 4K)\n"
+        f"📧 <b>Correo:</b> <code>{acc['email']}</code>\n"
+        f"🔑 <b>Contraseña:</b> <code>{acc['password']}</code>\n"
+        f"📅 <b>Vencimiento:</b> <code>{acc['expiry_date']}</code> | <b>Precio:</b> {acc.get('price') or '-'}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📲 <b>WhatsApp Listo para Enviar (1 Clic):</b>\n{wa_url}"
+    )
+
 
 
 @mcp.tool()

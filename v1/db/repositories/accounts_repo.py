@@ -66,6 +66,10 @@ def assign_or_sell_account(
     price_num = parse_money(price)
     cost_num = parse_money(cost)
     stype = "pantalla" if profile_name else "cuenta_completa"
+    if any(k in clean_platform.lower() for k in ["casa extra", "pantalla", "perfil", "miembro extra"]):
+        stype = "pantalla"
+    elif any(k in clean_platform.lower() for k in ["completa", "full hd", "4k", "cuenta entera", "4 pantallas"]):
+        stype = "cuenta_completa"
     
     s_price, s_cost = get_suggested_price(clean_platform, stype, actual_client_type)
     if "revend" in actual_client_type.lower():
@@ -525,11 +529,47 @@ def assign_next_free_profile(
     clean_platform = platform.strip().title()
     try:
         with conn:
+            # 1. Búsqueda exacta
             free_slot = conn.execute("""
                 SELECT * FROM streaming_accounts
                 WHERE lower(platform) = lower(?) AND status = 'libre'
                 ORDER BY id ASC LIMIT 1
             """, (clean_platform,)).fetchone()
+
+            # 2. Búsqueda inteligente por modalidad si es Netflix
+            if not free_slot and "netflix" in clean_platform.lower():
+                if any(k in clean_platform.lower() for k in ["casa extra", "pantalla", "perfil"]):
+                    free_slot = conn.execute("""
+                        SELECT * FROM streaming_accounts
+                        WHERE (lower(platform) LIKE '%casa extra%' OR lower(platform) = 'netflix')
+                          AND status = 'libre'
+                        ORDER BY CASE WHEN lower(platform) LIKE '%casa extra%' THEN 0 ELSE 1 END, id ASC
+                        LIMIT 1
+                    """).fetchone()
+                elif any(k in clean_platform.lower() for k in ["completa", "full hd", "4k", "4 pantallas"]):
+                    free_slot = conn.execute("""
+                        SELECT * FROM streaming_accounts
+                        WHERE (lower(platform) LIKE '%completa%' OR lower(platform) LIKE '%full hd%')
+                          AND status = 'libre'
+                        ORDER BY id ASC
+                        LIMIT 1
+                    """).fetchone()
+                else:
+                    free_slot = conn.execute("""
+                        SELECT * FROM streaming_accounts
+                        WHERE lower(platform) LIKE '%netflix%' AND status = 'libre'
+                        ORDER BY id ASC
+                        LIMIT 1
+                    """).fetchone()
+
+            # 3. Búsqueda flexible por substring
+            if not free_slot:
+                free_slot = conn.execute("""
+                    SELECT * FROM streaming_accounts
+                    WHERE (lower(platform) LIKE ? OR ? LIKE '%' || lower(platform) || '%')
+                      AND status = 'libre'
+                    ORDER BY id ASC LIMIT 1
+                """, (f"%{clean_platform.lower()}%", clean_platform.lower())).fetchone()
 
             if not free_slot:
                 return None

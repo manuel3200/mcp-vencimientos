@@ -199,24 +199,30 @@ def init_db():
                 )
             """)
 
-            # Sembrado de catálogo base si está vacío
-            cat_row = conn.execute("SELECT COUNT(*) as count FROM price_catalog").fetchone()
-            if cat_row and cat_row["count"] == 0:
-                initial_prices = [
-                    ("Netflix 4K", "pantalla", 3200.0, 5500.0, 4200.0, "Perfil 4K UHD individual"),
-                    ("Disney+ Premium", "pantalla", 2000.0, 4000.0, 3000.0, "Perfil con deportes ESPN"),
-                    ("Max (HBO)", "pantalla", 1800.0, 3800.0, 2800.0, "Perfil Platino 4K"),
-                    ("Amazon Prime Video", "pantalla", 1500.0, 3500.0, 2500.0, "Perfil individual"),
-                    ("Paramount+", "pantalla", 1400.0, 3000.0, 2200.0, "Perfil individual"),
-                    ("Spotify Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta completa individual"),
-                    ("YouTube Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta sin anuncios"),
-                    ("Crunchyroll Mega Fan", "pantalla", 1500.0, 3200.0, 2400.0, "Perfil anime HD")
-                ]
-                for p, stype, c_price, p_fin, p_res, notes in initial_prices:
-                    conn.execute("""
-                        INSERT INTO price_catalog (platform, service_type, cost_price, price_final, price_reseller, notes)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    """, (p, stype, c_price, p_fin, p_res, notes))
+            # Sembrado y actualización de catálogo base
+            netflix_defaults = [
+                ("Netflix (Casa Extra)", "pantalla", 5800.0, 8500.0, 6500.0, "1 Pantalla / Casa Extra individual"),
+                ("Netflix (Cuenta Completa)", "cuenta_completa", 20000.0, 25000.0, 23000.0, "Cuenta Completa Full HD / 4K (4 Pantallas)"),
+                ("Disney+ Premium", "pantalla", 2000.0, 4000.0, 3000.0, "Perfil con deportes ESPN"),
+                ("Max (HBO)", "pantalla", 1800.0, 3800.0, 2800.0, "Perfil Platino 4K"),
+                ("Amazon Prime Video", "pantalla", 1500.0, 3500.0, 2500.0, "Perfil individual"),
+                ("Paramount+", "pantalla", 1400.0, 3000.0, 2200.0, "Perfil individual"),
+                ("Spotify Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta completa individual"),
+                ("YouTube Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta sin anuncios"),
+                ("Crunchyroll Mega Fan", "pantalla", 1500.0, 3200.0, 2400.0, "Perfil anime HD")
+            ]
+            for p, stype, c_price, p_fin, p_res, notes in netflix_defaults:
+                conn.execute("""
+                    INSERT INTO price_catalog (platform, service_type, cost_price, price_final, price_reseller, notes)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(platform, service_type) DO UPDATE SET
+                        cost_price = CASE WHEN excluded.platform LIKE 'Netflix%' THEN excluded.cost_price ELSE cost_price END,
+                        price_final = CASE WHEN excluded.platform LIKE 'Netflix%' THEN excluded.price_final ELSE price_final END,
+                        price_reseller = CASE WHEN excluded.platform LIKE 'Netflix%' THEN excluded.price_reseller ELSE price_reseller END,
+                        notes = CASE WHEN excluded.platform LIKE 'Netflix%' THEN excluded.notes ELSE notes END,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (p, stype, c_price, p_fin, p_res, notes))
+
 
             # Sembrado de combos modelo si está vacío
             combos_row = conn.execute("SELECT COUNT(*) as count FROM combos").fetchone()

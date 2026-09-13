@@ -161,5 +161,82 @@ async def update_account_price_endpoint(
     return RedirectResponse(url="/?msg=price_saved", status_code=303)
 
 
+@router.post("/api/sell-account")
+async def sell_account_api(
+    request: Request,
+    platform: str = Form(...),
+    expiry_date: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    client_id: Optional[str] = Form(None),
+    new_client_name: Optional[str] = Form(None),
+    client_whatsapp: Optional[str] = Form(""),
+    price: Optional[str] = Form(""),
+    profile_name: Optional[str] = Form(""),
+    profile_pin: Optional[str] = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+
+    client_name = ""
+    client_phone = client_whatsapp.strip() if client_whatsapp else ""
+    client_type = "consumidor_final"
+
+    if client_id and client_id.strip():
+        try:
+            cid = int(client_id.strip())
+            c_info = database.get_client_360(cid)
+            if c_info and c_info.get("client"):
+                client_name = c_info["client"].get("name", "")
+                if not client_phone:
+                    client_phone = c_info["client"].get("whatsapp", "")
+                client_type = c_info["client"].get("client_type", "consumidor_final")
+        except Exception:
+            pass
+
+    if not client_name:
+        client_name = (new_client_name or "").strip() or "Cliente"
+
+    acc = database.assign_or_sell_account(
+        client_name=client_name,
+        platform=platform,
+        email=email,
+        password=password,
+        expiry_date=expiry_date,
+        whatsapp=client_phone,
+        client_type=client_type,
+        profile_name=profile_name or "",
+        profile_pin=profile_pin or "",
+        price=price or ""
+    )
+    return RedirectResponse(url="/?msg=sale_saved#accounts", status_code=303)
+
+
+@router.post("/api/free-stock")
+async def free_stock_api(
+    request: Request,
+    platform: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    cost: Optional[str] = Form(""),
+    profile_name: Optional[str] = Form(""),
+    profile_pin: Optional[str] = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+
+    database.add_free_account(
+        platform=platform,
+        email=email,
+        password=password,
+        profile_name=profile_name or "",
+        profile_pin=profile_pin or "",
+        cost=cost or ""
+    )
+    return RedirectResponse(url="/?msg=stock_saved#stock", status_code=303)
+
+
 # ==========================================
 # Endpoints de Exportación e Importación (Excel / CSV)

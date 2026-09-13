@@ -84,13 +84,21 @@ def get_suggested_price(
     service_type: str = "pantalla",
     client_type: str = "consumidor_final"
 ) -> Tuple[float, float]:
-    """Obtiene el precio de venta sugerido y el costo del catálogo para una plataforma.
+    """Obtiene el precio de venta sugerido y el costo del catálogo para una plataforma y tipo de servicio.
     Retorna (precio_venta, costo) en Pesos Argentinos (ARS)."""
     conn = get_connection()
     clean_plat = platform.strip().lower()
     clean_stype = service_type.strip().lower()
     is_reseller = "revend" in client_type.lower()
+    
+    # Detección inteligente de tipo de servicio si viene en el texto de la plataforma
+    if any(k in clean_plat for k in ["casa extra", "pantalla", "perfil", "miembro extra"]):
+        clean_stype = "pantalla"
+    elif any(k in clean_plat for k in ["completa", "full hd", "4k", "cuenta entera", "4 pantallas"]):
+        clean_stype = "cuenta_completa"
+        
     try:
+        # 1. Búsqueda exacta por plataforma y service_type
         row = conn.execute("""
             SELECT cost_price, price_final, price_reseller
             FROM price_catalog
@@ -98,13 +106,35 @@ def get_suggested_price(
             LIMIT 1
         """, (clean_plat, clean_stype)).fetchone()
         
+        # 2. Si es Netflix y busca pantalla -> buscar 'Netflix (Casa Extra)' o similar
+        if not row and "netflix" in clean_plat:
+            target_plat = "%casa extra%" if clean_stype == "pantalla" else "%completa%"
+            row = conn.execute("""
+                SELECT cost_price, price_final, price_reseller
+                FROM price_catalog
+                WHERE lower(platform) LIKE ? AND service_type = ?
+                LIMIT 1
+            """, (target_plat, clean_stype)).fetchone()
+
+        # 3. Búsqueda parcial por plataforma
         if not row:
             row = conn.execute("""
                 SELECT cost_price, price_final, price_reseller
                 FROM price_catalog
-                WHERE lower(platform) = ?
+                WHERE (lower(platform) LIKE ? OR ? LIKE '%' || lower(platform) || '%')
+                  AND service_type = ?
                 LIMIT 1
-            """, (clean_plat,)).fetchone()
+            """, (f"%{clean_plat}%", clean_plat, clean_stype)).fetchone()
+
+        # 4. Fallback a cualquier registro de la plataforma
+        if not row:
+            row = conn.execute("""
+                SELECT cost_price, price_final, price_reseller
+                FROM price_catalog
+                WHERE lower(platform) LIKE ? OR ? LIKE '%' || lower(platform) || '%'
+                ORDER BY CASE WHEN service_type = ? THEN 0 ELSE 1 END
+                LIMIT 1
+            """, (f"%{clean_plat}%", clean_plat, clean_stype)).fetchone()
             
         if row:
             sale_price = row["price_reseller"] if is_reseller else row["price_final"]
@@ -113,6 +143,7 @@ def get_suggested_price(
         return 0.0, 0.0
     finally:
         conn.close()
+
 
 def get_combos(only_active: bool = False) -> List[Dict[str, Any]]:
     """Lista todos los combos configurados con sus plataformas asociadas y precios en ARS."""

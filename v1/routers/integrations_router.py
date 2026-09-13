@@ -240,54 +240,112 @@ async def whatsapp_webhook(request: Request):
         logger.info(f"Mensaje ignorado de {client_name} ({sender_phone}): es un reenvío o eco de plantilla del sistema.")
         return JSONResponse({"status": "ignored", "reason": "template_echo"})
 
-    # REGLA A: Detección de comprobantes de pago (Imágenes/Docs o palabras clave de pago)
+    # REGLA A: Detección rigurosa e inteligente de comprobantes de pago
     doc_msg = msg_obj.get("documentMessage") or {}
     img_msg = msg_obj.get("imageMessage") or {}
     is_doc = bool(doc_msg)
     is_img = bool(img_msg)
     is_media = is_doc or is_img
 
-    receipt_keywords = ["comprobante", "pague", "pagué", "transferi", "transferí", "adjunto", "constancia", "abone", "aboné"]
-    is_receipt = is_media or any(k in text_lower for k in receipt_keywords)
+    file_name = (doc_msg.get("fileName") or "").strip()
+    file_name_lower = file_name.lower()
 
-    if is_receipt:
-        logger.info(f"Comprobante recibido de {client_name} ({sender_phone})")
+    # 1. Filtro estricto de extensiones: sólo imágenes y PDFs pueden ser comprobantes bancarios
+    non_receipt_extensions = (
+        ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".txt", ".zip", ".rar", ".7z", ".mp3", ".mp4", ".wav", ".avi", ".mkv"
+    )
+    if is_doc and file_name_lower.endswith(non_receipt_extensions):
+        logger.info(f"Archivo de {client_name} ({sender_phone}) ignorado como comprobante: extensión '{file_name}' no admitida para pagos.")
+        return JSONResponse({"status": "ignored", "reason": "unsupported_receipt_extension"})
 
-        # 1. Obtener información de la cuenta activa del cliente
+    # 2. Filtro estricto por nombres de archivo académicos, libros, manuales, etc.
+    academic_file_keywords = [
+        "manual", "guia", "guía", "resumen", "apunte", "clase", "libro", "capitulo",
+        "capítulo", "unidad", "tp", "trabajo", "examen", "parcial", "psico", "bender",
+        "medicina", "derecho", "lectura", "programa", "teoria", "teoría", "modulo", "módulo"
+    ]
+    if any(k in file_name_lower for k in academic_file_keywords):
+        logger.info(f"Archivo de {client_name} ({sender_phone}) ignorado como comprobante: archivo académico/casual ('{file_name}').")
+        return JSONResponse({"status": "ignored", "reason": "academic_or_casual_file"})
+
+    # 3. Filtro de mensajes con contexto casual/estudio en el texto
+    casual_academic_text = [
+        "profe", "profesor", "profesora", "facultad", "universidad", "materia", "carrera",
+        "parcial", "tarea", "la clase", "las clases", "habia pasado la", "había pasado la",
+        "mira lo que", "mira esto", "miren esto", "para estudiar", "para el examen"
+    ]
+    if any(k in text_lower for k in casual_academic_text):
+        logger.info(f"Mensaje de {client_name} ({sender_phone}) omitido como comprobante: contexto de estudio/casual ('{text}').")
+        return JSONResponse({"status": "ignored", "reason": "casual_or_academic_text"})
+
+    receipt_keywords = [
+        "comprobante", "pague", "pagué", "transferi", "transferí", "adjunto el comprobante",
+        "constancia", "abone", "aboné", "ya te pague", "ya te transferi", "ahi te pase",
+        "ahí te pasé", "te mande el pago", "aca te dejo el pago", "acá te dejo el pago"
+    ]
+    has_receipt_intent = any(k in text_lower for k in receipt_keywords)
+
+    is_confirmed_receipt = False
+    detected_info = None
+
+    # 4. Análisis profundo de media si está presente
+    if is_media and key.get("id"):
+        try:
+            media_data = await whatsapp_client.get_media_base64(key)
+            if media_data and media_data.get("base64"):
+                b64_str = media_data["base64"]
+                mime = (media_data.get("mimetype") or "").lower()
+
+                # A. Si es PDF
+                if is_doc or "pdf" in mime or file_name_lower.endswith(".pdf"):
+                    try:
+                        pdf_bytes = base64.b64decode(b64_str.split(",")[-1])
+                        pdf_text, num_pages = receipt_service.extract_text_from_pdf(pdf_bytes)
+                        if pdf_text and num_pages <= 3:
+                            detected_info = receipt_service.parse_transfer_receipt_text(pdf_text)
+                            if detected_info and detected_info.get("is_receipt"):
+                                is_confirmed_receipt = True
+                        else:
+                            logger.info(f"PDF de {client_name} rechazado como comprobante ({num_pages} páginas o texto vacío).")
+                    except Exception as e:
+                        logger.debug(f"Error analizando PDF: {e}")
+
+                # B. Si es Imagen
+                elif is_img or "image" in mime:
+                    try:
+                        detected_info = await receipt_service.analyze_image_with_gemini(
+                            b64_str,
+                            mime_type=mime or "image/jpeg"
+                        )
+                        if detected_info and detected_info.get("is_receipt"):
+                            is_confirmed_receipt = True
+                    except Exception as e:
+                        logger.debug(f"Error analizando imagen con Gemini: {e}")
+
+                    # Si Gemini no confirmó o no está activo, pero el cliente escribió explícitamente palabras de pago en el caption
+                    if not is_confirmed_receipt and has_receipt_intent:
+                        is_confirmed_receipt = True
+                        if not detected_info:
+                            detected_info = receipt_service.parse_transfer_receipt_text(text)
+        except Exception as e:
+            logger.debug(f"No se pudo descargar media de Evolution: {e}")
+
+    # 5. Si es solo texto sin media pero tiene intención explícita y datos financieros
+    elif has_receipt_intent:
+        detected_info = receipt_service.parse_transfer_receipt_text(text)
+        if detected_info and (detected_info.get("is_receipt") or detected_info.get("amount")):
+            is_confirmed_receipt = True
+
+    # 6. SOLO ACCIONAR EL FLUJO DE COMPROBANTE SI FUE VERIFICADO
+    if is_confirmed_receipt:
+        logger.info(f"¡Comprobante VERIFICADO de {client_name} ({sender_phone})! Datos: {detected_info}")
+
+        # Obtener información de la cuenta activa del cliente
         active_accs = client_profile.get("active_accounts", []) if client_profile else []
         target_acc = active_accs[0] if active_accs else None
 
-        # 2. Análisis de comprobante (PDF o Imagen)
-        file_name = doc_msg.get("fileName") or ("comprobante.pdf" if is_doc else ("comprobante.jpg" if is_img else ""))
-        file_type_label = "📄 PDF" if (is_doc or file_name.lower().endswith(".pdf")) else ("🖼️ Imagen" if is_img else "📝 Mensaje")
-
-        detected_info = None
-        # Intentar obtener media base64 de Evolution API para análisis inteligente
-        if is_media and key.get("id"):
-            try:
-                media_data = await whatsapp_client.get_media_base64(key)
-                if media_data and media_data.get("base64"):
-                    b64_str = media_data["base64"]
-                    # Si es PDF
-                    if is_doc or "pdf" in (media_data.get("mimetype") or "").lower() or file_name.lower().endswith(".pdf"):
-                        try:
-                            pdf_bytes = base64.b64decode(b64_str.split(",")[-1])
-                            pdf_text = receipt_service.extract_text_from_pdf(pdf_bytes)
-                            detected_info = receipt_service.parse_transfer_receipt_text(pdf_text)
-                        except Exception as e:
-                            logger.debug(f"Error parseando PDF: {e}")
-                    # Si es Imagen
-                    elif is_img:
-                        detected_info = await receipt_service.analyze_image_with_gemini(
-                            b64_str,
-                            mime_type=media_data.get("mimetype") or "image/jpeg"
-                        )
-            except Exception as e:
-                logger.debug(f"No se pudo analizar media descargada: {e}")
-
-        # Si no hubo media analizada pero hay texto en el caption
-        if not detected_info and text:
-            detected_info = receipt_service.parse_transfer_receipt_text(text)
+        file_type_label = "📄 PDF" if (is_doc or file_name_lower.endswith(".pdf")) else ("🖼️ Imagen" if is_img else "📝 Mensaje")
 
         # Resumen del análisis
         analysis_line = ""

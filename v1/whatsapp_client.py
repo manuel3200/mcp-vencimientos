@@ -287,7 +287,10 @@ async def get_chatwoot_status() -> Dict[str, Any]:
 
 def get_chatwoot_config() -> Dict[str, Any]:
     """Obtiene la configuración activa de Chatwoot desde la base de datos."""
-    return database.get_chatwoot_settings()
+    cfg = database.get_chatwoot_settings()
+    if not (cfg.get("token") or "").strip():
+        cfg["token"] = "ZRzCpt75vxkyiUC7H1otEoog"
+    return cfg
 
 def get_chatwoot_headers(token: str) -> Dict[str, str]:
     return {

@@ -191,6 +191,8 @@ def get_chatwoot_settings() -> Dict[str, Any]:
         data = dict(row) if row else {}
         url = (data.get("url") or os.getenv("CHATWOOT_URL") or "https://chat.joif.net").strip().rstrip("/")
         token = (data.get("token") or os.getenv("CHATWOOT_TOKEN") or "ZRzCpt75vxkyiUC7H1otEoog").strip()
+        if not token:
+            token = "ZRzCpt75vxkyiUC7H1otEoog"
         account_id = str(data.get("account_id") or os.getenv("CHATWOOT_ACCOUNT_ID") or "1").strip()
         return {
             "id": 1,
@@ -214,7 +216,7 @@ def save_chatwoot_settings(
     conn = get_connection()
     try:
         clean_url = (url or "https://chat.joif.net").strip().rstrip("/")
-        clean_token = token.strip()
+        clean_token = token.strip() or "ZRzCpt75vxkyiUC7H1otEoog"
         clean_acc = str(account_id or "1").strip()
         with conn:
             conn.execute("""

@@ -116,257 +116,267 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
 
     clean_cmd = content.strip().lower()
 
-    # -------------------------------------------------------------
-    # 1. COMANDOS DE NUEVA CUENTA / VENTA (/nc, /vender, /venta)
-    # -------------------------------------------------------------
-    if clean_cmd.startswith("/nc") or clean_cmd.startswith("/vender") or clean_cmd.startswith("/venta"):
-        platform_name, service_type = resolve_platform_and_modality(clean_cmd)
-        if not platform_name:
-            await whatsapp_client.send_chatwoot_message(
-                conv_id,
-                "⚠️ [StreamVault CRM] Plataforma no reconocida.\n\n"
-                "💡 Ejemplos válidos:\n"
-                "• `/nc_n_casaextra` (Netflix Casa Extra - 1 Pantalla)\n"
-                "• `/nc_n_full` (Netflix Cuenta Completa - 4 Pantallas)\n"
-                "• `/nc_disney` (Disney+ Premium)\n"
-                "• `/nc_max` (Max HBO)\n"
-                "• `/nc_prime` (Prime Video)\n"
-                "• `/nc_spotify` (Spotify Premium)\n"
-                "• `/nc_youtube` (YouTube Premium)\n"
-                "O escribe `/ayuda` para ver todos los comandos.",
-                private=True
-            )
-            return {"status": "ok", "action": "unknown_platform"}
-
-        expiry_date = (date.today() + timedelta(days=30)).isoformat()
-        client_type = client.get("client_type") or "consumidor_final"
-
-        # Asignar próximo casillero o cuenta libre disponible
-        acc = database.assign_next_free_profile(
-            client_name=client["name"],
-            platform=platform_name,
-            expiry_date=expiry_date,
-            whatsapp=client.get("whatsapp") or clean_phone,
-            client_type=client_type
-        )
-
-        if acc:
-            # 1. Enviar mensaje oficial de entrega al cliente por WhatsApp
-            wa_data = database.generate_whatsapp_message(acc, message_type="entrega")
-            delivery_text = wa_data.get("message_text", "")
-            await whatsapp_client.send_chatwoot_message(conv_id, delivery_text, private=False)
-
-            # 2. Enviar nota privada para el agente en Chatwoot
-            badge_type = "👔 Revendedor" if acc.get("client_type") == "revendedor" else "👤 Consumidor Final"
-            cost_str = acc.get("cost") or "-"
-            price_str = acc.get("price") or "-"
-            await whatsapp_client.send_chatwoot_message(
-                conv_id,
-                f"✅ **[StreamVault CRM] Suscripción Asignada con Éxito:**\n"
-                f"• Cliente: **{acc['client_name']}** ({badge_type})\n"
-                f"• Plataforma: **{acc['platform']}**" + (f" - **{acc.get('profile_name')}**" if acc.get('profile_name') else "") + "\n"
-                f"• Correo: `{acc['email']}`\n"
-                f"• Contraseña: `{acc['password']}`" + (f" | PIN: `{acc['profile_pin']}`" if acc.get('profile_pin') else "") + "\n"
-                f"• Vencimiento: `{acc['expiry_date']}`\n"
-                f"• Tarifa cobrada: **{price_str}** (Costo prov: {cost_str})\n"
-                f"• Los accesos fueron enviados al cliente y la ganancia registrada en el balance financiero.",
-                private=True
-            )
-
-            # 3. Notificar a Telegram
-            await send_telegram_message(
-                f"⚡ <b>¡VENTA RÁPIDA DESDE CHATWOOT!</b>\n\n"
-                f"• Cliente: <b>{acc['client_name']}</b> ({badge_type})\n"
-                f"• Servicio: <b>{acc['platform']}</b>\n"
-                f"• Cuenta: <code>{acc['email']}</code>\n"
-                f"• Vencimiento: <code>{acc['expiry_date']}</code> | Cobrado: <b>{price_str}</b>\n"
-                f"• Atajo ejecutado en Chatwoot: <code>{content}</code>"
-            )
-            return {"status": "ok", "action": "account_assigned", "account": acc}
-        else:
-            await whatsapp_client.send_chatwoot_message(
-                conv_id,
-                f"⚠️ **[StreamVault CRM] ¡SIN STOCK DISPONIBLE!**\n\n"
-                f"No se encontraron cuentas o pantallas libres para **'{platform_name}'**.\n"
-                f"Por favor ingresa al panel web para cargar nuevas cuentas en stock o crear una cuenta madre antes de asignar.",
-                private=True
-            )
-            return {"status": "ok", "action": "out_of_stock", "platform": platform_name}
-
-    # -------------------------------------------------------------
-    # 2. CONSULTA DE STOCK EN TIEMPO REAL (/stock)
-    # -------------------------------------------------------------
-    elif clean_cmd.startswith("/stock"):
-        health = database.get_stock_health_summary()
-        platforms = health.get("platforms", [])
-        lines = ["📦 **[StreamVault CRM] Stock Libre en Inventario:**\n"]
-        if not platforms:
-            lines.append("No hay cuentas ni plataformas registradas en stock.")
-        else:
-            for p in platforms:
-                ico = "🔴" if p["status"] == "agotado" else ("🟡" if p["status"] == "bajo" else "🟢")
-                lines.append(f"{ico} **{p['platform']}:** {p['free_count']} libres (Mín: {p['min_threshold']})")
-        lines.append(f"\n📊 **Total Unidades Libres:** {health.get('total_free_units', 0)}")
-        await whatsapp_client.send_chatwoot_message(conv_id, "\n".join(lines), private=True)
-        return {"status": "ok", "action": "stock_reported"}
-
-    # -------------------------------------------------------------
-    # 3. FICHA Y SUSCRIPCIONES ACTIVAS DEL CLIENTE (/info, /servicios, /cuenta)
-    # -------------------------------------------------------------
-    elif clean_cmd in ("/info", "/servicios", "/cuenta", "/cuentas"):
-        c_info = database.get_client_360(client["id"])
-        active_accs = c_info.get("active_accounts", []) if c_info else []
-        badge_type = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
-
-        if not active_accs:
-            await whatsapp_client.send_chatwoot_message(
-                conv_id,
-                f"ℹ️ [StreamVault CRM] **{client['name']}** ({badge_type}) no posee suscripciones activas en este momento.",
-                private=True
-            )
-        else:
-            lines = [f"👤 **[StreamVault CRM] Suscripciones de {client['name']} ({badge_type}):**\n"]
-            for a in active_accs:
-                perf = f" ({a['profile_name']})" if a.get("profile_name") else ""
-                pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
-                lines.append(
-                    f"• **{a['platform']}{perf}**\n"
-                    f"  📧 Correo: `{a['email']}` | Clave: `{a['password']}`{pin}\n"
-                    f"  📅 Vence: `{a['expiry_date']}` ({a.get('days_label', '')}) | Precio: {a.get('price') or '-'}\n"
+    try:
+        # -------------------------------------------------------------
+        # 1. COMANDOS DE NUEVA CUENTA / VENTA (/nc, /vender, /venta)
+        # -------------------------------------------------------------
+        if clean_cmd.startswith(("/nc", "/vender", "/venta")):
+            platform_name, service_type = resolve_platform_and_modality(clean_cmd)
+            if not platform_name:
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    "⚠️ [StreamVault CRM] Plataforma no reconocida.\n\n"
+                    "💡 Ejemplos válidos:\n"
+                    "• `/nc_n_casaextra` (Netflix Casa Extra - 1 Pantalla)\n"
+                    "• `/nc_n_full` (Netflix Cuenta Completa - 4 Pantallas)\n"
+                    "• `/nc_disney` (Disney+ Premium)\n"
+                    "• `/nc_max` (Max HBO)\n"
+                    "• `/nc_prime` (Prime Video)\n"
+                    "• `/nc_spotify` (Spotify Premium)\n"
+                    "• `/nc_youtube` (YouTube Premium)\n"
+                    "O escribe `/ayuda` para ver todos los comandos.",
+                    private=True
                 )
-            await whatsapp_client.send_chatwoot_message(conv_id, "\n".join(lines), private=True)
-        return {"status": "ok", "action": "info_reported"}
+                return {"status": "ok", "action": "unknown_platform"}
 
-    # -------------------------------------------------------------
-    # 4. REGISTRAR PAGO Y RENOVAR SERVICIO (/pago, /pagado, /renovar, /cobrado, /confirmar)
-    # -------------------------------------------------------------
-    elif clean_cmd.startswith(("/pago", "/pagado", "/renovar", "/cobrado", "/confirmar")):
-        # Extraer monto opcional si el agente puso por ejemplo /pago 6500
-        parts = clean_cmd.split()
-        custom_amount = None
-        if len(parts) > 1:
-            clean_num = re.sub(r'[^0-9.]', '', parts[1].replace(",", "."))
-            if clean_num:
-                try:
-                    custom_amount = float(clean_num)
-                except ValueError:
-                    pass
+            expiry_date = (date.today() + timedelta(days=30)).isoformat()
+            client_type = client.get("client_type") or "consumidor_final"
 
-        c_info = database.get_client_360(client["id"])
-        active_accs = c_info.get("active_accounts", []) if c_info else []
-        if not active_accs:
-            await whatsapp_client.send_chatwoot_message(
-                conv_id,
-                f"⚠️ [StreamVault CRM] **{client['name']}** no registra suscripciones activas para renovar.",
-                private=True
+            # Asignar próximo casillero o cuenta libre disponible
+            acc = database.assign_next_free_profile(
+                client_name=client["name"],
+                platform=platform_name,
+                expiry_date=expiry_date,
+                whatsapp=client.get("whatsapp") or clean_phone,
+                client_type=client_type
             )
-            return {"status": "ok", "action": "no_active_accounts"}
 
-        target_acc = active_accs[0]
-        res = database.register_customer_payment(
-            email_or_id=str(target_acc["id"]),
-            amount=custom_amount,
-            payment_method="Chatwoot / Transferencia"
-        )
+            if acc:
+                # 1. Enviar mensaje oficial de entrega al cliente por WhatsApp
+                wa_data = database.generate_whatsapp_message(acc, message_type="entrega")
+                delivery_text = wa_data.get("message_text", "")
+                await whatsapp_client.send_chatwoot_message(conv_id, delivery_text, private=False)
 
-        if res.get("success"):
-            amt_fmt = database.format_ars(res['amount'])
-            is_initial = res.get("is_initial", False)
+                # 2. Enviar nota privada para el agente en Chatwoot
+                badge_type = "👔 Revendedor" if acc.get("client_type") == "revendedor" else "👤 Consumidor Final"
+                cost_str = acc.get("cost") or "-"
+                price_str = acc.get("price") or "-"
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    f"✅ **[StreamVault CRM] Suscripción Asignada con Éxito:**\n"
+                    f"• Cliente: **{acc['client_name']}** ({badge_type})\n"
+                    f"• Plataforma: **{acc['platform']}**" + (f" - **{acc.get('profile_name')}**" if acc.get('profile_name') else "") + "\n"
+                    f"• Correo: `{acc['email']}`\n"
+                    f"• Contraseña: `{acc['password']}`" + (f" | PIN: `{acc['profile_pin']}`" if acc.get('profile_pin') else "") + "\n"
+                    f"• Vencimiento: `{acc['expiry_date']}`\n"
+                    f"• Tarifa cobrada: **{price_str}** (Costo prov: {cost_str})\n"
+                    f"• Los accesos fueron enviados al cliente y la ganancia registrada en el balance financiero.",
+                    private=True
+                )
+
+                # 3. Notificar a Telegram
+                await send_telegram_message(
+                    f"⚡ <b>¡VENTA RÁPIDA DESDE CHATWOOT!</b>\n\n"
+                    f"• Cliente: <b>{acc['client_name']}</b> ({badge_type})\n"
+                    f"• Servicio: <b>{acc['platform']}</b>\n"
+                    f"• Cuenta: <code>{acc['email']}</code>\n"
+                    f"• Vencimiento: <code>{acc['expiry_date']}</code> | Cobrado: <b>{price_str}</b>\n"
+                    f"• Atajo ejecutado en Chatwoot: <code>{content}</code>"
+                )
+                return {"status": "ok", "action": "account_assigned", "account": acc}
+            else:
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    f"⚠️ **[StreamVault CRM] ¡SIN STOCK DISPONIBLE!**\n\n"
+                    f"No se encontraron cuentas o pantallas libres para **'{platform_name}'**.\n"
+                    f"Por favor ingresa al panel web para cargar nuevas cuentas en stock o crear una cuenta madre antes de asignar.",
+                    private=True
+                )
+                return {"status": "ok", "action": "out_of_stock", "platform": platform_name}
+
+        # -------------------------------------------------------------
+        # 2. CONSULTA DE STOCK EN TIEMPO REAL (/stock)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith("/stock"):
+            health = database.get_stock_health_summary()
+            platforms = health.get("platforms", [])
+            lines = ["📦 **[StreamVault CRM] Stock Libre en Inventario:**\n"]
+            if not platforms:
+                lines.append("No hay cuentas ni plataformas registradas en stock.")
+            else:
+                for p in platforms:
+                    ico = "🔴" if p["status"] == "agotado" else ("🟡" if p["status"] == "bajo" else "🟢")
+                    lines.append(f"{ico} **{p['platform']}:** {p['free_count']} libres (Mín: {p['min_threshold']})")
+            lines.append(f"\n📊 **Total Unidades Libres:** {health.get('total_free_units', 0)}")
+            await whatsapp_client.send_chatwoot_message(conv_id, "\n".join(lines), private=True)
+            return {"status": "ok", "action": "stock_reported"}
+
+        # -------------------------------------------------------------
+        # 3. FICHA Y SUSCRIPCIONES ACTIVAS DEL CLIENTE (/info, /servicios, /cuenta)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/info", "/servicios", "/cuenta", "/cuentas")):
+            c_info = database.get_client_360_profile(client["id"])
+            active_accs = c_info.get("active_accounts", []) if c_info else []
             badge_type = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
 
-            if is_initial:
-                # 1. Mensaje al cliente para pago de compra inicial
-                msg_client = (
-                    f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
-                    f"para tu compra de *{res['platform']}*.\n\n"
-                    f"Tu suscripción está confirmada y activa hasta el *{res['new_expiry']}*. "
-                    f"¡Muchas gracias por tu compra y preferencia! 🙌✨"
+            if not active_accs:
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    f"ℹ️ [StreamVault CRM] **{client['name']}** ({badge_type}) no posee suscripciones activas en este momento.",
+                    private=True
                 )
-                # 2. Nota privada para el agente
-                note_agent = (
-                    f"✅ **[StreamVault CRM] ¡Pago de Compra Registrado!**\n"
-                    f"• Cliente: **{res['client_name']}** ({badge_type})\n"
-                    f"• Servicio: **{res['platform']}** (`{res['email']}`)\n"
-                    f"• Cobrado: **+{amt_fmt}** (Ganancia: +{database.format_ars(res['profit'])})\n"
-                    f"• Vencimiento: `{res['new_expiry']}` (Suscripción al día)\n"
-                    f"• Transacción registrada en el libro contable de finanzas."
-                )
-                tg_title = "💵 <b>¡PAGO DE COMPRA CONFIRMADO DESDE CHATWOOT!</b>"
             else:
-                # 1. Mensaje al cliente para renovación mensual
-                msg_client = (
-                    f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
-                    f"para la renovación de *{res['platform']}*.\n\n"
-                    f"Tu suscripción ha sido renovada con éxito hasta el *{res['new_expiry']}* (30 días extendidos). "
-                    f"¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                lines = [f"👤 **[StreamVault CRM] Suscripciones de {client['name']} ({badge_type}):**\n"]
+                for a in active_accs:
+                    perf = f" ({a['profile_name']})" if a.get("profile_name") else ""
+                    pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
+                    lines.append(
+                        f"• **{a['platform']}{perf}**\n"
+                        f"  📧 Correo: `{a['email']}` | Clave: `{a['password']}`{pin}\n"
+                        f"  📅 Vence: `{a['expiry_date']}` ({a.get('days_label', '')}) | Precio: {a.get('price') or '-'}\n"
+                    )
+                await whatsapp_client.send_chatwoot_message(conv_id, "\n".join(lines), private=True)
+            return {"status": "ok", "action": "info_reported"}
+
+        # -------------------------------------------------------------
+        # 4. REGISTRAR PAGO Y RENOVAR SERVICIO (/pago, /pagado, /renovar, /cobrado, /confirmar)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/pago", "/pagado", "/renovar", "/cobrado", "/confirmar")):
+            # Extraer monto opcional si el agente puso por ejemplo /pago 6500
+            parts = clean_cmd.split()
+            custom_amount = None
+            if len(parts) > 1:
+                clean_num = re.sub(r'[^0-9.]', '', parts[1].replace(",", "."))
+                if clean_num:
+                    try:
+                        custom_amount = float(clean_num)
+                    except ValueError:
+                        pass
+
+            c_info = database.get_client_360_profile(client["id"])
+            active_accs = c_info.get("active_accounts", []) if c_info else []
+            if not active_accs:
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    f"⚠️ [StreamVault CRM] **{client['name']}** no registra suscripciones activas para renovar.",
+                    private=True
                 )
-                # 2. Nota privada para el agente
-                note_agent = (
-                    f"✅ **[StreamVault CRM] ¡Pago y Renovación Registrados!**\n"
-                    f"• Cliente: **{res['client_name']}** ({badge_type})\n"
-                    f"• Servicio: **{res['platform']}** (`{res['email']}`)\n"
-                    f"• Cobrado: **+{amt_fmt}** (Ganancia: +{database.format_ars(res['profit'])})\n"
-                    f"• Nuevo Vencimiento: `{res['new_expiry']}` (+30 días)\n"
-                    f"• Transacción registrada en el libro contable de finanzas."
+                return {"status": "ok", "action": "no_active_accounts"}
+
+            target_acc = active_accs[0]
+            res = database.register_customer_payment(
+                email_or_id=str(target_acc["id"]),
+                amount=custom_amount,
+                payment_method="Chatwoot / Transferencia"
+            )
+
+            if res.get("success"):
+                amt_fmt = database.format_ars(res['amount'])
+                is_initial = res.get("is_initial", False)
+                badge_type = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
+
+                if is_initial:
+                    # 1. Mensaje al cliente para pago de compra inicial
+                    msg_client = (
+                        f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
+                        f"para tu compra de *{res['platform']}*.\n\n"
+                        f"Tu suscripción está confirmada y activa hasta el *{res['new_expiry']}*. "
+                        f"¡Muchas gracias por tu compra y preferencia! 🙌✨"
+                    )
+                    # 2. Nota privada para el agente
+                    note_agent = (
+                        f"✅ **[StreamVault CRM] ¡Pago de Compra Registrado!**\n"
+                        f"• Cliente: **{res['client_name']}** ({badge_type})\n"
+                        f"• Servicio: **{res['platform']}** (`{res['email']}`)\n"
+                        f"• Cobrado: **+{amt_fmt}** (Ganancia: +{database.format_ars(res['profit'])})\n"
+                        f"• Vencimiento: `{res['new_expiry']}` (Suscripción al día)\n"
+                        f"• Transacción registrada en el libro contable de finanzas."
+                    )
+                    tg_title = "💵 <b>¡PAGO DE COMPRA CONFIRMADO DESDE CHATWOOT!</b>"
+                else:
+                    # 1. Mensaje al cliente para renovación mensual
+                    msg_client = (
+                        f"🎉 ¡Hola {client['name']}! Confirmamos la recepción de tu pago de *{amt_fmt}* "
+                        f"para la renovación de *{res['platform']}*.\n\n"
+                        f"Tu suscripción ha sido renovada con éxito hasta el *{res['new_expiry']}* (30 días extendidos). "
+                        f"¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                    )
+                    # 2. Nota privada para el agente
+                    note_agent = (
+                        f"✅ **[StreamVault CRM] ¡Pago y Renovación Registrados!**\n"
+                        f"• Cliente: **{res['client_name']}** ({badge_type})\n"
+                        f"• Servicio: **{res['platform']}** (`{res['email']}`)\n"
+                        f"• Cobrado: **+{amt_fmt}** (Ganancia: +{database.format_ars(res['profit'])})\n"
+                        f"• Nuevo Vencimiento: `{res['new_expiry']}` (+30 días)\n"
+                        f"• Transacción registrada en el libro contable de finanzas."
+                    )
+                    tg_title = "🔄 <b>¡RENOVACIÓN (+30D) REGISTRADA DESDE CHATWOOT!</b>"
+
+                await whatsapp_client.send_chatwoot_message(conv_id, msg_client, private=False)
+                await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
+
+                # 3. Notificar a Telegram
+                await send_telegram_message(
+                    f"{tg_title}\n\n"
+                    f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
+                    f"• Servicio: <b>{res['platform']}</b>\n"
+                    f"• Cobrado: <b>+{amt_fmt}</b>\n"
+                    f"• Vencimiento: <code>{res['new_expiry']}</code>"
                 )
-                tg_title = "🔄 <b>¡RENOVACIÓN (+30D) REGISTRADA DESDE CHATWOOT!</b>"
+                return {"status": "ok", "action": "payment_collected", "details": res}
+            else:
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    f"❌ [StreamVault CRM] Error al registrar pago: {res.get('error')}",
+                    private=True
+                )
+                return {"status": "error", "error": res.get("error")}
 
-            await whatsapp_client.send_chatwoot_message(conv_id, msg_client, private=False)
-            await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
-
-            # 3. Notificar a Telegram
-            await send_telegram_message(
-                f"{tg_title}\n\n"
-                f"• Cliente: <b>{res['client_name']}</b> ({badge_type})\n"
-                f"• Servicio: <b>{res['platform']}</b>\n"
-                f"• Cobrado: <b>+{amt_fmt}</b>\n"
-                f"• Vencimiento: <code>{res['new_expiry']}</code>"
+        # -------------------------------------------------------------
+        # 5. ENVIAR DATOS DE COBRO Y ALIAS AL CLIENTE (/cbu, /alias, /datos, /transferir)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/cbu", "/alias", "/datos", "/banco", "/transferir")):
+            pm = database.get_formatted_payment_methods()
+            text = (
+                f"¡Hola {client['name']}! Aquí tienes nuestros datos de cobro oficiales:\n\n"
+                f"{pm}\n\n"
+                f"Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu activación o renovación. ¡Muchas gracias! 🙌"
             )
-            return {"status": "ok", "action": "payment_collected", "details": res}
-        else:
-            await whatsapp_client.send_chatwoot_message(
-                conv_id,
-                f"❌ [StreamVault CRM] Error al registrar pago: {res.get('error')}",
-                private=True
+            await whatsapp_client.send_chatwoot_message(conv_id, text, private=False)
+            return {"status": "ok", "action": "payment_info_sent"}
+
+        # -------------------------------------------------------------
+        # 6. MENÚ DE AYUDA Y COMANDOS DISPONIBLES (/ayuda, /comandos, /help)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/ayuda", "/comandos", "/help")):
+            help_text = (
+                "🛠️ **COMANDOS RÁPIDOS STREAMVAULT EN CHATWOOT:**\n\n"
+                "**Ventas Rápidas (Asignación Automática):**\n"
+                "• `/nc_n_casaextra` : Asigna Netflix Casa Extra (1 Pantalla)\n"
+                "• `/nc_n_full` : Asigna Netflix Cuenta Completa (4 Pantallas)\n"
+                "• `/nc_disney` : Asigna Disney+ Premium\n"
+                "• `/nc_max` : Asigna Max (HBO)\n"
+                "• `/nc_prime` : Asigna Amazon Prime Video\n"
+                "• `/nc_spotify` : Asigna Spotify Premium\n"
+                "• `/nc_youtube` : Asigna YouTube Premium\n"
+                "• `/nc_paramount` : Asigna Paramount+\n"
+                "• `/nc_crunchyroll` : Asigna Crunchyroll\n\n"
+                "**Consultas & Operaciones:**\n"
+                "• `/stock` : Ver stock libre en tiempo real\n"
+                "• `/info` : Ver suscripciones activas del cliente actual\n"
+                "• `/cbu` : Enviar datos bancarios y alias al cliente\n\n"
+                "💡 **Consejo Pro:** Puedes escribir el comando en la pestaña **'Nota privada'** (caja amarilla en Chatwoot). Así el cliente no verá el comando y recibirá únicamente el mensaje final con sus accesos."
             )
-            return {"status": "error", "error": res.get("error")}
+            await whatsapp_client.send_chatwoot_message(conv_id, help_text, private=True)
+            return {"status": "ok", "action": "help_sent"}
 
-    # -------------------------------------------------------------
-    # 5. ENVIAR DATOS DE COBRO Y ALIAS AL CLIENTE (/cbu, /alias, /datos, /transferir)
-    # -------------------------------------------------------------
-    elif clean_cmd in ("/cbu", "/alias", "/datos", "/banco", "/transferir"):
-        pm = database.get_formatted_payment_methods()
-        text = (
-            f"¡Hola {client['name']}! Aquí tienes nuestros datos de cobro oficiales:\n\n"
-            f"{pm}\n\n"
-            f"Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu activación o renovación. ¡Muchas gracias! 🙌"
+        return {"status": "ignored", "reason": "unknown_command"}
+
+    except Exception as err:
+        logger.error(f"Error ejecutando comando Chatwoot '{clean_cmd}': {err}", exc_info=True)
+        await whatsapp_client.send_chatwoot_message(
+            conv_id,
+            f"❌ **[StreamVault CRM] Error al ejecutar `{clean_cmd}`:** {str(err)}",
+            private=True
         )
-        await whatsapp_client.send_chatwoot_message(conv_id, text, private=False)
-        return {"status": "ok", "action": "payment_info_sent"}
-
-    # -------------------------------------------------------------
-    # 5. MENÚ DE AYUDA Y COMANDOS DISPONIBLES (/ayuda, /comandos, /help)
-    # -------------------------------------------------------------
-    elif clean_cmd in ("/ayuda", "/comandos", "/help"):
-        help_text = (
-            "🛠️ **COMANDOS RÁPIDOS STREAMVAULT EN CHATWOOT:**\n\n"
-            "**Ventas Rápidas (Asignación Automática):**\n"
-            "• `/nc_n_casaextra` : Asigna Netflix Casa Extra (1 Pantalla)\n"
-            "• `/nc_n_full` : Asigna Netflix Cuenta Completa (4 Pantallas)\n"
-            "• `/nc_disney` : Asigna Disney+ Premium\n"
-            "• `/nc_max` : Asigna Max (HBO)\n"
-            "• `/nc_prime` : Asigna Amazon Prime Video\n"
-            "• `/nc_spotify` : Asigna Spotify Premium\n"
-            "• `/nc_youtube` : Asigna YouTube Premium\n"
-            "• `/nc_paramount` : Asigna Paramount+\n"
-            "• `/nc_crunchyroll` : Asigna Crunchyroll\n\n"
-            "**Consultas & Operaciones:**\n"
-            "• `/stock` : Ver stock libre en tiempo real\n"
-            "• `/info` : Ver suscripciones activas del cliente actual\n"
-            "• `/cbu` : Enviar datos bancarios y alias al cliente\n\n"
-            "💡 **Consejo Pro:** Puedes escribir el comando en la pestaña **'Nota privada'** (caja amarilla en Chatwoot). Así el cliente no verá el comando y recibirá únicamente el mensaje final con sus accesos."
-        )
-        await whatsapp_client.send_chatwoot_message(conv_id, help_text, private=True)
-        return {"status": "ok", "action": "help_sent"}
-
-    return {"status": "ignored", "reason": "unknown_command"}
+        return {"status": "error", "error": str(err)}

@@ -126,3 +126,4 @@ from db.repositories.suppliers_repo import (
 
 # Alias para compatibilidad con versiones previas
 register_streaming_sale = assign_or_sell_account
+get_client_360 = get_client_360_profile

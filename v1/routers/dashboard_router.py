@@ -102,6 +102,10 @@ async def dashboard(request: Request):
             created = request.query_params.get("created", "0")
             existing = request.query_params.get("existing", "0")
             msg_text = f"⚡ ¡Atajos de Chatwoot sincronizados! ({created} creados, {existing} ya existentes). Ya puedes escribir /nc en cualquier chat."
+        elif msg_raw == "chatwoot_names_synced":
+            upd = request.query_params.get("updated", "0")
+            chk = request.query_params.get("checked", "0")
+            msg_text = f"✨ ¡Nombres de WhatsApp sincronizados a Chatwoot! Se revisaron {chk} contactos y se actualizaron {upd} nombres con la agenda real."
         else:
             msg_text = msg_raw
         msg_banner = f"""

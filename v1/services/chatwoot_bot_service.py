@@ -114,6 +114,16 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
             notes=f"Contacto sincronizado de Chatwoot (Conv #{conv_id})"
         )
 
+    # Sincronización proactiva de nombre si el CRM tiene un nombre más completo agendado
+    contact_id = sender_meta.get("id") or conversation.get("contact_id")
+    if contact_id and client and client.get("name"):
+        crm_n = client["name"].strip()
+        if crm_n and crm_n != contact_name and not crm_n.lower().startswith("whatsapp"):
+            try:
+                await whatsapp_client.update_chatwoot_contact(contact_id=int(contact_id), name=crm_n)
+            except Exception as e:
+                logger.debug(f"No se pudo sincronizar nombre de contacto proactivamente: {e}")
+
     clean_cmd = content.strip().lower()
 
     try:
@@ -364,11 +374,47 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 "**Consultas & Operaciones:**\n"
                 "• `/stock` : Ver stock libre en tiempo real\n"
                 "• `/info` : Ver suscripciones activas del cliente actual\n"
-                "• `/cbu` : Enviar datos bancarios y alias al cliente\n\n"
+                "• `/cbu` : Enviar datos bancarios y alias al cliente\n"
+                "• `/nombre <Nombre>` : Renombrar el contacto en Chatwoot y CRM\n\n"
                 "💡 **Consejo Pro:** Puedes escribir el comando en la pestaña **'Nota privada'** (caja amarilla en Chatwoot). Así el cliente no verá el comando y recibirá únicamente el mensaje final con sus accesos."
             )
             await whatsapp_client.send_chatwoot_message(conv_id, help_text, private=True)
             return {"status": "ok", "action": "help_sent"}
+
+        # -------------------------------------------------------------
+        # 7. RENOMBRAR CONTACTO EN CHATWOOT Y CRM (/nombre, /renombrar, /name)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/nombre", "/renombrar", "/name")):
+            parts = content.strip().split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    "⚠️ [StreamVault CRM] Debes indicar el nuevo nombre para este contacto.\n\n"
+                    "💡 Ejemplo: `/nombre Samuel Martinez`",
+                    private=True
+                )
+                return {"status": "ok", "action": "missing_name"}
+
+            new_name = parts[1].strip()
+            contact_id = sender_meta.get("id") or conversation.get("contact_id")
+            if contact_id:
+                await whatsapp_client.update_chatwoot_contact(contact_id=int(contact_id), name=new_name)
+
+            database.register_or_update_client(
+                name=new_name,
+                whatsapp=client.get("whatsapp") or clean_phone,
+                client_type=client.get("client_type") or "consumidor_final"
+            )
+
+            await whatsapp_client.send_chatwoot_message(
+                conv_id,
+                f"✅ **[StreamVault CRM] ¡Contacto renombrado con éxito!**\n\n"
+                f"• Nuevo Nombre: **{new_name}**\n"
+                f"• Teléfono: `{clean_phone or client.get('whatsapp')}`\n"
+                f"• Actualizado tanto en Chatwoot como en la base de datos del CRM.",
+                private=True
+            )
+            return {"status": "ok", "action": "contact_renamed", "new_name": new_name}
 
         return {"status": "ignored", "reason": "unknown_command"}
 

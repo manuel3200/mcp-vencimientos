@@ -499,6 +499,196 @@ async def sync_chatwoot_contacts_to_crm() -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
+async def update_chatwoot_contact(
+    contact_id: int,
+    name: Optional[str] = None,
+    email: Optional[str] = None,
+    phone_number: Optional[str] = None
+) -> Dict[str, Any]:
+    """Actualiza los datos de un contacto existente en Chatwoot (ej. cambiar nombre de pushName a nombre real)."""
+    cfg = get_chatwoot_config()
+    token = (cfg.get("token") or "ZRzCpt75vxkyiUC7H1otEoog").strip()
+    if not cfg.get("enabled") or not token:
+        return {"success": False, "error": "Chatwoot no está habilitado o falta Token."}
+
+    payload = {}
+    if name is not None:
+        payload["name"] = name.strip()
+    if email is not None:
+        payload["email"] = email.strip()
+    if phone_number is not None:
+        payload["phone_number"] = phone_number.strip()
+
+    if not payload:
+        return {"success": False, "error": "No hay campos para actualizar."}
+
+    base_urls = [cfg["url"]]
+    if "chatwoot-rails" in cfg["url"]:
+        base_urls.append("https://chat.joif.net")
+    elif "chat.joif.net" in cfg["url"]:
+        base_urls.append("http://chatwoot-rails:3000")
+
+    headers = get_chatwoot_headers(token)
+    for base in base_urls:
+        url = f"{base.rstrip('/')}/api/v1/accounts/{cfg['account_id']}/contacts/{contact_id}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                resp = await client.put(url, headers=headers, json=payload)
+                if resp.status_code in (200, 201):
+                    data = resp.json()
+                    logger.info(f"Contacto #{contact_id} actualizado exitosamente en Chatwoot: {payload}")
+                    return {"success": True, "contact": data.get("payload", {})}
+                elif resp.status_code == 404:
+                    return {"success": False, "error": f"Contacto #{contact_id} no encontrado en Chatwoot."}
+                else:
+                    logger.warning(f"Error HTTP {resp.status_code} actualizando contacto Chatwoot ({base}): {resp.text[:200]}")
+        except Exception as e:
+            logger.debug(f"Fallo al actualizar contacto en {base}: {e}")
+            continue
+
+    return {"success": False, "error": "No se pudo actualizar el contacto en Chatwoot."}
+
+
+async def fetch_evolution_contacts() -> List[Dict[str, Any]]:
+    """Consulta los contactos almacenados en la agenda de WhatsApp a través de Evolution API."""
+    config = get_evolution_config()
+    headers = get_headers(config["api_key"])
+
+    endpoints = [
+        ("POST", f"{config['api_url']}/chat/findContacts/{config['instance_name']}", {}),
+        ("GET", f"{config['api_url']}/chat/findContacts/{config['instance_name']}", None),
+        ("POST", f"{config['api_url']}/contact/find/{config['instance_name']}", {}),
+        ("GET", f"{config['api_url']}/contact/find/{config['instance_name']}", None),
+    ]
+
+    for method, url, body in endpoints:
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                if method == "POST":
+                    resp = await client.post(url, headers=headers, json=body or {})
+                else:
+                    resp = await client.get(url, headers=headers)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, list):
+                        logger.info(f"Se obtuvieron {len(data)} contactos de la agenda de WhatsApp vía Evolution API ({url}).")
+                        return data
+                    elif isinstance(data, dict) and "contacts" in data and isinstance(data["contacts"], list):
+                        return data["contacts"]
+        except Exception as e:
+            logger.debug(f"Endpoint Evolution {url} no disponible: {e}")
+            continue
+
+    return []
+
+
+async def sync_whatsapp_names_to_chatwoot() -> Dict[str, Any]:
+    """Sincroniza los nombres reales de la agenda de WhatsApp y del CRM hacia los contactos de Chatwoot.
+    Reemplaza nombres que provienen del 'pushName' (ej: 'Samu☠️') por el nombre real de agenda (ej: 'Samuel Martinez').
+    """
+    cfg = get_chatwoot_config()
+    if not cfg.get("enabled"):
+        return {"success": False, "error": "Chatwoot no está habilitado."}
+
+    # 1. Obtener contactos de la agenda de WhatsApp (Evolution API)
+    evo_contacts = await fetch_evolution_contacts()
+    evo_name_by_phone: Dict[str, str] = {}
+    for ec in evo_contacts:
+        num = re.sub(r'[^0-9]', '', str(ec.get("number") or ec.get("id") or ""))
+        agenda_name = (ec.get("name") or "").strip()
+        if agenda_name and agenda_name != num:
+            if len(num) >= 8:
+                evo_name_by_phone[num] = agenda_name
+                if num.startswith("549") and len(num) > 10:
+                    evo_name_by_phone[num[3:]] = agenda_name
+                    evo_name_by_phone["54" + num[3:]] = agenda_name
+
+    # 2. Obtener clientes del CRM local
+    crm_clients = database.list_all_clients()
+    crm_name_by_phone: Dict[str, str] = {}
+    for cl in crm_clients:
+        cl_phone = database.clean_whatsapp_phone(cl.get("whatsapp", ""))
+        cl_name = (cl.get("name") or "").strip()
+        if cl_phone and cl_name and not cl_name.lower().startswith("whatsapp"):
+            crm_name_by_phone[cl_phone] = cl_name
+            if cl_phone.startswith("549") and len(cl_phone) > 10:
+                crm_name_by_phone[cl_phone[3:]] = cl_name
+                crm_name_by_phone["54" + cl_phone[3:]] = cl_name
+
+    # 3. Recorrer contactos en Chatwoot
+    page = 1
+    total_checked = 0
+    total_updated = 0
+    updated_details = []
+
+    while True:
+        cw_contacts = await list_chatwoot_contacts(page=page)
+        if not cw_contacts:
+            break
+
+        for cw_c in cw_contacts:
+            total_checked += 1
+            cw_id = cw_c.get("id")
+            cw_name = (cw_c.get("name") or "").strip()
+            cw_phone_raw = str(cw_c.get("phone_number") or cw_c.get("identifier") or "")
+            clean_p = re.sub(r'[^0-9]', '', cw_phone_raw)
+
+            if not clean_p or len(clean_p) < 8:
+                continue
+
+            target_name = None
+            source = ""
+
+            # Prioridad 1: Agenda de WhatsApp (Evolution)
+            for k, v in evo_name_by_phone.items():
+                if k in clean_p or clean_p in k:
+                    target_name = v
+                    source = "Agenda WhatsApp"
+                    break
+
+            # Prioridad 2: CRM Local
+            if not target_name:
+                for k, v in crm_name_by_phone.items():
+                    if k in clean_p or clean_p in k:
+                        target_name = v
+                        source = "CRM"
+                        break
+
+            # Prioridad 3: Búsqueda flexible en CRM
+            if not target_name:
+                c_found = database.search_client(clean_p)
+                if c_found and c_found.get("name") and not c_found["name"].lower().startswith("whatsapp"):
+                    target_name = c_found["name"]
+                    source = "CRM DB"
+
+            if target_name and target_name != cw_name:
+                up_res = await update_chatwoot_contact(contact_id=cw_id, name=target_name)
+                if up_res.get("success"):
+                    total_updated += 1
+                    updated_details.append({
+                        "id": cw_id,
+                        "phone": cw_phone_raw,
+                        "old_name": cw_name,
+                        "new_name": target_name,
+                        "source": source
+                    })
+                    database.register_or_update_client(name=target_name, whatsapp=clean_p)
+
+        if len(cw_contacts) < 15:
+            break
+        page += 1
+        if page > 20:
+            break
+
+    return {
+        "success": True,
+        "total_contacts_checked": total_checked,
+        "total_updated": total_updated,
+        "updated_contacts": updated_details
+    }
+
+
 def html_to_chatwoot_markdown(text: str) -> str:
     """Convierte etiquetas HTML (<b>, <code>, etc.) a Markdown limpio para Chatwoot."""
     if not text:

@@ -1612,6 +1612,8 @@ async def dashboard(request: Request):
             msg_text = "🚪 Sesión de WhatsApp cerrada correctamente."
         elif msg_raw == "wa_webhook_configured":
             msg_text = "🔗 Webhook configurado exitosamente en Evolution API."
+        elif msg_raw == "wa_chatwoot_configured":
+            msg_text = "🎉 ¡Chatwoot vinculado exitosamente con Evolution API! Ya puedes gestionar tus clientes desde la app móvil."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -3187,6 +3189,42 @@ async def dashboard(request: Request):
                                 </form>
                             </div>
                         </div>
+
+                        <!-- Fila 2: Chatwoot CRM Mobile Inbox -->
+                        <div style="margin-top:16px; background:#161e2e; border:1px solid #334155; border-radius:8px; padding:16px;">
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+                                <div>
+                                    <h4 style="margin:0 0 4px 0; font-size:0.95rem; color:#818cf8; display:flex; align-items:center; gap:6px;">
+                                        📱 Chatwoot (Atención de Clientes desde la App Móvil)
+                                    </h4>
+                                    <p style="font-size:0.78rem; color:#94a3b8; margin:0;">
+                                        Sincroniza WhatsApp con la app de Chatwoot (iOS/Android) para responder desde el celular con respuestas rápidas y notas privadas.
+                                    </p>
+                                </div>
+                                <span style="background:#1e1b4b; color:#a5b4fc; border:1px solid #6366f1; font-size:0.7rem; font-weight:600; padding:2px 8px; border-radius:12px;">
+                                    Bandeja Unificada
+                                </span>
+                            </div>
+                            <form action="/api/whatsapp/setup-chatwoot" method="POST" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; align-items:end;">
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">URL de Chatwoot</label>
+                                    <input type="text" name="chatwoot_url" value="http://chatwoot-rails:3000" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">Token de Acceso (Chatwoot)</label>
+                                    <input type="password" name="chatwoot_token" placeholder="Ajustes de Perfil -> Access Token" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                </div>
+                                <div>
+                                    <label style="display:block; font-size:0.75rem; color:#94a3b8; margin-bottom:4px; font-weight:600;">ID de Cuenta</label>
+                                    <input type="text" name="account_id" value="1" required style="width:100%; box-sizing:border-box; background:#0b0f19; border:1px solid #334155; color:#fff; border-radius:6px; padding:6px 10px; font-size:0.8rem;">
+                                </div>
+                                <div>
+                                    <button type="submit" class="btn" style="width:100%; background:#4f46e5; padding:7px 12px; font-size:0.8rem; font-weight:600;">
+                                        ⚡ Vincular con Chatwoot
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
                     </div>
 
                     <!-- 1. Configuración de Cobro y CBU -->
@@ -4257,6 +4295,29 @@ async def api_whatsapp_setup_webhook(request: Request, webhook_url: str = Form("
         return RedirectResponse(url="/?msg=wa_webhook_configured#tab-templates", status_code=302)
     else:
         err = urllib.parse.quote(res.get("error", "Error configurando webhook"))
+        return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
+
+@app.post("/api/whatsapp/setup-chatwoot")
+async def api_whatsapp_setup_chatwoot(
+    request: Request,
+    chatwoot_url: str = Form("http://chatwoot-rails:3000"),
+    chatwoot_token: str = Form(...),
+    account_id: str = Form("1"),
+    sign_msg: Optional[str] = Form(None)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = await whatsapp_client.configure_chatwoot(
+        chatwoot_url=chatwoot_url.strip(),
+        chatwoot_token=chatwoot_token.strip(),
+        account_id=account_id.strip() or "1",
+        sign_msg=True if sign_msg in ("1", "on", "true") else False
+    )
+    if res.get("success"):
+        return RedirectResponse(url="/?msg=wa_chatwoot_configured#tab-templates", status_code=302)
+    else:
+        err = urllib.parse.quote(res.get("error", "Error vinculando Chatwoot con Evolution API"))
         return RedirectResponse(url=f"/?err={err}#tab-templates", status_code=302)
 
 @app.post("/api/whatsapp/test")

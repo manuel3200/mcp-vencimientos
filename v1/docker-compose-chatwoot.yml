@@ -1,0 +1,159 @@
+version: '3.8'
+
+# ==============================================================================
+# CHATWOOT COMMUNITY EDITION (ARM64 Compatible)
+# Compatible con Oracle Cloud Ampere A1 (aarch64)
+# Conectado a la red interna: evolution-net
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Base de datos PostgreSQL exclusiva para Chatwoot
+  # ----------------------------------------------------------------------------
+  chatwoot-postgres:
+    image: postgres:15-alpine
+    container_name: chatwoot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: chatwoot_production
+      POSTGRES_USER: chatwoot
+      POSTGRES_PASSWORD: chatwoot_db_pass_2026
+    volumes:
+      - chatwoot_postgres_data:/var/lib/postgresql/data
+    networks:
+      - evolution-net
+
+  # ----------------------------------------------------------------------------
+  # 2. Redis para colas en segundo plano (Sidekiq) y WebSockets (ActionCable)
+  # ----------------------------------------------------------------------------
+  chatwoot-redis:
+    image: redis:7-alpine
+    container_name: chatwoot-redis
+    restart: unless-stopped
+    volumes:
+      - chatwoot_redis_data:/data
+    networks:
+      - evolution-net
+
+  # ----------------------------------------------------------------------------
+  # 3. Inicializador de Base de Datos (Se ejecuta una sola vez y se detiene)
+  # ----------------------------------------------------------------------------
+  chatwoot-init:
+    image: chatwoot/chatwoot:v4.17.1-ce
+    container_name: chatwoot-init
+    depends_on:
+      - chatwoot-postgres
+      - chatwoot-redis
+    restart: "no"
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['bundle', 'exec', 'rails', 'db:chatwoot_prepare']
+    environment:
+      - SECRET_KEY_BASE=j2ZWinsXioaVhCGTbxm7OSQTgJkxNGs0VIEh6DKEl80KUXzzIEhG87mewbYEHfw4
+      - FRONTEND_URL=http://localhost:3000
+      - DEFAULT_LOCALE=es
+      - FORCE_SSL_MAILER=false
+      - ENABLE_ACCOUNT_SIGNUP=true
+      - REDIS_URL=redis://chatwoot-redis:6379
+      - POSTGRES_HOST=chatwoot-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=chatwoot_production
+      - POSTGRES_USERNAME=chatwoot
+      - POSTGRES_PASSWORD=chatwoot_db_pass_2026
+      - ACTIVE_STORAGE_SERVICE=local
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+    volumes:
+      - chatwoot_storage_data:/app/storage
+    networks:
+      - evolution-net
+
+  # ----------------------------------------------------------------------------
+  # 4. Servidor Web Rails (Interfaz de Usuario y API de Chatwoot)
+  # ----------------------------------------------------------------------------
+  chatwoot-rails:
+    image: chatwoot/chatwoot:v4.17.1-ce
+    container_name: chatwoot-rails
+    restart: unless-stopped
+    depends_on:
+      - chatwoot-postgres
+      - chatwoot-redis
+    ports:
+      # Puerto de acceso web en tu servidor Oracle
+      - "3000:3000"
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['bundle', 'exec', 'rails', 's', '-p', '3000', '-b', '0.0.0.0']
+    environment:
+      - SECRET_KEY_BASE=j2ZWinsXioaVhCGTbxm7OSQTgJkxNGs0VIEh6DKEl80KUXzzIEhG87mewbYEHfw4
+      # IMPORTANTE: Cambia localhost por la IP pública de tu VPS Oracle o tu dominio (ej: http://123.45.67.89:3000)
+      - FRONTEND_URL=http://localhost:3000
+      - DEFAULT_LOCALE=es
+      - FORCE_SSL_MAILER=false
+      - ENABLE_ACCOUNT_SIGNUP=true
+      - REDIS_URL=redis://chatwoot-redis:6379
+      - POSTGRES_HOST=chatwoot-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=chatwoot_production
+      - POSTGRES_USERNAME=chatwoot
+      - POSTGRES_PASSWORD=chatwoot_db_pass_2026
+      - ACTIVE_STORAGE_SERVICE=local
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+      # Habilita notificaciones push oficiales en la App de Celular (Android / iOS)
+      - ENABLE_PUSH_RELAY_SERVER=true
+    volumes:
+      - chatwoot_storage_data:/app/storage
+    networks:
+      - evolution-net
+
+  # ----------------------------------------------------------------------------
+  # 5. Procesador en segundo plano Sidekiq (Webhooks, sincronización, mensajería)
+  # ----------------------------------------------------------------------------
+  chatwoot-sidekiq:
+    image: chatwoot/chatwoot:v4.17.1-ce
+    container_name: chatwoot-sidekiq
+    restart: unless-stopped
+    depends_on:
+      - chatwoot-postgres
+      - chatwoot-redis
+    entrypoint: docker/entrypoints/rails.sh
+    command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
+    environment:
+      - SECRET_KEY_BASE=j2ZWinsXioaVhCGTbxm7OSQTgJkxNGs0VIEh6DKEl80KUXzzIEhG87mewbYEHfw4
+      - FRONTEND_URL=http://localhost:3000
+      - DEFAULT_LOCALE=es
+      - FORCE_SSL_MAILER=false
+      - REDIS_URL=redis://chatwoot-redis:6379
+      - POSTGRES_HOST=chatwoot-postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DATABASE=chatwoot_production
+      - POSTGRES_USERNAME=chatwoot
+      - POSTGRES_PASSWORD=chatwoot_db_pass_2026
+      - ACTIVE_STORAGE_SERVICE=local
+      - NODE_ENV=production
+      - RAILS_ENV=production
+      - INSTALLATION_ENV=docker
+      - ENABLE_PUSH_RELAY_SERVER=true
+    volumes:
+      - chatwoot_storage_data:/app/storage
+    networks:
+      - evolution-net
+
+# ------------------------------------------------------------------------------
+# Persistencia de Datos
+# ------------------------------------------------------------------------------
+volumes:
+  chatwoot_postgres_data:
+    name: chatwoot_postgres_data
+  chatwoot_redis_data:
+    name: chatwoot_redis_data
+  chatwoot_storage_data:
+    name: chatwoot_storage_data
+
+# ------------------------------------------------------------------------------
+# Conexión con la red existente de Evolution API
+# ------------------------------------------------------------------------------
+networks:
+  evolution-net:
+    external: true

@@ -223,3 +223,59 @@ async def logout_instance() -> Dict[str, Any]:
                 return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+async def configure_chatwoot(
+    chatwoot_url: str,
+    chatwoot_token: str,
+    account_id: str = "1",
+    sign_msg: bool = False,
+    reopen_conversation: bool = True,
+    conversation_pending: bool = False,
+    import_contacts: bool = True,
+    import_messages: bool = True,
+    days_limit_import: int = 3
+) -> Dict[str, Any]:
+    """Vincula la instancia de WhatsApp en Evolution API con Chatwoot."""
+    config = get_evolution_config()
+    url = f"{config['api_url']}/chatwoot/set/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+    payload = {
+        "enabled": True,
+        "accountId": str(account_id),
+        "token": chatwoot_token.strip(),
+        "url": chatwoot_url.strip().rstrip("/"),
+        "signMsg": sign_msg,
+        "reopenConversation": reopen_conversation,
+        "conversationPending": conversation_pending,
+        "importContacts": import_contacts,
+        "importMessages": import_messages,
+        "daysLimitImportMessages": days_limit_import
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                logger.info(f"Chatwoot configurado exitosamente en Evolution API para '{config['instance_name']}'")
+                return {"success": True, "data": resp.json()}
+            else:
+                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+async def get_chatwoot_status() -> Dict[str, Any]:
+    """Obtiene la configuración actual de integración de Chatwoot en Evolution API."""
+    config = get_evolution_config()
+    url = f"{config['api_url']}/chatwoot/find/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code == 200:
+                return {"success": True, "data": resp.json()}
+            else:
+                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+

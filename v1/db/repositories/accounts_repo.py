@@ -327,6 +327,57 @@ def delete_account(account_id: int) -> bool:
     finally:
         conn.close()
 
+def purge_accounts_except_client(client_name_query: str = "samuel martin") -> Dict[str, Any]:
+    """Elimina todas las cuentas de streaming excepto las asignadas al cliente indicado."""
+    conn = get_connection()
+    try:
+        with conn:
+            # Identificar los IDs de clientes protegidos
+            protected_clients = conn.execute("""
+                SELECT id, name FROM clients WHERE lower(name) LIKE lower(?)
+            """, (f"%{client_name_query.strip()}%",)).fetchall()
+            
+            protected_client_ids = [r["id"] for r in protected_clients]
+            
+            # Cuentas que se van a eliminar
+            if protected_client_ids:
+                placeholders = ",".join("?" for _ in protected_client_ids)
+                to_delete = conn.execute(f"""
+                    SELECT id, email, platform, status, client_id
+                    FROM streaming_accounts
+                    WHERE client_id IS NULL OR client_id NOT IN ({placeholders})
+                """, protected_client_ids).fetchall()
+                
+                del_cursor = conn.execute(f"""
+                    DELETE FROM streaming_accounts
+                    WHERE client_id IS NULL OR client_id NOT IN ({placeholders})
+                """, protected_client_ids)
+            else:
+                to_delete = conn.execute("""
+                    SELECT id, email, platform, status, client_id
+                    FROM streaming_accounts
+                """).fetchall()
+                del_cursor = conn.execute("DELETE FROM streaming_accounts")
+
+            deleted_count = del_cursor.rowcount
+            
+            # Cuentas preservadas
+            kept = conn.execute("""
+                SELECT a.id, a.email, a.platform, a.profile_name, c.name as client_name
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+            """).fetchall()
+
+            return {
+                "success": True,
+                "deleted_count": deleted_count,
+                "protected_client": client_name_query,
+                "kept_accounts": [dict(k) for k in kept]
+            }
+    finally:
+        conn.close()
+
+
 def mark_streaming_alert_sent(account_id: int, alert_date: str):
     conn = get_connection()
     try:

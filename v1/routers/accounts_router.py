@@ -81,6 +81,17 @@ async def delete_account_api(account_id: int, request: Request):
     database.delete_account(account_id)
     return RedirectResponse(url="/", status_code=302)
 
+@router.post("/api/purge-accounts")
+async def purge_accounts_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    form = await request.form()
+    client_name = str(form.get("client_name", "Samuel Martinez")).strip() or "Samuel Martinez"
+    database.purge_accounts_except_client(client_name)
+    return RedirectResponse(url="/#stock", status_code=303)
+
+
 @router.post("/api/test-telegram")
 async def test_telegram_api(request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))

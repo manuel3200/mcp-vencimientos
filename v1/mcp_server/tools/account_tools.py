@@ -455,7 +455,40 @@ def consultar_cuentas_caidas() -> str:
             f"  Cliente: {client_name} | Tel: {f.get('whatsapp') or '-'} | Tg: {f.get('telegram') or '-'}\n"
             f"  Detalle: {f.get('notes') or '-'}\n"
         )
+@mcp.tool()
+def eliminar_cuenta_individual(id_cuenta: int) -> str:
+    """Elimina definitivamente una cuenta de streaming o pantalla por su ID numérico."""
+    ok = database.delete_account(id_cuenta)
+    if ok:
+        return f"✅ Cuenta con ID #{id_cuenta} eliminada correctamente de la base de datos."
+    return f"❌ No se encontró ninguna cuenta con el ID #{id_cuenta}."
+
+
+@mcp.tool()
+def eliminar_todas_las_cuentas_excepto_cliente(nombre_cliente_a_conservar: str = "Samuel Martinez") -> str:
+    """Elimina de forma masiva todas las cuentas de streaming de la base de datos (caídas, libres, o de otros clientes), preservando únicamente las cuentas pertenecientes al cliente especificado (por defecto 'Samuel Martinez')."""
+    res = database.purge_accounts_except_client(nombre_cliente_a_conservar)
+    if not res.get("success"):
+        return f"❌ Error al purgar las cuentas: {res.get('error', 'Error desconocido')}"
+    
+    del_count = res["deleted_count"]
+    kept = res["kept_accounts"]
+    
+    lines = [
+        f"🗑️ <b>PURGA DE CUENTAS COMPLETADA</b>",
+        f"━━━━━━━━━━━━━━━━━━━━━━",
+        f"🧹 Cuentas eliminadas: <b>{del_count}</b>",
+        f"🛡️ Cliente protegido: <b>{nombre_cliente_a_conservar}</b>",
+        f"📦 Cuentas conservadas en el sistema: <b>{len(kept)}</b>\n"
+    ]
+    for k in kept:
+        perf = f" (Perfil: {k['profile_name']})" if k.get("profile_name") else ""
+        lines.append(f"• [{k['id']}] {k['platform']}{perf} - <code>{k['email']}</code> (Cliente: {k.get('client_name') or 'N/A'})")
+    
+    lines.append(f"━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append(f"✨ El sistema y el dashboard han quedado limpios manteniendo intacto a {nombre_cliente_a_conservar}.")
     return "\n".join(lines)
+
 
 
 @mcp.tool()

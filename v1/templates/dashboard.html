@@ -883,6 +883,120 @@
               <button type="submit" class="h-8 px-4 bg-secondary-container text-white text-xs font-semibold rounded hover:bg-secondary">Guardar Chatwoot</button>
             </div>
           </form>
+
+          <!-- Chatwoot Quick Actions & Sync Buttons -->
+          <div class="border-t border-surface-container pt-3 flex flex-wrap items-center gap-3">
+            <form action="/api/chatwoot/setup-webhook" method="POST" class="inline">
+              <button type="submit" class="h-8 px-3 bg-surface-container-high border border-outline-variant/30 text-xs font-semibold rounded text-on-surface hover:bg-surface-container-highest flex items-center gap-1.5 transition-colors">
+                <span class="material-symbols-outlined text-sm text-tertiary">webhook</span>
+                <span>Configurar Webhook (1 Clic)</span>
+              </button>
+            </form>
+
+            <form action="/api/chatwoot/setup-canned-responses" method="POST" class="inline">
+              <button type="submit" class="h-8 px-3 bg-surface-container-high border border-outline-variant/30 text-xs font-semibold rounded text-on-surface hover:bg-surface-container-highest flex items-center gap-1.5 transition-colors">
+                <span class="material-symbols-outlined text-sm text-secondary">bolt</span>
+                <span>Sincronizar Atajos /nc en Chatwoot</span>
+              </button>
+            </form>
+
+            <form action="/api/chatwoot/sync" method="POST" class="inline">
+              <button type="submit" class="h-8 px-3 bg-surface-container-high border border-outline-variant/30 text-xs font-semibold rounded text-on-surface hover:bg-surface-container-highest flex items-center gap-1.5 transition-colors">
+                <span class="material-symbols-outlined text-sm text-primary">sync</span>
+                <span>Importar / Sincronizar Contactos</span>
+              </button>
+            </form>
+          </div>
+
+          <!-- Guía de Comandos Rápidos /nc en Chatwoot -->
+          <div class="border-t border-surface-container pt-3 flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <span class="font-headline-sm text-xs font-semibold text-on-surface flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-sm text-primary">terminal</span>
+                Comandos de Venta y Asignación Rápida en Chatwoot
+              </span>
+              <span class="font-label-code text-[11px] text-tertiary bg-tertiary-container/20 px-2 py-0.5 rounded border border-tertiary/30">Webhook Activo</span>
+            </div>
+
+            <p class="text-xs text-on-surface-variant">
+              Escribe estos atajos en el campo de texto de Chatwoot. 
+              <strong class="text-secondary-fixed">💡 Consejo Pro:</strong> Si usas la pestaña <span class="bg-amber-950/40 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">Nota privada</span> (caja amarilla con candado), el cliente nunca verá el comando; el bot asignará el casillero en el CRM y le enviará el mensaje oficial con credenciales directamente a su WhatsApp.
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 pt-1 font-label-code text-xs">
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_n_casaextra</span>
+                  <span class="badge badge-ok">Netflix</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna 1 pantalla Casa Extra. (Final: $8.500 | Revendedor: $6.500)</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_n_full</span>
+                  <span class="badge badge-ok">Netflix</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna Cuenta Completa 4 Pantallas. (Final: $25.000 | Revendedor: $23.000)</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_disney</span>
+                  <span class="badge" style="background:rgba(59,130,246,0.2);color:#93c5fd;">Disney+</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna pantalla Disney+ Premium con PIN.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_max</span>
+                  <span class="badge" style="background:rgba(147,51,234,0.2);color:#d8b4fe;">Max</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna pantalla Max HBO Platino.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_prime</span>
+                  <span class="badge" style="background:rgba(14,165,233,0.2);color:#7dd3fc;">Prime</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna pantalla Amazon Prime Video.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/stock</span>
+                  <span class="badge badge-warn">Inventario</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Envía nota privada con stock libre de todas las plataformas.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/info</span>
+                  <span class="badge" style="background:rgba(16,185,129,0.2);color:#6ee7b7;">Cliente</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Muestra las suscripciones activas y días restantes del cliente.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/cbu</span>
+                  <span class="badge badge-ok">Cobro</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Envía CBU, Alias y datos bancarios de cobro directamente al cliente.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/ayuda</span>
+                  <span class="badge" style="background:rgba(100,116,139,0.2);color:#cbd5e1;">Guía</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Muestra el acordeón completo de comandos rápidos en el chat.</span>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- OAuth 2.0 Gemini Spark -->

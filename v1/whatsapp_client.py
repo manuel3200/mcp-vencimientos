@@ -438,3 +438,153 @@ async def sync_chatwoot_contacts_to_crm() -> Dict[str, Any]:
         logger.error(f"Error sincronizando contactos de Chatwoot: {e}")
         return {"success": False, "error": str(e)}
 
+
+async def send_chatwoot_message(conversation_id: int, content: str, private: bool = False) -> Dict[str, Any]:
+    """Envía un mensaje o una nota privada a una conversación en Chatwoot."""
+    cfg = get_chatwoot_config()
+    token = cfg.get("token") or ""
+    if not cfg.get("enabled") or not token:
+        return {"success": False, "error": "Chatwoot no está habilitado o falta el token."}
+
+    base_urls = [cfg["url"]]
+    if "chatwoot-rails" in cfg["url"]:
+        base_urls.append("https://chat.joif.net")
+    elif "chat.joif.net" in cfg["url"]:
+        base_urls.append("http://chatwoot-rails:3000")
+
+    payload = {
+        "content": content,
+        "message_type": "outgoing",
+        "private": private
+    }
+
+    for base_url in base_urls:
+        url = f"{base_url.rstrip('/')}/api/v1/accounts/{cfg['account_id']}/conversations/{conversation_id}/messages"
+        headers = get_chatwoot_headers(token)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code in (200, 201):
+                    return {"success": True, "data": resp.json()}
+                elif resp.status_code == 401:
+                    logger.warning("Token de Chatwoot inválido al enviar mensaje.")
+                    break
+                else:
+                    logger.warning(f"Error al enviar mensaje a Chatwoot: HTTP {resp.status_code}: {resp.text[:150]}")
+        except Exception as e:
+            logger.debug(f"Fallo al conectar con Chatwoot ({base_url}): {e}")
+            continue
+
+    return {"success": False, "error": "No se pudo enviar el mensaje a Chatwoot."}
+
+
+async def setup_chatwoot_webhook(webhook_url: str = "") -> Dict[str, Any]:
+    """Registra o actualiza el webhook en Chatwoot para recibir eventos de mensajes de agentes."""
+    cfg = get_chatwoot_config()
+    token = cfg.get("token") or ""
+    if not cfg.get("enabled") or not token:
+        return {"success": False, "error": "Chatwoot no está habilitado o falta el token."}
+
+    target_url = webhook_url.strip() or "http://gemini-mcp-vencimientos:8000/api/webhook/chatwoot"
+
+    base_urls = [cfg["url"]]
+    if "chatwoot-rails" in cfg["url"]:
+        base_urls.append("https://chat.joif.net")
+    elif "chat.joif.net" in cfg["url"]:
+        base_urls.append("http://chatwoot-rails:3000")
+
+    payload = {
+        "webhook": {
+            "url": target_url,
+            "subscriptions": ["message_created"]
+        }
+    }
+
+    for base_url in base_urls:
+        url = f"{base_url.rstrip('/')}/api/v1/accounts/{cfg['account_id']}/webhooks"
+        headers = get_chatwoot_headers(token)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                # Comprobar si ya existe
+                check_resp = await client.get(url, headers=headers)
+                if check_resp.status_code == 200:
+                    existing = check_resp.json().get("payload", [])
+                    for w in existing:
+                        if w.get("url") == target_url:
+                            return {"success": True, "data": w, "already_exists": True}
+
+                resp = await client.post(url, headers=headers, json=payload)
+                if resp.status_code in (200, 201):
+                    logger.info(f"Webhook registrado en Chatwoot exitosamente -> {target_url}")
+                    return {"success": True, "data": resp.json()}
+        except Exception as e:
+            logger.debug(f"Fallo al registrar webhook en Chatwoot ({base_url}): {e}")
+            continue
+
+    return {"success": False, "error": "No se pudo configurar el webhook en Chatwoot."}
+
+
+async def setup_chatwoot_canned_responses() -> Dict[str, Any]:
+    """Crea los atajos y respuestas predefinidas /nc en Chatwoot para autocompletado en el chat."""
+    cfg = get_chatwoot_config()
+    token = cfg.get("token") or ""
+    if not cfg.get("enabled") or not token:
+        return {"success": False, "error": "Chatwoot no está habilitado o falta el token."}
+
+    commands = [
+        {"short_code": "nc_n_casaextra", "content": "/nc_n_casaextra"},
+        {"short_code": "nc_n_full", "content": "/nc_n_full"},
+        {"short_code": "nc_disney", "content": "/nc_disney"},
+        {"short_code": "nc_max", "content": "/nc_max"},
+        {"short_code": "nc_prime", "content": "/nc_prime"},
+        {"short_code": "nc_spotify", "content": "/nc_spotify"},
+        {"short_code": "nc_youtube", "content": "/nc_youtube"},
+        {"short_code": "nc_paramount", "content": "/nc_paramount"},
+        {"short_code": "nc_crunchyroll", "content": "/nc_crunchyroll"},
+        {"short_code": "stock", "content": "/stock"},
+        {"short_code": "info", "content": "/info"},
+        {"short_code": "cbu", "content": "/cbu"},
+        {"short_code": "ayuda", "content": "/ayuda"}
+    ]
+
+    base_urls = [cfg["url"]]
+    if "chatwoot-rails" in cfg["url"]:
+        base_urls.append("https://chat.joif.net")
+    elif "chat.joif.net" in cfg["url"]:
+        base_urls.append("http://chatwoot-rails:3000")
+
+    created = 0
+    existing_count = 0
+
+    for base_url in base_urls:
+        list_url = f"{base_url.rstrip('/')}/api/v1/accounts/{cfg['account_id']}/canned_responses"
+        headers = get_chatwoot_headers(token)
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+                resp = await client.get(list_url, headers=headers)
+                existing_codes = set()
+                if resp.status_code == 200:
+                    for item in resp.json():
+                        code = item.get("short_code", "")
+                        if code:
+                            existing_codes.add(code.lower())
+
+                for cmd in commands:
+                    if cmd["short_code"].lower() in existing_codes:
+                        existing_count += 1
+                        continue
+
+                    post_resp = await client.post(list_url, headers=headers, json=cmd)
+                    if post_resp.status_code in (200, 201):
+                        created += 1
+                return {"success": True, "created": created, "existing": existing_count, "total": len(commands)}
+        except Exception as e:
+            logger.debug(f"Fallo al sincronizar respuestas predefinidas en Chatwoot ({base_url}): {e}")
+            continue
+
+    return {"success": False, "error": "No se pudieron registrar las respuestas predefinidas en Chatwoot."}
+
+

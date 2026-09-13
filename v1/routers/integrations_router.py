@@ -1,5 +1,6 @@
 import re
 import time
+import urllib.parse
 import logging
 from typing import Optional, Dict, Any
 
@@ -11,6 +12,7 @@ import whatsapp_client
 from telegram_bot import send_telegram_message
 from core.security import verify_session_cookie
 from core.utils import format_ars
+from services.chatwoot_bot_service import process_chatwoot_command
 
 logger = logging.getLogger("integrations")
 
@@ -314,4 +316,80 @@ async def whatsapp_webhook(request: Request):
         return JSONResponse({"status": "ok", "action": "payment_info_sent"})
 
     return JSONResponse({"status": "ok", "action": "none"})
+
+
+# ==========================================
+# CHATWOOT CRM SLASH COMMANDS & WEBHOOKS
+# ==========================================
+@router.post("/api/settings/chatwoot")
+async def api_settings_chatwoot(
+    request: Request,
+    url: str = Form("http://chatwoot-rails:3000"),
+    token: str = Form(""),
+    account_id: str = Form("1"),
+    enabled: Optional[str] = Form(None),
+    auto_sync: Optional[str] = Form(None)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    database.save_chatwoot_settings(
+        url=url.strip(),
+        token=token.strip(),
+        account_id=account_id.strip() or "1",
+        enabled=1 if enabled in ("1", "on", "true") else (1 if enabled is None else 0),
+        auto_sync=1 if auto_sync in ("1", "on", "true") else (1 if auto_sync is None else 0)
+    )
+    return RedirectResponse(url="/?msg=chatwoot_settings_saved#integrations", status_code=302)
+
+
+@router.post("/api/chatwoot/setup-webhook")
+async def api_chatwoot_setup_webhook(
+    request: Request,
+    webhook_url: Optional[str] = Form(None)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = await whatsapp_client.setup_chatwoot_webhook(webhook_url=webhook_url or "")
+    if res.get("success"):
+        return RedirectResponse(url="/?msg=chatwoot_webhook_configured#integrations", status_code=302)
+    else:
+        err = urllib.parse.quote(res.get("error", "Error configurando webhook en Chatwoot"))
+        return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
+
+
+@router.post("/api/chatwoot/setup-canned-responses")
+async def api_chatwoot_setup_canned_responses(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    res = await whatsapp_client.setup_chatwoot_canned_responses()
+    if res.get("success"):
+        created = res.get("created", 0)
+        existing = res.get("existing", 0)
+        return RedirectResponse(url=f"/?msg=chatwoot_canned_synced&created={created}&existing={existing}#integrations", status_code=302)
+    else:
+        err = urllib.parse.quote(res.get("error", "Error sincronizando atajos en Chatwoot"))
+        return RedirectResponse(url=f"/?err={err}#integrations", status_code=302)
+
+
+@router.post("/api/webhook/chatwoot")
+async def chatwoot_webhook(request: Request):
+    """Webhook receptor de eventos de Chatwoot (message_created).
+    Permite a los agentes ejecutar comandos en el chat como /nc_n_casaextra, /nc_n_full, /stock, /cbu, etc.
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        logger.warning(f"Webhook Chatwoot con payload inválido: {e}")
+        return JSONResponse({"status": "ignored", "reason": "invalid_json"})
+
+    try:
+        result = await process_chatwoot_command(body)
+        return JSONResponse(result)
+    except Exception as e:
+        logger.error(f"Error procesando comando de Chatwoot: {e}", exc_info=True)
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 

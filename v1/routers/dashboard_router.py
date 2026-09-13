@@ -91,6 +91,14 @@ async def dashboard(request: Request):
             imp = request.query_params.get("imported", "0")
             upd = request.query_params.get("updated", "0")
             msg_text = f"🔄 ¡Sincronización con Chatwoot completada! {imp} nuevos clientes dados de alta en el CRM, {upd} actualizados."
+        elif msg_raw == "chatwoot_settings_saved":
+            msg_text = "✅ Configuración de Chatwoot guardada con éxito."
+        elif msg_raw == "chatwoot_webhook_configured":
+            msg_text = "🔗 ¡Webhook de Chatwoot configurado exitosamente! Los atajos /nc_n_casaextra, /stock y /cbu ya están activos."
+        elif msg_raw == "chatwoot_canned_synced":
+            created = request.query_params.get("created", "0")
+            existing = request.query_params.get("existing", "0")
+            msg_text = f"⚡ ¡Atajos de Chatwoot sincronizados! ({created} creados, {existing} existentes). Ya puedes escribir /nc en cualquier chat."
         else:
             msg_text = msg_raw
         msg_banner = f"""

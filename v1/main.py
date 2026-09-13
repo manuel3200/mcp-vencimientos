@@ -1943,6 +1943,7 @@ async def dashboard(request: Request):
     suppliers_list = database.get_suppliers()
     master_accounts_list = database.get_master_accounts_overview()
     system_health = system_logger.get_system_health_report()
+    recent_logs = system_logger.get_recent_logs(limit=120)
     wa_settings = database.get_whatsapp_api_settings()
     oauth_cfg = database.get_oauth_settings()
     oauth_client_id = oauth_cfg.get("client_id", "gemini-spark-joif")

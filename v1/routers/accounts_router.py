@@ -42,6 +42,76 @@ async def collect_payment_api(account_id: int, request: Request):
     return RedirectResponse(url="/#accounts", status_code=303)
 
 
+@router.post("/api/pending-payments/approve/{payment_id}")
+async def approve_pending_payment_api(payment_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+    res = database.approve_pending_payment(payment_id, admin_user=f"Web ({username})")
+    if res.get("success"):
+        p = res.get("payment", {})
+        amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+        phone = p.get("sender_phone") or p.get("client_whatsapp")
+        if phone:
+            try:
+                import whatsapp_client
+                clean_phone = database.clean_whatsapp_phone(phone)
+                if clean_phone:
+                    wa_reply = (
+                        f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
+                        + (f" de *{amt_fmt}*" if amt_fmt else "") + f" para tu servicio *{p.get('platform') or 'activo'}*.\n\n"
+                        f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                    )
+                    await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
+            except Exception:
+                pass
+
+        await send_telegram_message(
+            f"✅ <b>PAGO #P{payment_id} APROBADO DESDE PANEL WEB</b>\n\n"
+            f"• Cliente: <b>{p.get('client_name')}</b>\n"
+            f"• Servicio: <b>{p.get('platform')}</b> (<code>{p.get('account_email') or '-'}</code>)\n"
+            f"• Monto: <b>{amt_fmt}</b>\n"
+            f"• Aprobado por: <b>{username}</b>"
+        )
+    return RedirectResponse(url="/#pending-payments", status_code=303)
+
+
+@router.post("/api/pending-payments/reject/{payment_id}")
+async def reject_pending_payment_api(payment_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+    form = await request.form()
+    reason = str(form.get("reason", "")).strip() if form else ""
+    res = database.reject_pending_payment(payment_id, reason=reason, admin_user=f"Web ({username})")
+    if res.get("success"):
+        p = res.get("payment", {})
+        phone = p.get("sender_phone") or p.get("client_whatsapp")
+        if phone:
+            try:
+                import whatsapp_client
+                clean_phone = database.clean_whatsapp_phone(phone)
+                if clean_phone:
+                    wa_reply = (
+                        f"Hola {p.get('client_name', 'Cliente')}. Te informamos que no pudimos validar el comprobante de pago enviado (#P{payment_id}).\n\n"
+                        f"Motivo: {reason or 'El monto o los datos de la transferencia no coinciden con la suscripción'}.\n"
+                        f"Por favor revisa la operación o comunícate con nosotros para verificarlo."
+                    )
+                    await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
+            except Exception:
+                pass
+
+        await send_telegram_message(
+            f"❌ <b>COMPROBANTE #P{payment_id} DENEGADO DESDE PANEL WEB</b>\n\n"
+            f"• Cliente: <b>{p.get('client_name')}</b>\n"
+            f"• Motivo: {reason or 'Sin especificar'}\n"
+            f"• Denegado por: <b>{username}</b>"
+        )
+    return RedirectResponse(url="/#pending-payments", status_code=303)
+
+
 @router.post("/api/mark-fallen/{account_id}")
 async def mark_fallen_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))

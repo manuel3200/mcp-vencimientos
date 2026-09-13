@@ -124,6 +124,15 @@ from db.repositories.suppliers_repo import (
     get_expiring_master_accounts
 )
 
+from db.repositories.payments_approval_repo import (
+    create_pending_payment,
+    get_pending_payment,
+    list_pending_payments,
+    count_pending_payments,
+    approve_pending_payment,
+    reject_pending_payment
+)
+
 # Alias para compatibilidad con versiones previas
 register_streaming_sale = assign_or_sell_account
 get_client_360 = get_client_360_profile

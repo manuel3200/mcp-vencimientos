@@ -132,15 +132,19 @@ def get_whatsapp_api_settings() -> Dict[str, Any]:
             conn.execute("INSERT OR IGNORE INTO whatsapp_api_settings (id) VALUES (1)")
             conn.commit()
             row = conn.execute("SELECT * FROM whatsapp_api_settings WHERE id = 1").fetchone()
-        return dict(row) if row else {
+        res = dict(row) if row else {
             "id": 1,
             "api_url": "http://evolution-api:8080",
             "api_key": "mcp-evolution-key-2026",
             "instance_name": "streaming-bot",
             "auto_send_expiry": 0,
             "auto_send_sales": 0,
-            "auto_reply_enabled": 1
+            "auto_reply_enabled": 1,
+            "admin_whatsapp": ""
         }
+        if "admin_whatsapp" not in res or not res["admin_whatsapp"]:
+            res["admin_whatsapp"] = os.getenv("ADMIN_WHATSAPP", "")
+        return res
     finally:
         conn.close()
 
@@ -150,15 +154,16 @@ def save_whatsapp_api_settings(
     instance_name: str = "streaming-bot",
     auto_send_expiry: int = 0,
     auto_send_sales: int = 0,
-    auto_reply_enabled: int = 1
+    auto_reply_enabled: int = 1,
+    admin_whatsapp: str = ""
 ) -> Dict[str, Any]:
     """Guarda la configuración de conexión de Evolution API y opciones de envío automático."""
     conn = get_connection()
     try:
         with conn:
             conn.execute("""
-                INSERT INTO whatsapp_api_settings (id, api_url, api_key, instance_name, auto_send_expiry, auto_send_sales, auto_reply_enabled, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO whatsapp_api_settings (id, api_url, api_key, instance_name, auto_send_expiry, auto_send_sales, auto_reply_enabled, admin_whatsapp, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     api_url = excluded.api_url,
                     api_key = excluded.api_key,
@@ -166,8 +171,9 @@ def save_whatsapp_api_settings(
                     auto_send_expiry = excluded.auto_send_expiry,
                     auto_send_sales = excluded.auto_send_sales,
                     auto_reply_enabled = excluded.auto_reply_enabled,
+                    admin_whatsapp = excluded.admin_whatsapp,
                     updated_at = CURRENT_TIMESTAMP
-            """, (api_url.strip(), api_key.strip(), instance_name.strip(), int(auto_send_expiry), int(auto_send_sales), int(auto_reply_enabled)))
+            """, (api_url.strip(), api_key.strip(), instance_name.strip(), int(auto_send_expiry), int(auto_send_sales), int(auto_reply_enabled), admin_whatsapp.strip()))
         return get_whatsapp_api_settings()
     finally:
         conn.close()

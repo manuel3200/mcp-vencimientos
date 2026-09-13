@@ -399,5 +399,36 @@ def init_db():
                     INSERT INTO oauth_clients (id, client_id, client_secret, client_name, redirect_uris)
                     VALUES (1, ?, ?, 'Gemini Spark Connected App', 'https://gemini.google.com')
                 """, (def_client_id, def_client_secret))
+
+            # 15. Tabla de Pagos y Comprobantes Pendientes de Aprobación
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS pending_payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                    account_id INTEGER REFERENCES streaming_accounts(id) ON DELETE SET NULL,
+                    sender_phone TEXT NOT NULL,
+                    client_name TEXT NOT NULL,
+                    platform TEXT DEFAULT '',
+                    amount REAL DEFAULT 0.0,
+                    amount_formatted TEXT DEFAULT '',
+                    bank TEXT DEFAULT '',
+                    operation_id TEXT DEFAULT '',
+                    date_detected TEXT DEFAULT '',
+                    receipt_filename TEXT DEFAULT '',
+                    receipt_mimetype TEXT DEFAULT '',
+                    receipt_base64 TEXT DEFAULT '',
+                    raw_text TEXT DEFAULT '',
+                    status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+                    notes TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TIMESTAMP DEFAULT NULL
+                )
+            """)
+
+            # Migración: Agregar columna admin_whatsapp a whatsapp_api_settings si no existe
+            try:
+                conn.execute("ALTER TABLE whatsapp_api_settings ADD COLUMN admin_whatsapp TEXT DEFAULT ''")
+            except Exception:
+                pass
     finally:
         conn.close()

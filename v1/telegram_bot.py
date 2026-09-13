@@ -995,7 +995,115 @@ async def handle_telegram_callback(query: Dict[str, Any]):
         await answer_callback_query(query_id, "Generando copia de seguridad...", show_alert=False)
         await send_full_backup_to_telegram(chat_id=chat_id)
 
-    # 2. Acciones de Cuenta (Cobro y Caída)
+    # 2. Acciones de Comprobantes Pendientes (Esperando Pago)
+    elif data.startswith(("payapp_", "payrej_")):
+        is_approve = data.startswith("payapp_")
+        pid_str = data.split("_")[1]
+        try:
+            pid = int(pid_str)
+        except ValueError:
+            await answer_callback_query(query_id, "ID de pago inválido", show_alert=True)
+            return
+
+        msg_obj = query.get("message", {})
+        msg_id = msg_obj.get("message_id")
+
+        if is_approve:
+            res = database.approve_pending_payment(pid, admin_user="Telegram Bot")
+            if res.get("success"):
+                p = res.get("payment", {})
+                amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+                await answer_callback_query(query_id, f"✅ ¡Pago #P{pid} aprobado con éxito!", show_alert=True)
+
+                phone = p.get("sender_phone") or p.get("client_whatsapp")
+                if phone:
+                    try:
+                        import whatsapp_client
+                        clean_phone = database.clean_whatsapp_phone(phone)
+                        if clean_phone:
+                            wa_reply = (
+                                f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
+                                + (f" de *{amt_fmt}*" if amt_fmt else "") + f" para tu servicio *{p.get('platform') or 'activo'}*.\n\n"
+                                f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                            )
+                            await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
+                    except Exception as e:
+                        logger.debug(f"Fallo al enviar WhatsApp tras aprobar pago en Telegram: {e}")
+
+                if msg_id and chat_id:
+                    try:
+                        await edit_telegram_message(
+                            chat_id=chat_id,
+                            message_id=msg_id,
+                            text=(
+                                f"✅ <b>PAGO #P{pid} APROBADO EXITOSAMENTE</b>\n\n"
+                                f"• Cliente: <b>{p.get('client_name')}</b> (<code>+{p.get('sender_phone')}</code>)\n"
+                                f"• Servicio: <b>{p.get('platform') or 'Streaming'}</b> (<code>{p.get('account_email') or '-'}</code>)\n"
+                                f"• Monto: <b>{amt_fmt}</b> ({p.get('bank') or 'Transferencia'})\n"
+                                f"• Op: <code>#{p.get('operation_id') or '-'}</code>\n"
+                                f"• Estado: <b>Acreditado en Finanzas y Renovado</b>\n"
+                                f"• Se envió confirmación al WhatsApp del cliente."
+                            )
+                        )
+                    except Exception:
+                        pass
+                else:
+                    await send_telegram_message(
+                        f"✅ <b>PAGO #P{pid} APROBADO</b>\n\n"
+                        f"• Cliente: <b>{p.get('client_name')}</b>\n"
+                        f"• Monto: <b>{amt_fmt}</b>\n"
+                        f"• Estado: Renovado y asentado en balance.",
+                        chat_id=chat_id
+                    )
+            else:
+                await answer_callback_query(query_id, f"Error: {res.get('error')}", show_alert=True)
+        else:
+            res = database.reject_pending_payment(pid, reason="Rechazado desde Telegram", admin_user="Telegram Bot")
+            if res.get("success"):
+                p = res.get("payment", {})
+                await answer_callback_query(query_id, f"❌ Pago #P{pid} rechazado.", show_alert=True)
+
+                phone = p.get("sender_phone") or p.get("client_whatsapp")
+                if phone:
+                    try:
+                        import whatsapp_client
+                        clean_phone = database.clean_whatsapp_phone(phone)
+                        if clean_phone:
+                            wa_reply = (
+                                f"Hola {p.get('client_name', 'Cliente')}. Te informamos que no pudimos validar el comprobante de pago enviado (#P{pid}).\n\n"
+                                f"Por favor revisa que el importe y la cuenta bancaria de destino correspondan a nuestros datos oficiales, o comunícate con nosotros para verificarlo."
+                            )
+                            await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
+                    except Exception as e:
+                        logger.debug(f"Fallo al enviar WhatsApp tras denegar comprobante: {e}")
+
+                if msg_id and chat_id:
+                    try:
+                        await edit_telegram_message(
+                            chat_id=chat_id,
+                            message_id=msg_id,
+                            text=(
+                                f"❌ <b>COMPROBANTE #P{pid} DENEGADO / RECHAZADO</b>\n\n"
+                                f"• Cliente: <b>{p.get('client_name')}</b> (<code>+{p.get('sender_phone')}</code>)\n"
+                                f"• Servicio: <b>{p.get('platform') or 'Streaming'}</b>\n"
+                                f"• Monto: <b>{p.get('amount_formatted') or '-'}</b>\n"
+                                f"• Estado: <b>Rechazado (No acreditado)</b>\n"
+                                f"• Se notificó al cliente para que revise su operación."
+                            )
+                        )
+                    except Exception:
+                        pass
+                else:
+                    await send_telegram_message(
+                        f"❌ <b>COMPROBANTE #P{pid} RECHAZADO</b>\n"
+                        f"• Cliente: {p.get('client_name')}\n"
+                        f"• Estado: Rechazado",
+                        chat_id=chat_id
+                    )
+            else:
+                await answer_callback_query(query_id, f"Error: {res.get('error')}", show_alert=True)
+
+    # 3. Acciones de Cuenta (Cobro y Caída)
     elif data.startswith(("pay_", "payinit_")):
         is_init = data.startswith("payinit_")
         acc_id = data.split("_")[1]

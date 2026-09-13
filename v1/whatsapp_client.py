@@ -179,6 +179,59 @@ async def send_text_message(
         logger.error(f"Excepción al enviar WhatsApp a {clean_phone}: {err}")
         return {"success": False, "phone": clean_phone, "error": err}
 
+
+async def send_media_message(
+    phone: str,
+    base64_data: str,
+    mime_type: str = "image/jpeg",
+    file_name: str = "comprobante.jpg",
+    caption: str = "",
+    delay_seconds: float = 2.0
+) -> Dict[str, Any]:
+    """Envía un archivo multimedia (imagen o PDF) por WhatsApp a través de Evolution API."""
+    clean_phone = re.sub(r'[^0-9]', '', str(phone or ""))
+    if not clean_phone or len(clean_phone) < 8:
+        return {"success": False, "error": f"Número de teléfono inválido: '{phone}'"}
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/message/sendMedia/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+
+    clean_b64 = base64_data
+    if "," in clean_b64:
+        clean_b64 = clean_b64.split(",")[1]
+
+    media_type = "image" if "image" in mime_type.lower() else "document"
+    delay_ms = int(max(delay_seconds, 1.0) * 1000)
+
+    payload = {
+        "number": clean_phone,
+        "mediatype": media_type,
+        "mimetype": mime_type,
+        "caption": caption,
+        "media": clean_b64,
+        "fileName": file_name,
+        "delay": delay_ms
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                msg_id = data.get("key", {}).get("id") or "sent"
+                logger.info(f"Media WhatsApp enviada con éxito a {clean_phone} (ID: {msg_id})")
+                return {"success": True, "phone": clean_phone, "message_id": msg_id, "data": data}
+            else:
+                err = f"HTTP {resp.status_code}: {resp.text[:250]}"
+                logger.error(f"Fallo al enviar media WhatsApp a {clean_phone}: {err}")
+                return {"success": False, "phone": clean_phone, "error": err}
+    except Exception as e:
+        err = str(e)
+        logger.error(f"Excepción al enviar media WhatsApp a {clean_phone}: {err}")
+        return {"success": False, "phone": clean_phone, "error": err}
+
+
 async def configure_webhook(webhook_url: str) -> Dict[str, Any]:
     """Registra o actualiza la URL del webhook en Evolution API para recibir eventos."""
     config = get_evolution_config()
@@ -942,6 +995,8 @@ async def setup_chatwoot_canned_responses() -> Dict[str, Any]:
         {"short_code": "nc_crunchyroll", "content": "/nc_crunchyroll"},
         {"short_code": "pago", "content": "/pago"},
         {"short_code": "renovar", "content": "/renovar"},
+        {"short_code": "pagoapro", "content": "/pagoapro_"},
+        {"short_code": "pagodene", "content": "/pagodene_"},
         {"short_code": "stock", "content": "/stock"},
         {"short_code": "info", "content": "/info"},
         {"short_code": "cbu", "content": "/cbu"},

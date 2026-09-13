@@ -371,6 +371,9 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 "• `/nc_youtube` : Asigna YouTube Premium\n"
                 "• `/nc_paramount` : Asigna Paramount+\n"
                 "• `/nc_crunchyroll` : Asigna Crunchyroll\n\n"
+                "**Gestión de Comprobantes:**\n"
+                "• `/pagoapro_<ID>` : Aprueba el pago #ID, renueva el servicio y confirma al cliente\n"
+                "• `/pagodene_<ID>` : Deniega el pago #ID y notifica al cliente que revise el envío\n\n"
                 "**Consultas & Operaciones:**\n"
                 "• `/stock` : Ver stock libre en tiempo real\n"
                 "• `/info` : Ver suscripciones activas del cliente actual\n"
@@ -415,6 +418,86 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 private=True
             )
             return {"status": "ok", "action": "contact_renamed", "new_name": new_name}
+
+        # -------------------------------------------------------------
+        # 8. APROBACIÓN O RECHAZO DE PAGO POR ID (/pagoapro_<ID>, /pagodene_<ID>)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/pagoapro", "/pagodene", "/aprobarpago", "/rechazarpago")):
+            match_app = re.search(r'/(?:pagoapro|aprobarpago)[_\s]+(\d+)', clean_cmd)
+            match_rej = re.search(r'/(?:pagodene|rechazarpago)[_\s]+(\d+)', clean_cmd)
+
+            if match_app:
+                pid = int(match_app.group(1))
+                agent_name = sender.get("name") or "Agente Chatwoot"
+                res = database.approve_pending_payment(pid, admin_user=f"Chatwoot ({agent_name})")
+                if res.get("success"):
+                    p = res.get("payment", {})
+                    amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+
+                    note_agent = (
+                        f"✅ **[StreamVault CRM] ¡Pago #{pid} Aprobado!**\n\n"
+                        f"• Cliente: **{p.get('client_name')}**\n"
+                        f"• Servicio: **{p.get('platform') or 'Streaming'}**\n"
+                        f"• Monto: **{amt_fmt}** ({p.get('bank') or 'Transferencia'})\n"
+                        f"• Op: `#{p.get('operation_id') or '-'}`\n"
+                        f"• Estado: Servicio al día y acreditado en libro contable."
+                    )
+                    await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
+
+                    msg_client = (
+                        f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
+                        + (f" de *{amt_fmt}*" if amt_fmt else "") + f" para tu servicio *{p.get('platform') or 'activo'}*.\n\n"
+                        f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu confianza! 🙌✨"
+                    )
+                    await whatsapp_client.send_chatwoot_message(conv_id, msg_client, private=False)
+
+                    await send_telegram_message(
+                        f"✅ <b>PAGO #P{pid} APROBADO DESDE CHATWOOT</b>\n\n"
+                        f"• Cliente: <b>{p.get('client_name')}</b>\n"
+                        f"• Monto: <b>{amt_fmt}</b>\n"
+                        f"• Agente: <b>{agent_name}</b>"
+                    )
+                    return {"status": "ok", "action": "payment_approved", "payment_id": pid}
+                else:
+                    await whatsapp_client.send_chatwoot_message(
+                        conv_id,
+                        f"⚠️ **[StreamVault CRM] Error al aprobar pago #{pid}:** {res.get('error')}",
+                        private=True
+                    )
+                    return {"status": "error", "error": res.get("error")}
+
+            elif match_rej:
+                pid = int(match_rej.group(1))
+                agent_name = sender.get("name") or "Agente Chatwoot"
+                res = database.reject_pending_payment(pid, reason="Rechazado desde Chatwoot", admin_user=f"Chatwoot ({agent_name})")
+                if res.get("success"):
+                    p = res.get("payment", {})
+                    note_agent = (
+                        f"❌ **[StreamVault CRM] Pago #{pid} Denegado / Rechazado:**\n\n"
+                        f"• Cliente: **{p.get('client_name')}**\n"
+                        f"• Estado: Rechazado (No acreditado)."
+                    )
+                    await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
+
+                    msg_client = (
+                        f"Hola {p.get('client_name', 'Cliente')}. Te informamos que no pudimos validar el comprobante de pago enviado (#P{pid}).\n\n"
+                        f"Por favor revisa que el importe y los datos de destino correspondan a nuestros datos oficiales, o comunícate con nosotros para verificarlo."
+                    )
+                    await whatsapp_client.send_chatwoot_message(conv_id, msg_client, private=False)
+
+                    await send_telegram_message(
+                        f"❌ <b>COMPROBANTE #P{pid} DENEGADO DESDE CHATWOOT</b>\n\n"
+                        f"• Cliente: <b>{p.get('client_name')}</b>\n"
+                        f"• Agente: <b>{agent_name}</b>"
+                    )
+                    return {"status": "ok", "action": "payment_rejected", "payment_id": pid}
+                else:
+                    await whatsapp_client.send_chatwoot_message(
+                        conv_id,
+                        f"⚠️ **[StreamVault CRM] Error al denegar pago #{pid}:** {res.get('error')}",
+                        private=True
+                    )
+                    return {"status": "error", "error": res.get("error")}
 
         return {"status": "ignored", "reason": "unknown_command"}
 

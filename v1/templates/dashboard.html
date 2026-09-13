@@ -177,6 +177,15 @@
           <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
         </a>
 
+        <!-- Esperando Pago Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="pending-payments" href="#pending-payments">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg text-amber-400">hourglass_top</span>
+            <span class="text-sm font-medium">Esperando Pago</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded">{{PENDING_PAYMENTS_COUNT}}</span>
+        </a>
+
         <!-- Active Accounts Tab -->
         <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="accounts" href="#accounts">
           <div class="flex items-center gap-2.5">
@@ -361,6 +370,10 @@
               <span class="material-symbols-outlined text-sm text-tertiary">inventory_2</span>
               <span>Stock ({{FREE_STOCK_COUNT}})</span>
             </button>
+            <button onclick="switchView('pending-payments')" class="h-9 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold rounded flex items-center gap-1 border border-amber-500/30 transition-all">
+              <span class="material-symbols-outlined text-sm text-amber-400">hourglass_top</span>
+              <span>Esperando Pago ({{PENDING_PAYMENTS_COUNT}})</span>
+            </button>
           </div>
         </div>
 
@@ -475,6 +488,44 @@
               </thead>
               <tbody>
                 {{TX_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW: ESPERANDO PAGO (#view-pending-payments) -->
+      <!-- ========================================================================= -->
+      <div id="view-pending-payments" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-amber-400 text-2xl">hourglass_top</span>
+              <h2 class="text-xl font-bold text-on-surface">Comprobantes & Ventas Esperando Pago</h2>
+              <span class="font-label-code text-xs bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded">{{PENDING_PAYMENTS_COUNT}} pendientes</span>
+            </div>
+            <p class="text-xs text-on-surface-variant mt-1">Comprobantes de transferencia recibidos por WhatsApp. Cada comprobante cuenta con su ID único (#P...) para aprobación o rechazo con un solo toque.</p>
+          </div>
+        </div>
+
+        <!-- Tabla de Pagos Pendientes -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-3 sm:p-4 shadow-sm flex flex-col gap-3">
+          <div class="overflow-x-auto">
+            <table id="pending-payments-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Cliente</th>
+                  <th>Servicio / Cuenta</th>
+                  <th>Monto & Banco</th>
+                  <th>Fecha Detección</th>
+                  <th>Comprobante</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{PENDING_PAYMENTS_ROWS}}
               </tbody>
             </table>
           </div>
@@ -822,7 +873,7 @@
             <span class="font-label-code text-xs text-on-surface-variant">Última actualización: {{WA_UPDATED_AT}}</span>
           </div>
 
-          <form action="/api/settings/whatsapp-api" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <form action="/api/settings/whatsapp-api" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             <div>
               <label class="font-label-code text-xs text-on-surface-variant">URL de Evolution API:</label>
               <input type="text" name="api_url" value="{{WA_API_URL}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
@@ -835,8 +886,12 @@
               <label class="font-label-code text-xs text-on-surface-variant">Nombre de Instancia:</label>
               <input type="text" name="instance_name" value="{{WA_INSTANCE_NAME}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
             </div>
+            <div>
+              <label class="font-label-code text-xs text-amber-300 font-semibold">WhatsApp Privado del Admin:</label>
+              <input type="text" name="admin_whatsapp" value="{{ADMIN_WHATSAPP}}" placeholder="+5491166099952" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-amber-300" title="Número donde recibirás los avisos de comprobantes y comandos /pagoapro">
+            </div>
 
-            <div class="sm:col-span-3 flex flex-wrap items-center gap-4 pt-2">
+            <div class="sm:col-span-2 lg:col-span-4 flex flex-wrap items-center gap-4 pt-2">
               <label class="flex items-center gap-2 text-xs cursor-pointer">
                 <input type="checkbox" name="auto_send_expiry" value="1" {{WA_AUTO_EXPIRY_CHECKED}} class="rounded bg-surface-container border-0 text-primary">
                 <span>Cobro automático diario a las 09:00 AM</span>
@@ -851,7 +906,7 @@
               </label>
             </div>
 
-            <div class="sm:col-span-3 flex justify-end">
+            <div class="sm:col-span-2 lg:col-span-4 flex justify-end">
               <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Guardar Configuración WhatsApp</button>
             </div>
           </form>
@@ -1512,6 +1567,48 @@
           <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Procesar CSV</button>
         </div>
       </form>
+  <!-- Modal: Visualizador de Comprobante (Imagen o PDF) -->
+  <div id="modal-receipt-viewer" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-2xl max-h-[90vh] p-4 flex flex-col gap-3 shadow-2xl overflow-hidden">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-tertiary">receipt_long</span>
+          <h3 id="receipt-modal-title" class="text-sm font-bold text-on-surface">Comprobante Adjunto</h3>
+        </div>
+        <button onclick="closeReceiptModal()" class="text-on-surface-variant hover:text-on-surface text-lg">✕</button>
+      </div>
+      <div id="receipt-modal-body" class="flex-1 overflow-auto flex items-center justify-center min-h-[320px] max-h-[65vh] bg-black/50 rounded-lg p-2">
+        <!-- Inyectado dinámicamente -->
+      </div>
+      <div class="flex justify-between items-center pt-2 border-t border-surface-container text-xs">
+        <a id="receipt-modal-download" href="#" download="comprobante" class="text-sky-400 hover:underline flex items-center gap-1 font-semibold">
+          <span class="material-symbols-outlined text-sm">download</span> Descargar Archivo
+        </a>
+        <button type="button" onclick="closeReceiptModal()" class="h-8 px-4 bg-surface-container hover:bg-surface-container-high text-xs rounded">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Denegar / Rechazar Pago -->
+  <div id="modal-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-error/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="reject-modal-title" class="text-base font-bold text-error flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">cancel</span> Denegar Comprobante
+        </h3>
+        <button onclick="closeRejectPaymentModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <form id="reject-payment-form" action="" method="POST" class="flex flex-col gap-3">
+        <p class="text-xs text-on-surface-variant">El pago será marcado como <b>rechazado</b> y se le notificará al cliente por WhatsApp el motivo para que revise su transferencia.</p>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Motivo del rechazo (opcional):</label>
+          <input type="text" name="reason" placeholder="Ej: Monto incorrecto o datos bancarios no coincidentes" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeRejectPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-error text-on-error text-xs font-semibold rounded hover:bg-error-container">Confirmar Rechazo</button>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -1523,6 +1620,11 @@
 
       const aliasMap = {
         'tab-overview': 'overview',
+        'tab-pending': 'pending-payments',
+        'tab-pending-payments': 'pending-payments',
+        'pending-payments': 'pending-payments',
+        'pending_payments': 'pending-payments',
+        'pending': 'pending-payments',
         'tab-active': 'accounts',
         'tab-accounts': 'accounts',
         'tab-screens': 'screens',
@@ -1843,6 +1945,45 @@
     function openCsvModal() { document.getElementById('modal-csv-import').style.display = 'flex'; }
     function closeCsvModal() { document.getElementById('modal-csv-import').style.display = 'none'; }
 
+    // 7. Modales de Comprobantes y Rechazo de Pagos
+    function viewReceiptDoc(dataUri, fileName) {
+      const modal = document.getElementById('modal-receipt-viewer');
+      const body = document.getElementById('receipt-modal-body');
+      const title = document.getElementById('receipt-modal-title');
+      const dl = document.getElementById('receipt-modal-download');
+      
+      title.innerText = 'Comprobante: ' + (fileName || 'Archivo');
+      dl.href = dataUri;
+      dl.download = fileName || 'comprobante';
+
+      if (dataUri.startsWith('data:application/pdf')) {
+        body.innerHTML = `<iframe src="${dataUri}" class="w-full h-[60vh] rounded border-0"></iframe>`;
+      } else {
+        body.innerHTML = `<img src="${dataUri}" alt="Comprobante" class="max-w-full max-h-[60vh] object-contain rounded shadow" />`;
+      }
+      modal.style.display = 'flex';
+    }
+
+    function closeReceiptModal() {
+      const modal = document.getElementById('modal-receipt-viewer');
+      const body = document.getElementById('receipt-modal-body');
+      body.innerHTML = '';
+      modal.style.display = 'none';
+    }
+
+    function openRejectPaymentModal(paymentId, clientName) {
+      const modal = document.getElementById('modal-reject-payment');
+      const title = document.getElementById('reject-modal-title');
+      const form = document.getElementById('reject-payment-form');
+      title.innerHTML = `<span class="material-symbols-outlined text-lg">cancel</span> Denegar Pago #P${paymentId} (${clientName})`;
+      form.action = '/api/pending-payments/reject/' + paymentId;
+      modal.style.display = 'flex';
+    }
+
+    function closeRejectPaymentModal() {
+      document.getElementById('modal-reject-payment').style.display = 'none';
+    }
+
     // Tecla Escape para cerrar modales
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -1852,6 +1993,8 @@
         closeSellComboModal();
         closeCreateComboModal();
         closeCsvModal();
+        closeReceiptModal();
+        closeRejectPaymentModal();
         closeMobileSidebar();
       }
     });

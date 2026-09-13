@@ -1,3 +1,4 @@
+import os
 import re
 import time
 import urllib.parse
@@ -43,11 +44,13 @@ async def api_whatsapp_qr(request: Request):
     return qr_data
 
 @router.post("/api/whatsapp/settings")
+@router.post("/api/settings/whatsapp-api")
 async def api_whatsapp_settings(
     request: Request,
     api_url: str = Form("http://evolution-api:8080"),
     api_key: str = Form("mcp-evolution-key-2026"),
     instance_name: str = Form("streaming-bot"),
+    admin_whatsapp: Optional[str] = Form(""),
     auto_send_expiry: Optional[str] = Form(None),
     auto_send_sales: Optional[str] = Form(None),
     auto_reply_enabled: Optional[str] = Form(None)
@@ -61,7 +64,8 @@ async def api_whatsapp_settings(
         instance_name=instance_name.strip(),
         auto_send_expiry=1 if auto_send_expiry in ("1", "on", "true") else 0,
         auto_send_sales=1 if auto_send_sales in ("1", "on", "true") else 0,
-        auto_reply_enabled=1 if auto_reply_enabled in ("1", "on", "true") else 0
+        auto_reply_enabled=1 if auto_reply_enabled in ("1", "on", "true") else 0,
+        admin_whatsapp=admin_whatsapp.strip() if admin_whatsapp else ""
     )
     return RedirectResponse(url="/?msg=wa_settings_saved#integrations", status_code=302)
 
@@ -219,6 +223,96 @@ async def whatsapp_webhook(request: Request):
 
     text_lower = text.lower()
 
+    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagodene_<ID>)
+    admin_approval_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)', text_lower)
+    admin_reject_match = re.search(r'^/(?:pagodene|rechazarpago)[_\s]+(\d+)', text_lower)
+    if admin_approval_match or admin_reject_match:
+        admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
+        clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
+
+        is_auth = False
+        if clean_admin:
+            if sender_phone == clean_admin or sender_phone.endswith(clean_admin[-8:]) or clean_admin.endswith(sender_phone[-8:]):
+                is_auth = True
+        else:
+            is_auth = True
+
+        if not is_auth:
+            logger.warning(f"Intento de comando de pago no autorizado desde {sender_phone}")
+            return JSONResponse({"status": "ignored", "reason": "unauthorized_admin_command"})
+
+        if admin_approval_match:
+            pid = int(admin_approval_match.group(1))
+            res = database.approve_pending_payment(pid, admin_user=f"WhatsApp Admin (+{sender_phone})")
+            if res.get("success"):
+                p = res.get("payment", {})
+                amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+                admin_ack = (
+                    f"✅ *PAGO #P{pid} APROBADO EXITOSAMENTE*\n\n"
+                    f"• Cliente: *{p.get('client_name')}*\n"
+                    f"• Servicio: *{p.get('platform') or 'Streaming'}*\n"
+                    f"• Monto: *{amt_fmt}*\n"
+                    f"• Estado: Renovado/activado y asentado en Finanzas."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+
+                c_phone = p.get("sender_phone") or p.get("client_whatsapp")
+                if c_phone and c_phone != sender_phone:
+                    c_clean = database.clean_whatsapp_phone(c_phone)
+                    if c_clean:
+                        c_msg = (
+                            f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
+                            + (f" de *{amt_fmt}*" if amt_fmt else "") + f" para tu servicio *{p.get('platform') or 'activo'}*.\n\n"
+                            f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                        )
+                        await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+
+                await send_telegram_message(
+                    f"✅ <b>PAGO #P{pid} APROBADO DESDE WHATSAPP ADMIN</b>\n\n"
+                    f"• Cliente: <b>{p.get('client_name')}</b>\n"
+                    f"• Servicio: <b>{p.get('platform')}</b>\n"
+                    f"• Monto: <b>{amt_fmt}</b>\n"
+                    f"• Comando ejecutado por el administrador desde WhatsApp privado."
+                )
+                return JSONResponse({"status": "ok", "action": "payment_approved", "payment_id": pid})
+            else:
+                await whatsapp_client.send_text_message(
+                    sender_phone,
+                    f"⚠️ Error al procesar pago #P{pid}: {res.get('error')}"
+                )
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_reject_match:
+            pid = int(admin_reject_match.group(1))
+            res = database.reject_pending_payment(pid, reason="Denegado por el administrador vía WhatsApp", admin_user=f"WhatsApp Admin (+{sender_phone})")
+            if res.get("success"):
+                p = res.get("payment", {})
+                admin_ack = f"❌ *PAGO #P{pid} DENEGADO / RECHAZADO*\n• Cliente: {p.get('client_name')}\n• Se marcó como rechazado en el sistema."
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+
+                c_phone = p.get("sender_phone") or p.get("client_whatsapp")
+                if c_phone and c_phone != sender_phone:
+                    c_clean = database.clean_whatsapp_phone(c_phone)
+                    if c_clean:
+                        c_msg = (
+                            f"Hola {p.get('client_name', 'Cliente')}. Te informamos que no pudimos validar el comprobante de pago enviado (#P{pid}).\n\n"
+                            f"Por favor revisa que el importe y los datos de destino correspondan a nuestros datos oficiales, o comunícate con nosotros para verificarlo."
+                        )
+                        await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+
+                await send_telegram_message(
+                    f"❌ <b>COMPROBANTE #P{pid} DENEGADO DESDE WHATSAPP ADMIN</b>\n\n"
+                    f"• Cliente: <b>{p.get('client_name')}</b>\n"
+                    f"• Estado: Rechazado"
+                )
+                return JSONResponse({"status": "ok", "action": "payment_rejected", "payment_id": pid})
+            else:
+                await whatsapp_client.send_text_message(
+                    sender_phone,
+                    f"⚠️ Error al denegar el pago #P{pid}: {res.get('error')}"
+                )
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
     # 6. FILTRO ANTI-BUCLE / ECO DE PLANTILLA DEL SISTEMA:
     # Si el mensaje recibido contiene nuestras propias plantillas de entrega o estado (ej. el cliente lo reenvió sin querer),
     # NUNCA debemos volver a responderle con sus datos.
@@ -347,6 +441,39 @@ async def whatsapp_webhook(request: Request):
 
         file_type_label = "📄 PDF" if (is_doc or file_name_lower.endswith(".pdf")) else ("🖼️ Imagen" if is_img else "📝 Mensaje")
 
+        client_id_val = client_profile.get("client", {}).get("id") if client_profile else None
+        account_id_val = target_acc["id"] if target_acc else None
+        platform_val = target_acc["platform"] if target_acc else (detected_info.get("platform") if detected_info else "")
+        amount_val = float(detected_info.get("amount") or 0.0) if detected_info else 0.0
+        amount_fmt_val = (detected_info.get("amount_formatted") or (format_ars(amount_val) if amount_val > 0 else "")) if detected_info else ""
+        bank_val = (detected_info.get("bank") or "") if detected_info else ""
+        op_val = (detected_info.get("operation_id") or "") if detected_info else ""
+        date_val = (detected_info.get("date") or "") if detected_info else ""
+
+        b64_val = b64_str if ('b64_str' in locals() and b64_str) else ""
+        mime_val = mime if ('mime' in locals() and mime) else ("application/pdf" if is_doc else ("image/jpeg" if is_img else ""))
+        filename_val = file_name or ("comprobante.pdf" if is_doc else ("comprobante.jpg" if is_img else ""))
+
+        # 1. Crear registro centralizado en estado 'pending' con ID único (#P<ID>)
+        pending_item = database.create_pending_payment(
+            sender_phone=sender_phone,
+            client_name=client_name,
+            client_id=client_id_val,
+            account_id=account_id_val,
+            platform=platform_val or "Streaming",
+            amount=amount_val,
+            amount_formatted=amount_fmt_val,
+            bank=bank_val,
+            operation_id=op_val,
+            date_detected=date_val,
+            receipt_filename=filename_val,
+            receipt_mimetype=mime_val,
+            receipt_base64=b64_val,
+            raw_text=text,
+            notes="Detectado vía WhatsApp Webhook"
+        )
+        payment_id = pending_item.get("id")
+
         # Resumen del análisis
         analysis_line = ""
         if detected_info and (detected_info.get("amount_formatted") or detected_info.get("bank")):
@@ -364,51 +491,80 @@ async def whatsapp_webhook(request: Request):
 
         # Armar mensaje interactivo con botones para Telegram
         service_lines = ""
-        kb = None
         if target_acc:
-            acc_id = target_acc["id"]
             price_str = target_acc.get("price") or "-"
             exp_date = target_acc.get("expiry_date") or "-"
             days_left = target_acc.get("days_remaining", 0)
             is_new_purchase = days_left is not None and days_left > 15
-
-            action_btn_text = f"💵 Confirmar Pago de Compra ({price_str})" if is_new_purchase else f"🔄 Confirmar Renovación ({price_str}) +30d"
-            callback_key = f"payinit_{acc_id}" if is_new_purchase else f"pay_{acc_id}"
             service_action_label = "Compra Nueva" if is_new_purchase else "Renovación"
 
             service_lines = (
                 f"• Servicio: <b>{target_acc['platform']}</b> (<code>{target_acc['email']}</code>)\n"
                 f"• Tarifa Acordada: <b>{price_str}</b> | Vence: <code>{exp_date}</code> ({service_action_label})\n"
             )
-            # Teclado interactivo para Telegram (1 Clic)
-            client_id_val = client_profile.get("client", {}).get("id")
-            client_btn = [{"text": "👤 Ficha 360°", "callback_data": f"client_{client_id_val}"}] if client_id_val else []
-            kb = {
-                "inline_keyboard": [
-                    [
-                        {"text": action_btn_text, "callback_data": callback_key}
-                    ],
-                    client_btn + [{"text": "💬 Abrir WhatsApp", "url": f"https://wa.me/{sender_phone}"}]
-                ]
-            }
+
+        client_btn = [{"text": "👤 Ficha 360°", "callback_data": f"client_{client_id_val}"}] if client_id_val else []
+        kb = {
+            "inline_keyboard": [
+                [
+                    {"text": f"✅ Aprobar Pago (#P{payment_id})", "callback_data": f"payapp_{payment_id}"},
+                    {"text": f"❌ Denegar (#P{payment_id})", "callback_data": f"payrej_{payment_id}"}
+                ],
+                client_btn + [{"text": "💬 Abrir WhatsApp", "url": f"https://wa.me/{sender_phone}"}]
+            ]
+        }
 
         tg_msg = (
-            f"🧾 <b>¡COMPROBANTE RECIBIDO POR WHATSAPP!</b>\n\n"
+            f"🧾 <b>¡NUEVO COMPROBANTE RECIBIDO! (#P{payment_id})</b>\n\n"
             f"• Cliente: <b>{client_name}</b> ({client_tag})\n"
             f"• WhatsApp: <code>{sender_phone}</code>\n"
             f"{service_lines}"
             f"• Adjunto: {caption_txt}\n"
-            f"{analysis_line}\n"
-            f"👉 <i>Toca el botón abajo para confirmar el cobro y renovar 30 días automáticamente:</i>"
+            f"{analysis_line}"
+            f"• Estado: ⏳ <b>Esperando Pago / Aprobación</b>\n\n"
+            f"👉 <i>Toca los botones abajo para aprobar o denegar de inmediato:</i>"
         )
         await send_telegram_message(tg_msg, reply_markup=kb)
 
+        # 2. Reenvío directo al WhatsApp Privado del Administrador con comandos
+        admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
+        clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
+        if clean_admin and clean_admin != sender_phone:
+            admin_notice = (
+                f"🧾 *NUEVO COMPROBANTE RECIBIDO (#P{payment_id})*\n"
+                f"• *Cliente:* {client_name} (+{sender_phone})\n"
+                f"• *Servicio:* {platform_val or 'Suscripción'}" + (f" ({target_acc['email']})" if target_acc else "") + "\n"
+                f"• *Monto Detectado:* {amount_fmt_val or 'No detectado'}" + (f" | *Banco:* {bank_val}" if bank_val else "") + "\n"
+                + (f"• *Op:* #{op_val}\n" if op_val else "") +
+                f"\n👉 *Para APROBAR y renovar/activar:*\n"
+                f"/pagoapro_{payment_id}\n\n"
+                f"👉 *Para DENEGAR / RECHAZAR:*\n"
+                f"/pagodene_{payment_id}"
+            )
+            try:
+                if b64_val and mime_val:
+                    await whatsapp_client.send_media_message(
+                        phone=clean_admin,
+                        base64_data=b64_val,
+                        mime_type=mime_val,
+                        file_name=filename_val or "comprobante",
+                        caption=admin_notice
+                    )
+                else:
+                    await whatsapp_client.send_text_message(
+                        phone=clean_admin,
+                        message=admin_notice
+                    )
+            except Exception as e:
+                logger.error(f"Fallo al avisar comprobante a WhatsApp admin ({clean_admin}): {e}")
+
+        # 3. Respuesta automática al cliente
         reply = (
-            f"¡Hola {client_name}! 🙌 Recibimos tu comprobante correctamente.\n\n"
+            f"¡Hola {client_name}! 🙌 Recibimos tu comprobante correctamente (#P{payment_id}).\n\n"
             f"Nuestro equipo lo verificará en el sistema a la brevedad y extenderá tu servicio. ¡Muchas gracias por tu pago! ✨"
         )
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
-        return JSONResponse({"status": "ok", "action": "receipt_acknowledged", "detected": detected_info})
+        return JSONResponse({"status": "ok", "action": "receipt_acknowledged", "payment_id": payment_id, "detected": detected_info})
 
 
     # 7. FILTRO DE MENSAJES REENVIADOS PARA CONSULTAS DE DATOS:

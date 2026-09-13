@@ -1,4 +1,5 @@
 import re
+import time
 import logging
 from typing import Optional, Dict, Any
 
@@ -7,12 +8,17 @@ from fastapi.responses import RedirectResponse, JSONResponse
 
 import database
 import whatsapp_client
+from telegram_bot import send_telegram_message
 from core.security import verify_session_cookie
 from core.utils import format_ars
 
 logger = logging.getLogger("integrations")
 
 router = APIRouter()
+
+# Cooldown en memoria para evitar repeticiones o bucles de auto-respuesta hacia el mismo número (3 minutos)
+_AUTO_REPLY_COOLDOWNS: Dict[str, float] = {}
+COOLDOWN_SECONDS = 180.0
 
 # ==========================================
 @router.get("/api/whatsapp/status")
@@ -165,7 +171,18 @@ async def whatsapp_webhook(request: Request):
     ).strip()
     is_media = bool(msg_obj.get("imageMessage") or msg_obj.get("documentMessage"))
 
-    # 4. Verificar si la auto-respuesta está habilitada
+    # 4. Extraer contexto de reenvío (Forwarded)
+    context_info = (
+        msg_obj.get("extendedTextMessage", {}).get("contextInfo") or
+        msg_obj.get("imageMessage", {}).get("contextInfo") or
+        msg_obj.get("documentMessage", {}).get("contextInfo") or
+        msg_obj.get("contextInfo") or
+        data.get("contextInfo") or
+        {}
+    )
+    is_forwarded = bool(context_info.get("isForwarded") or (context_info.get("forwardingScore", 0) > 0))
+
+    # 5. Verificar si la auto-respuesta está habilitada
     settings = database.get_whatsapp_api_settings()
     if not settings.get("auto_reply_enabled"):
         return JSONResponse({"status": "disabled"})
@@ -175,6 +192,27 @@ async def whatsapp_webhook(request: Request):
     client_name = client_profile["client"]["name"] if client_profile else push_name
 
     text_lower = text.lower()
+
+    # 6. FILTRO ANTI-BUCLE / ECO DE PLANTILLA DEL SISTEMA:
+    # Si el mensaje recibido contiene nuestras propias plantillas de entrega o estado (ej. el cliente lo reenvió sin querer),
+    # NUNCA debemos volver a responderle con sus datos.
+    is_template_echo = any(marker in text_lower for marker in [
+        "datos de acceso a tu suscripción",
+        "datos de acceso a tu suscripcion",
+        "estado de tus servicios activos",
+        "reglas de uso importantes",
+        "no cambiar correo ni contraseña",
+        "no cambiar correo ni contrasena",
+        "utilizar únicamente el perfil asignado",
+        "utilizar unicamente el perfil asignado",
+        "usuario/correo:",
+        "usuario / correo:",
+        "datos de cobro oficiales",
+        "recibimos tu comprobante correctamente",
+    ])
+    if is_template_echo:
+        logger.info(f"Mensaje ignorado de {client_name} ({sender_phone}): es un reenvío o eco de plantilla del sistema.")
+        return JSONResponse({"status": "ignored", "reason": "template_echo"})
 
     # REGLA A: Detección de comprobantes de pago (Imágenes/Docs o palabras clave de pago)
     receipt_keywords = ["comprobante", "pague", "pagué", "transferi", "transferí", "adjunto", "constancia", "abone", "aboné"]
@@ -198,9 +236,37 @@ async def whatsapp_webhook(request: Request):
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
         return JSONResponse({"status": "ok", "action": "receipt_acknowledged"})
 
-    # REGLA B: Consultas de Vencimiento o Credenciales ("vence", "vencimiento", "clave", "pin", "acceso", "contraseña")
-    expiry_keywords = ["vence", "vencimiento", "cuando vence", "cuándo vence", "clave", "contraseña", "contrasena", "pin", "acceso", "accesos", "cuenta"]
-    if any(k in text_lower for k in expiry_keywords):
+    # 7. FILTRO DE MENSAJES REENVIADOS PARA CONSULTAS DE DATOS:
+    # Si un cliente reenvía un mensaje de texto (sin ser comprobante), no debe disparar auto-entrega de credenciales
+    if is_forwarded:
+        logger.info(f"Mensaje reenviado de {client_name} ({sender_phone}): omitiendo auto-respuesta de credenciales para evitar spam.")
+        return JSONResponse({"status": "ignored", "reason": "forwarded_message"})
+
+    # 8. COOLDOWN ANTI-SPAM (Mínimo 3 minutos entre auto-respuestas automáticas al mismo cliente)
+    now = time.time()
+    last_reply_time = _AUTO_REPLY_COOLDOWNS.get(sender_phone, 0.0)
+    if now - last_reply_time < COOLDOWN_SECONDS:
+        logger.info(f"Auto-respuesta para {client_name} ({sender_phone}) omitida por cooldown ({int(now - last_reply_time)}s < {int(COOLDOWN_SECONDS)}s).")
+        return JSONResponse({"status": "ignored", "reason": "cooldown"})
+
+    # REGLA B: Consultas de Vencimiento o Credenciales con intención clara (No palabras sueltas como 'cuenta')
+    expiry_intents = [
+        # Preguntas directas de vencimiento
+        "cuando vence", "cuándo vence", "que dia vence", "qué día vence",
+        "que fecha vence", "qué fecha vence", "fecha de vencimiento",
+        "cuando se me vence", "cuándo se me vence", "cuantos dias me quedan",
+        "cuántos días me quedan", "hasta cuando tengo", "hasta cuándo tengo",
+        # Pedidos directos de credenciales
+        "pasame la clave", "pásame la clave", "cual es la clave", "cuál es la clave",
+        "cual es mi clave", "cuál es mi clave", "cual es mi contrasena", "cuál es mi contraseña",
+        "pasame la contrasena", "pásame la contraseña", "me pasas la clave", "me pasas la contraseña",
+        "no me acuerdo la clave", "no recuerdo la clave", "olvide la clave", "olvidé la clave",
+        "olvide mi clave", "olvidé mi clave", "olvide la contrasena", "olvidé la contraseña",
+        "datos de mi cuenta", "datos de la cuenta", "mis accesos", "mis credenciales",
+        # Comandos cortos
+        "/vencimiento", "/clave", "/cuenta", "mi cuenta", "mis cuentas", "mi clave"
+    ]
+    if any(k in text_lower for k in expiry_intents):
         if client_profile and client_profile.get("active_accounts"):
             accs = client_profile["active_accounts"]
             lines = [f"¡Hola {client_name}! 🍿 Aquí tienes el estado de tus servicios activos:\n"]
@@ -216,6 +282,7 @@ async def whatsapp_webhook(request: Request):
             lines.append("¡Cualquier consulta o renovación estamos a tu disposición!")
             reply = "\n".join(lines)
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "expiry_info_sent"})
         else:
             reply = (
@@ -223,11 +290,19 @@ async def whatsapp_webhook(request: Request):
                 f"Si deseas contratar Netflix, Disney+, Max u otra plataforma, avísanos y te enviamos los planes disponibles."
             )
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "no_active_services"})
 
     # REGLA C: Consulta de Medios de Pago / CBU / Alias
-    payment_keywords = ["alias", "cbu", "cvu", "como pago", "cómo pago", "datos de pago", "medios de pago", "transferir", "donde transfiero", "dónde transfiero", "pagar", "cuenta bancaria"]
-    if any(k in text_lower for k in payment_keywords):
+    payment_intents = [
+        "alias", "cbu", "cvu", "como pago", "cómo pago", "donde pago", "dónde pago",
+        "donde transfiero", "dónde transfiero", "datos de pago", "medios de pago",
+        "datos para transferir", "datos bancarios", "a que cuenta transfiero",
+        "a qué cuenta transfiero", "como te transfiero", "cómo te transfiero",
+        "pasame el alias", "pásame el alias", "pasame el cbu", "pásame el cbu",
+        "pasa el alias", "pasa el cbu"
+    ]
+    if any(k in text_lower for k in payment_intents):
         pm = database.get_formatted_payment_methods()
         reply = (
             f"¡Hola {client_name}! Aquí tienes nuestros datos de cobro oficiales:\n\n"
@@ -235,6 +310,8 @@ async def whatsapp_webhook(request: Request):
             f"Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu renovación. ¡Muchas gracias! 🙌"
         )
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+        _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "payment_info_sent"})
 
     return JSONResponse({"status": "ok", "action": "none"})
+

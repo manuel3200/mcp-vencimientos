@@ -427,6 +427,26 @@ def init_db():
                 )
             """)
 
+            # 16. Tabla de Reportes e Incidencias de Cuentas Caídas (Autorización Admin)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS fallen_reports (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                    account_id INTEGER REFERENCES streaming_accounts(id) ON DELETE SET NULL,
+                    sender_phone TEXT NOT NULL,
+                    client_name TEXT NOT NULL,
+                    platform TEXT DEFAULT '',
+                    account_email TEXT DEFAULT '',
+                    profile_name TEXT DEFAULT '',
+                    issue_type TEXT DEFAULT 'caida',
+                    raw_message TEXT DEFAULT '',
+                    status TEXT DEFAULT 'pending', -- 'pending', 'waiting', 'resolved', 'dismissed'
+                    admin_notes TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TIMESTAMP DEFAULT NULL
+                )
+            """)
+
             # Migración: Agregar columna admin_whatsapp y gemini_api_key a whatsapp_api_settings si no existen
             try:
                 conn.execute("ALTER TABLE whatsapp_api_settings ADD COLUMN admin_whatsapp TEXT DEFAULT ''")

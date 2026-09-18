@@ -390,8 +390,11 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 "**Gestión de Comprobantes:**\n"
                 "• `/pagoapro_<ID>` : Aprueba el pago #ID, renueva el servicio y confirma al cliente\n"
                 "• `/pagodene_<ID>` : Deniega el pago #ID y notifica al cliente que revise el envío\n\n"
+                "**Gestión de Cuentas Caídas:**\n"
+                "• `/cambiar_<ID>` : Autoriza reemplazo inmediato del reporte #C<ID> con stock libre\n"
+                "• `/esperar_<ID>` : Pone en espera prioritaria al cliente del reporte #C<ID>\n"
+                "• `/caida` : Reemplazo instantáneo en 1 clic de cuenta caída del cliente actual\n\n"
                 "**Consultas & Operaciones:**\n"
-                "• `/caida` : Reemplazo instantáneo en 1 clic de cuenta caída por stock libre\n"
                 "• `/catalogo` o `/precios` : Enviar lista de precios, combos y stock actualizado\n"
                 "• `/stock` : Ver stock libre en tiempo real\n"
                 "• `/info` : Ver suscripciones activas del cliente actual\n"
@@ -588,7 +591,105 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                     f"⚠️ [StreamVault CRM] Error al reemplazar cuenta: {res.get('error')}",
                     private=True
                 )
-                return {"status": "error", "error": res.get("error")}
+        # -------------------------------------------------------------
+        # 10. AUTORIZACIÓN O ESPERA DE REPORTE DE CAÍDA (/cambiar_<ID>, /esperar_<ID>)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/cambiar", "/reemplazar_", "/esperar", "/espera_")):
+            match_cambiar = re.search(r'/(?:cambiar|reemplazar)[_\s]+(\d+)', clean_cmd)
+            match_esperar = re.search(r'/(?:esperar|espera)[_\s]+(\d+)', clean_cmd)
+
+            if match_cambiar:
+                rid = int(match_cambiar.group(1))
+                agent_name = sender.get("name") or "Agente Chatwoot"
+                res = database.authorize_fallen_report(rid, admin_user=f"Chatwoot ({agent_name})")
+                if res.get("success"):
+                    if res.get("replaced"):
+                        c_phone = res.get("clean_phone")
+                        if c_phone:
+                            try:
+                                await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+                            except Exception as wa_err:
+                                logger.debug(f"Error enviando mensaje WhatsApp al cliente: {wa_err}")
+
+                        new_a = res.get("new_account", {})
+                        old_a = res.get("old_account", {})
+                        note_agent = (
+                            f"✅ **[StreamVault CRM] ¡Reporte #C{rid} Autorizado y Reemplazado!**\n\n"
+                            f"• Cliente: **{res.get('client_name')}**\n"
+                            f"• Servicio: **{res.get('platform')}**\n"
+                            f"• Cuenta anterior: `{old_a.get('email')}`\n"
+                            f"• Nueva cuenta asignada: `{new_a.get('email')}`\n"
+                            f"• Clave: `{new_a.get('password')}`" + (f" | Perfil: `{new_a.get('profile_name')}`" if new_a.get('profile_name') else "") + "\n"
+                            f"• Vencimiento conservado: `{new_a.get('expiry_date')}`\n"
+                            f"• Se notificaron las nuevas credenciales al cliente por WhatsApp."
+                        )
+                        await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
+
+                        await send_telegram_message(
+                            f"✅ <b>REPORTE #C{rid} AUTORIZADO DESDE CHATWOOT</b>\n\n"
+                            f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                            f"• Servicio: <b>{res.get('platform')}</b>\n"
+                            f"• Nueva Cuenta: <code>{new_a.get('email')}</code>\n"
+                            f"• Agente: <b>{agent_name}</b>"
+                        )
+                        return {"status": "ok", "action": "report_authorized", "report_id": rid}
+                    elif res.get("out_of_stock"):
+                        await whatsapp_client.send_chatwoot_message(
+                            conv_id,
+                            f"⚠️ **[StreamVault CRM] ¡Sin stock libre para autorizar reporte #C{rid}!**\n\n"
+                            f"No hay cuentas libres en inventario para esa plataforma. Carga stock en el panel web para proceder.",
+                            private=True
+                        )
+                        return {"status": "ok", "action": "out_of_stock", "report_id": rid}
+                    elif res.get("already_resolved"):
+                        await whatsapp_client.send_chatwoot_message(
+                            conv_id,
+                            f"ℹ️ [StreamVault CRM] El reporte #C{rid} ya fue resuelto previamente.",
+                            private=True
+                        )
+                        return {"status": "ok", "action": "already_resolved", "report_id": rid}
+                else:
+                    await whatsapp_client.send_chatwoot_message(
+                        conv_id,
+                        f"⚠️ **[StreamVault CRM] Error al autorizar reporte #C{rid}:** {res.get('error')}",
+                        private=True
+                    )
+                    return {"status": "error", "error": res.get("error")}
+
+            elif match_esperar:
+                rid = int(match_esperar.group(1))
+                agent_name = sender.get("name") or "Agente Chatwoot"
+                res = database.put_fallen_report_on_wait(rid, admin_user=f"Chatwoot ({agent_name})")
+                if res.get("success"):
+                    c_phone = res.get("clean_phone")
+                    if c_phone:
+                        try:
+                            await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+                        except Exception as wa_err:
+                            logger.debug(f"Error enviando mensaje WhatsApp al cliente: {wa_err}")
+
+                    note_agent = (
+                        f"⏳ **[StreamVault CRM] Reporte #C{rid} Puesto en Espera:**\n\n"
+                        f"• Cliente: **{res.get('client_name')}**\n"
+                        f"• Estado: En cola de atención prioritaria.\n"
+                        f"• Se notificó al cliente para que aguarde la nueva cuenta.\n\n"
+                        f"💡 Para asignarle la cuenta cuando la tengas lista, escribe `/cambiar_{rid}`."
+                    )
+                    await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
+
+                    await send_telegram_message(
+                        f"⏳ <b>CLIENTE PUESTO EN ESPERA (#C{rid}) DESDE CHATWOOT</b>\n\n"
+                        f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                        f"• Agente: <b>{agent_name}</b>"
+                    )
+                    return {"status": "ok", "action": "report_put_on_wait", "report_id": rid}
+                else:
+                    await whatsapp_client.send_chatwoot_message(
+                        conv_id,
+                        f"⚠️ **[StreamVault CRM] Error al poner en espera reporte #C{rid}:** {res.get('error')}",
+                        private=True
+                    )
+                    return {"status": "error", "error": res.get("error")}
 
         return {"status": "ignored", "reason": "unknown_command"}
 

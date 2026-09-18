@@ -204,8 +204,8 @@ async def whatsapp_webhook(request: Request):
     if not sender_phone or len(sender_phone) < 8:
         return JSONResponse({"status": "ignored", "reason": "invalid_phone"})
 
-    # Verificar si es un comando administrativo o comando de caída
-    is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|caida|reemplazo|reemplazar)', text_lower))
+    # Verificar si es un comando administrativo o comando de caída/autorización
+    is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer)', text_lower))
 
     # Si es from_me (mensaje saliente propio) y NO es un comando administrativo, ignorar para evitar bucles
     if from_me and not is_admin_cmd:
@@ -231,12 +231,15 @@ async def whatsapp_webhook(request: Request):
     client_profile = database.get_client_by_phone(sender_phone)
     client_name = client_profile["client"]["name"] if client_profile else push_name
 
-    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagodene_<ID>, /caida, /reemplazo)
+    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagodene_<ID>, /cambiar_<ID>, /esperar_<ID>, /caida)
     admin_approval_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)(?:\s+(\d+(?:[.,]\d+)?))?', text_lower)
     admin_reject_match = re.search(r'^/(?:pagodene|rechazarpago)[_\s]+(\d+)', text_lower)
-    admin_fallen_match = re.search(r'^/(?:caida|reemplazo|reemplazar)(?:[_\s]+(.+))?', text_lower)
+    admin_change_match = re.search(r'^/(?:cambiar|reemplazar|autorizar)[_\s]+(\d+)', text_lower)
+    admin_wait_match = re.search(r'^/(?:esperar|espera|posponer)[_\s]+(\d+)', text_lower)
+    admin_fallen_match = re.search(r'^/(?:caida|reemplazo)(?:[_\s]+(.+))?', text_lower)
 
-    if admin_approval_match or admin_reject_match or (admin_fallen_match and (from_me or (settings.get("admin_whatsapp") and sender_phone.endswith(database.clean_whatsapp_phone(settings.get("admin_whatsapp"))[-8:])))):
+    if (admin_approval_match or admin_reject_match or admin_change_match or admin_wait_match or
+        (admin_fallen_match and (from_me or (settings.get("admin_whatsapp") and sender_phone.endswith(database.clean_whatsapp_phone(settings.get("admin_whatsapp"))[-8:]))))):
         admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
         clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
 
@@ -413,6 +416,80 @@ async def whatsapp_webhook(request: Request):
                     sender_phone,
                     f"⚠️ No se encontró ninguna cuenta activa o caída para '{target_search}'."
                 )
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_change_match:
+            rid = int(admin_change_match.group(1))
+            res = database.authorize_fallen_report(rid, admin_user=f"WhatsApp Admin (+{sender_phone})")
+            if res.get("replaced"):
+                new_a = res["new_account"]
+                old_a = res["old_account"]
+                c_phone = res.get("clean_phone")
+
+                # Enviar mensaje oficial con nuevas credenciales al cliente por WhatsApp
+                if c_phone:
+                    await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+
+                admin_ack = (
+                    f"✅ *REEMPLAZO AUTORIZADO Y ENTREGADO (#C{rid})*\n\n"
+                    f"• Cliente: *{res.get('client_name')}*\n"
+                    f"• Servicio: *{res.get('platform')}*\n"
+                    f"• Cuenta anterior: `{old_a.get('email')}`\n"
+                    f"• Nueva cuenta: `{new_a.get('email')}`\n"
+                    f"• Clave: `{new_a.get('password')}`" + (f"\n• Perfil: {new_a.get('profile_name')}" if new_a.get('profile_name') else "") + (f" [PIN: {new_a.get('profile_pin')}]" if new_a.get('profile_pin') else "") + "\n"
+                    f"• Vencimiento mantenido: `{new_a.get('expiry_date')}`\n\n"
+                    f"📲 Las nuevas credenciales fueron enviadas automáticamente al WhatsApp del cliente."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+
+                await send_telegram_message(
+                    f"✅ <b>REEMPLAZO #C{rid} AUTORIZADO POR ADMIN WHATSAPP</b>\n\n"
+                    f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                    f"• Servicio: <b>{res.get('platform')}</b>\n"
+                    f"• Nueva Cuenta: <code>{new_a.get('email')}</code>\n"
+                    f"• Clave: <code>{new_a.get('password')}</code>\n"
+                    f"• Entregado al WhatsApp del cliente."
+                )
+                return JSONResponse({"status": "ok", "action": "report_authorized", "report_id": rid, "details": res})
+            elif res.get("out_of_stock"):
+                await whatsapp_client.send_text_message(
+                    sender_phone,
+                    f"⚠️ *SIN STOCK LIBRE PARA REEMPLAZAR (#C{rid})*\n"
+                    f"No hay cuentas libres en inventario para esa plataforma. Carga stock en el panel web para proceder."
+                )
+                return JSONResponse({"status": "ok", "action": "out_of_stock", "report_id": rid})
+            elif res.get("already_resolved"):
+                await whatsapp_client.send_text_message(sender_phone, f"ℹ️ El reporte #C{rid} ya fue resuelto con anterioridad.")
+                return JSONResponse({"status": "ok", "action": "already_resolved", "report_id": rid})
+            else:
+                await whatsapp_client.send_text_message(sender_phone, f"⚠️ Error al autorizar reporte #C{rid}: {res.get('error')}")
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_wait_match:
+            rid = int(admin_wait_match.group(1))
+            res = database.put_fallen_report_on_wait(rid, admin_user=f"WhatsApp Admin (+{sender_phone})")
+            if res.get("success"):
+                c_phone = res.get("clean_phone")
+                if c_phone:
+                    await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+
+                admin_ack = (
+                    f"⏳ *CLIENTE PUESTO EN ESPERA (#C{rid})*\n\n"
+                    f"• Cliente: *{res.get('client_name')}*\n"
+                    f"• Estado: En cola de atención prioritaria.\n"
+                    f"• Se notificó al cliente para que aguarde mientras gestionas la cuenta.\n\n"
+                    f"💡 Cuando tengas la cuenta lista, escribe `/cambiar_{rid}` para asignársela automáticamente."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+
+                await send_telegram_message(
+                    f"⏳ <b>CLIENTE PUESTO EN ESPERA (#C{rid})</b>\n\n"
+                    f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                    f"• Acción tomada por el administrador desde WhatsApp."
+                )
+                return JSONResponse({"status": "ok", "action": "report_put_on_wait", "report_id": rid})
+            else:
+                await whatsapp_client.send_text_message(sender_phone, f"⚠️ Error al poner en espera reporte #C{rid}: {res.get('error')}")
                 return JSONResponse({"status": "error", "error": res.get("error")})
 
     # 6. FILTRO ANTI-BUCLE / ECO DE PLANTILLA DEL SISTEMA:
@@ -899,48 +976,79 @@ async def whatsapp_webhook(request: Request):
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "multiple_accounts_clarification"})
 
-        res = database.report_and_auto_replace_account(
-            str(target_account["id"]),
-            reason=f"Reporte de cliente vía WhatsApp ({text[:50]})",
-            platform_filter=target_account.get("platform")
+        # 1. Crear el reporte de cuenta caída en el sistema (#C<ID>)
+        report = database.create_fallen_report(
+            sender_phone=sender_phone,
+            client_name=client_name,
+            client_id=client_profile.get("client", {}).get("id") if client_profile else None,
+            account_id=target_account["id"],
+            platform=target_account["platform"],
+            account_email=target_account.get("email", ""),
+            profile_name=target_account.get("profile_name", ""),
+            issue_type="caida",
+            raw_message=text
         )
+        report_id = report["id"]
 
-        if res.get("replaced"):
-            await whatsapp_client.send_text_message(sender_phone, res["whatsapp_message"], delay_seconds=2.0)
+        # 2. Consultar stock libre disponible para la plataforma
+        free_stock = database.get_free_stock(platform=target_account["platform"])
+        free_count = len(free_stock)
+        stock_status_lbl = f"{free_count} cuenta(s) libre(s)" if free_count > 0 else "⚠️ SIN STOCK LIBRE"
 
-            new_a = res["new_account"]
-            await send_telegram_message(
-                f"⚡ <b>AUTO-REEMPLAZO INSTANTÁNEO A CLIENTE</b>\n\n"
-                f"• Cliente: <b>{client_name}</b> (<code>+{sender_phone}</code>)\n"
-                f"• Servicio: <b>{res.get('platform')}</b>\n"
-                f"• Motivo: Reporte de caída de cliente\n"
-                f"• Nueva Cuenta: <code>{new_a.get('email')}</code>\n"
-                f"• Clave: <code>{new_a.get('password')}</code>\n"
-                f"• Entregada automáticamente por WhatsApp."
+        # 3. Respuesta inmediata de acuse de recibo y tranquilidad al CLIENTE
+        client_reply = (
+            f"🛠️ *¡Hola {client_name}!* 🙌 Hemos recibido tu reporte sobre el inconveniente con tu servicio de *{target_account['platform']}* (Reporte #C{report_id}).\n\n"
+            f"Nuestro equipo técnico ya está revisando tu caso para brindarte una solución a la brevedad por este medio. ¡Muchas gracias por tu paciencia! ✨"
+        )
+        await whatsapp_client.send_text_message(sender_phone, client_reply, delay_seconds=1.5)
+
+        # 4. Notificación y pedido de AUTORIZACIÓN al WhatsApp Privado del Administrador
+        admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
+        clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
+        if clean_admin and clean_admin != sender_phone:
+            profile_extra = f" (Perfil: {target_account.get('profile_name')})" if target_account.get('profile_name') else ""
+            admin_notice = (
+                f"🚨 *REPORTE DE CUENTA CAÍDA (#C{report_id})*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *Cliente:* {client_name} (+{sender_phone})\n"
+                f"📺 *Servicio:* *{target_account['platform']}*\n"
+                f"📧 *Cuenta afectada:* `{target_account.get('email')}`{profile_extra}\n"
+                f"💬 *Mensaje del cliente:* \"{text}\"\n"
+                f"📦 *Stock libre {target_account['platform']}:* {stock_status_lbl}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👉 *Para AUTORIZAR y cambiarle la cuenta al instante:*\n"
+                f"/cambiar_{report_id}\n\n"
+                f"👉 *Para avisarle que ESPERE mientras le consigues la cuenta:*\n"
+                f"/esperar_{report_id}"
             )
-            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
-            return JSONResponse({"status": "ok", "action": "client_auto_replacement_success", "details": res})
+            await whatsapp_client.send_text_message(clean_admin, admin_notice)
 
-        elif res.get("out_of_stock"):
-            await whatsapp_client.send_text_message(sender_phone, res["whatsapp_message"], delay_seconds=2.0)
+        # 5. Notificación interactiva con botones a Telegram
+        kb = {
+            "inline_keyboard": [
+                [
+                    {"text": f"🔄 Autorizar y Cambiar (#C{report_id})", "callback_data": f"fallapp_{report_id}"},
+                    {"text": f"⏳ Poner en Espera (#C{report_id})", "callback_data": f"fallwait_{report_id}"}
+                ],
+                [
+                    {"text": f"👤 Ficha {client_name}", "callback_data": f"client_{target_account.get('client_id')}"} if target_account.get("client_id") else {"text": "📦 Stock", "callback_data": "menu_stock"},
+                    {"text": "💬 Abrir WhatsApp", "url": f"https://wa.me/{sender_phone}"}
+                ]
+            ]
+        }
+        tg_msg = (
+            f"🚨 <b>REPORTE DE CUENTA CAÍDA (#C{report_id})</b>\n\n"
+            f"• Cliente: <b>{client_name}</b> (<code>+{sender_phone}</code>)\n"
+            f"• Servicio: <b>{target_account['platform']}</b>\n"
+            f"• Cuenta afectada: <code>{target_account.get('email')}</code>\n"
+            f"• Mensaje: <i>\"{text}\"</i>\n"
+            f"• Stock libre disponible: <b>{stock_status_lbl}</b>\n\n"
+            f"👉 <i>Selecciona una acción para responder al cliente:</i>"
+        )
+        await send_telegram_message(tg_msg, reply_markup=kb)
 
-            await send_telegram_message(
-                f"🚨 <b>CLIENTE REPORTÓ CAÍDA - ¡SIN STOCK LIBRE!</b>\n\n"
-                f"• Cliente: <b>{client_name}</b> (<code>+{sender_phone}</code>)\n"
-                f"• Plataforma: <b>{res.get('platform')}</b>\n"
-                f"• Cuenta: <code>{target_account.get('email')}</code>\n"
-                f"• Mensaje del cliente: <i>\"{text}\"</i>\n"
-                f"• Se notificó al cliente que se está gestionando la reposición con urgencia."
-            )
-            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
-            return JSONResponse({"status": "ok", "action": "client_auto_replacement_out_of_stock", "details": res})
-        else:
-            reply = (
-                f"¡Hola {client_name}! Hemos registrado tu consulta. Nuestro equipo técnico revisará el estado de tu servicio a la brevedad."
-            )
-            await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
-            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
-            return JSONResponse({"status": "ok", "action": "client_report_fallback"})
+        _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+        return JSONResponse({"status": "ok", "action": "fallen_report_created", "report_id": report_id})
 
     return JSONResponse({"status": "ok", "action": "none"})
 

@@ -645,6 +645,60 @@ async def handle_telegram_message(msg: Dict[str, Any]):
                     chat_id=chat_id
                 )
 
+    elif cmd.startswith(("/cambiar", "/autorizar")):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].strip().isdigit():
+            rid = int(parts[1].strip())
+            res = database.authorize_fallen_report(rid, admin_user="Telegram Bot")
+            if res.get("replaced"):
+                c_phone = res.get("clean_phone")
+                if c_phone:
+                    try:
+                        import whatsapp_client
+                        await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+                    except Exception:
+                        pass
+                new_a = res["new_account"]
+                await send_telegram_message(
+                    f"✅ <b>REPORTE #C{rid} RESUELTO EXITOSAMENTE</b>\n\n"
+                    f"• Cliente: <b>{res['client_name']}</b>\n"
+                    f"• Servicio: <b>{res['platform']}</b>\n"
+                    f"• Nueva cuenta: <code>{new_a['email']}</code>\n"
+                    f"• Clave: <code>{new_a['password']}</code>\n"
+                    f"• Las credenciales fueron enviadas al WhatsApp del cliente.",
+                    chat_id=chat_id
+                )
+            elif res.get("out_of_stock"):
+                await send_telegram_message(f"⚠️ No hay stock libre disponible para la plataforma del reporte #C{rid}. Carga stock en el panel.", chat_id=chat_id)
+            else:
+                await send_telegram_message(f"⚠️ Error: {res.get('error')}", chat_id=chat_id)
+        else:
+            await send_telegram_message("Uso: <code>/cambiar &lt;ID_reporte&gt;</code> (ej: <code>/cambiar 1</code>)", chat_id=chat_id)
+
+    elif cmd.startswith(("/esperar", "/espera")):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].strip().isdigit():
+            rid = int(parts[1].strip())
+            res = database.put_fallen_report_on_wait(rid, admin_user="Telegram Bot")
+            if res.get("success"):
+                c_phone = res.get("clean_phone")
+                if c_phone:
+                    try:
+                        import whatsapp_client
+                        await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+                    except Exception:
+                        pass
+                await send_telegram_message(
+                    f"⏳ <b>CLIENTE PUESTO EN ESPERA (#C{rid})</b>\n\n"
+                    f"• Cliente: <b>{res['client_name']}</b>\n"
+                    f"• Se le notificó por WhatsApp que su pedido está en cola.",
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(f"⚠️ Error: {res.get('error')}", chat_id=chat_id)
+        else:
+            await send_telegram_message("Uso: <code>/esperar &lt;ID_reporte&gt;</code> (ej: <code>/esperar 1</code>)", chat_id=chat_id)
+
     elif cmd.startswith("/cliente") or cmd.startswith("/ficha") or cmd.startswith("/buscar"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
@@ -1298,6 +1352,79 @@ async def handle_telegram_callback(query: Dict[str, Any]):
             )
         else:
             await answer_callback_query(query_id, "No hay stock libre disponible para esa plataforma.", show_alert=True)
+
+    elif data.startswith(("fallapp_", "fallwait_")):
+        is_auth_repl = data.startswith("fallapp_")
+        rid = int(data.split("_")[1])
+        msg_obj = query.get("message", {})
+        msg_id = msg_obj.get("message_id")
+
+        if is_auth_repl:
+            res = database.authorize_fallen_report(rid, admin_user="Telegram Bot")
+            if res.get("replaced"):
+                await answer_callback_query(query_id, f"✅ ¡Reemplazo #C{rid} autorizado con éxito!", show_alert=True)
+                c_phone = res.get("clean_phone")
+                if c_phone:
+                    try:
+                        import whatsapp_client
+                        await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+                    except Exception as e:
+                        logger.debug(f"Error enviando WhatsApp tras autorizar en Telegram: {e}")
+
+                new_a = res["new_account"]
+                old_a = res["old_account"]
+                if msg_id and chat_id:
+                    try:
+                        await edit_telegram_message(
+                            chat_id=chat_id,
+                            message_id=msg_id,
+                            text=(
+                                f"✅ <b>REPORTE #C{rid} RESUELTO Y REEMPLAZADO</b>\n\n"
+                                f"• Cliente: <b>{res['client_name']}</b> (<code>+{c_phone}</code>)\n"
+                                f"• Plataforma: <b>{res['platform']}</b>\n"
+                                f"• Cuenta anterior: <code>{old_a['email']}</code>\n"
+                                f"• Nueva cuenta: <code>{new_a['email']}</code>\n"
+                                f"• Clave: <code>{new_a['password']}</code>" + (f" | Perfil: {new_a['profile_name']}" if new_a.get('profile_name') else "") + "\n"
+                                f"• Vencimiento: <code>{new_a['expiry_date']}</code>\n"
+                                f"• Las credenciales fueron enviadas al WhatsApp del cliente."
+                            )
+                        )
+                    except Exception:
+                        pass
+            elif res.get("out_of_stock"):
+                await answer_callback_query(query_id, "⚠️ No hay cuentas libres en stock para reemplazar.", show_alert=True)
+            else:
+                await answer_callback_query(query_id, f"Error: {res.get('error')}", show_alert=True)
+        else:
+            res = database.put_fallen_report_on_wait(rid, admin_user="Telegram Bot")
+            if res.get("success"):
+                await answer_callback_query(query_id, f"⏳ Cliente #C{rid} puesto en espera.", show_alert=True)
+                c_phone = res.get("clean_phone")
+                if c_phone:
+                    try:
+                        import whatsapp_client
+                        await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+                    except Exception as e:
+                        logger.debug(f"Error enviando WhatsApp de espera tras Telegram: {e}")
+
+                if msg_id and chat_id:
+                    try:
+                        kb = {"inline_keyboard": [[{"text": f"🔄 Autorizar Reemplazo Ahora (#C{rid})", "callback_data": f"fallapp_{rid}"}]]}
+                        await edit_telegram_message(
+                            chat_id=chat_id,
+                            message_id=msg_id,
+                            text=(
+                                f"⏳ <b>CLIENTE PUESTO EN ESPERA (#C{rid})</b>\n\n"
+                                f"• Cliente: <b>{res['client_name']}</b>\n"
+                                f"• Estado: En cola de atención prioritaria\n"
+                                f"• Se le notificó por WhatsApp que aguarde mientras gestionas la cuenta."
+                            ),
+                            reply_markup=kb
+                        )
+                    except Exception:
+                        pass
+            else:
+                await answer_callback_query(query_id, f"Error: {res.get('error')}", show_alert=True)
 
 # ==========================================
 # Motor de Long Polling Asíncrono

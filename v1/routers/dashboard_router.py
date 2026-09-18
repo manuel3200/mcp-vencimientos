@@ -106,6 +106,16 @@ async def dashboard(request: Request):
             upd = request.query_params.get("updated", "0")
             chk = request.query_params.get("checked", "0")
             msg_text = f"✨ ¡Nombres de WhatsApp sincronizados a Chatwoot! Se revisaron {chk} contactos y se actualizaron {upd} nombres con la agenda real."
+        elif msg_raw == "fallen_authorized":
+            msg_text = "✅ ¡Reporte de cuenta caída autorizado! Se asignó stock libre y se enviaron los datos al cliente por WhatsApp."
+        elif msg_raw == "fallen_wait":
+            msg_text = "⏳ Cliente puesto en espera prioritaria. Se le notificó por WhatsApp que su pedido está en proceso."
+        elif msg_raw == "fallen_dismissed":
+            msg_text = "🗑️ Reporte de cuenta caída descartado."
+        elif msg_raw == "fallen_out_of_stock":
+            msg_text = "⚠️ ¡Sin stock libre para reemplazar! Carga una cuenta en la sección Stock antes de autorizar."
+        elif msg_raw == "fallen_already_resolved":
+            msg_text = "ℹ️ Este reporte ya fue resuelto previamente."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -567,11 +577,77 @@ async def dashboard(request: Request):
     if not pending_payments_rows:
         pending_payments_rows = "<tr><td colspan='7' style='text-align:center;color:#10b981;padding:24px;'>🎉 ¡No hay pagos pendientes de aprobación! Todos los cobros están al día.</td></tr>"
 
+    # 12. Filas de Reportes de Cuentas Caídas (#C<ID>)
+    fallen_reports = database.list_fallen_reports(limit=50)
+    fallen_reports_count = database.count_pending_fallen_reports()
+    fallen_reports_rows = ""
+    for r in fallen_reports:
+        rid = r["id"]
+        c_name = r.get("client_name") or "Cliente"
+        c_phone = r.get("sender_phone") or r.get("client_whatsapp") or ""
+        wa_link = f'<a href="https://wa.me/{c_phone}" target="_blank" style="color: #22c55e; font-weight: 600;">+{c_phone}</a>' if c_phone else '-'
+        plat = r.get("platform") or "Streaming"
+        acc_email = r.get("account_email") or "-"
+        prof = f" ({r.get('profile_name')})" if r.get('profile_name') else ""
+        raw_msg = r.get("raw_message") or ""
+        safe_raw = raw_msg[:80].replace('"', '&quot;').replace("'", "&#39;")
+        st = r.get("status") or "pending"
+        date_str = (r.get("created_at") or "")[:16]
+
+        if st == "pending":
+            st_badge = '<span class="badge badge-danger" style="font-size:0.75rem;">🚨 Pendiente</span>'
+        elif st == "waiting":
+            st_badge = '<span class="badge" style="background:#b45309;color:#fef3c7;font-size:0.75rem;">⏳ En Espera</span>'
+        elif st == "resolved":
+            st_badge = '<span class="badge badge-ok" style="font-size:0.75rem;">✓ Resuelto</span>'
+        else:
+            st_badge = f'<span class="badge" style="background:#334155;color:#94a3b8;font-size:0.75rem;">{st}</span>'
+
+        safe_client_name = c_name.replace("'", "\\'")
+        actions_html = ""
+        if st in ("pending", "waiting"):
+            actions_html += f"""
+            <form action="/api/fallen-reports/authorize/{rid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Autorizar y asignar nueva cuenta libre a {safe_client_name}?');">
+                <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Autorizar Reemplazo">🔄 Cambiar</button>
+            </form>
+            """
+            if st == "pending":
+                actions_html += f"""
+                <form action="/api/fallen-reports/wait/{rid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Poner en espera a {safe_client_name}? Se le avisará que aguarde.');">
+                    <button type="submit" class="btn-action" style="background:#d97706;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Poner en Espera">⏳ Esperar</button>
+                </form>
+                """
+            actions_html += f"""
+            <form action="/api/fallen-reports/dismiss/{rid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Descartar este reporte?');">
+                <button type="submit" class="btn-action" style="background:#475569;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Descartar">✕</button>
+            </form>
+            """
+        else:
+            notes_str = (r.get("admin_notes") or "Completado").replace('"', '&quot;')
+            actions_html = f'<small style="color:#94a3b8;" title="{notes_str}">Finalizado</small>'
+
+        fallen_reports_rows += f"""
+        <tr>
+            <td><strong style="color:#f43f5e;font-size:0.95rem;">#C{rid}</strong></td>
+            <td><strong>{c_name}</strong><br><small>{wa_link}</small></td>
+            <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span><br><code style="font-size:0.75rem;">{acc_email}{prof}</code></td>
+            <td><small style="color:#cbd5e1;" title="{safe_raw}">{safe_raw or 'Reporte de caída'}</small></td>
+            <td>{st_badge}</td>
+            <td><small style="color:#94a3b8;">{date_str}</small></td>
+            <td style="white-space:nowrap;">{actions_html}</td>
+        </tr>
+        """
+
+    if not fallen_reports_rows:
+        fallen_reports_rows = "<tr><td colspan='7' style='text-align:center;color:#10b981;padding:24px;'>🎉 ¡No hay incidentes ni reportes de cuentas caídas pendientes!</td></tr>"
+
     context = {
         "USER": user,
         "MSG_BANNER": msg_banner,
         "PENDING_PAYMENTS_COUNT": len(pending_payments),
         "PENDING_PAYMENTS_ROWS": pending_payments_rows,
+        "FALLEN_REPORTS_COUNT": fallen_reports_count,
+        "FALLEN_REPORTS_ROWS": fallen_reports_rows,
         "ADMIN_WHATSAPP": wa_settings.get('admin_whatsapp', ''),
         "FINANCE_INCOME": database.format_ars(finance['collected_income']),
         "FINANCE_TX_COUNT": finance['transactions_count'],

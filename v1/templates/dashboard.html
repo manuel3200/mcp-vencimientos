@@ -186,6 +186,15 @@
           <span class="font-data-tabular text-xs bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded">{{PENDING_PAYMENTS_COUNT}}</span>
         </a>
 
+        <!-- Cuentas Caídas & Incidentes Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="fallen-reports" href="#fallen-reports">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg text-rose-400">report_problem</span>
+            <span class="text-sm font-medium">Cuentas Caídas</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-rose-500/20 text-rose-300 font-bold px-2 py-0.5 rounded">{{FALLEN_REPORTS_COUNT}}</span>
+        </a>
+
         <!-- Active Accounts Tab -->
         <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="accounts" href="#accounts">
           <div class="flex items-center gap-2.5">
@@ -526,6 +535,44 @@
               </thead>
               <tbody>
                 {{PENDING_PAYMENTS_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW: REPORTES DE CUENTAS CAÍDAS (#view-fallen-reports) -->
+      <!-- ========================================================================= -->
+      <div id="view-fallen-reports" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-rose-400 text-2xl">report_problem</span>
+              <h2 class="text-xl font-bold text-on-surface">Gestión de Cuentas Caídas & Incidentes</h2>
+              <span class="font-label-code text-xs bg-rose-500/20 text-rose-300 font-bold px-2 py-0.5 rounded">{{FALLEN_REPORTS_COUNT}} pendientes</span>
+            </div>
+            <p class="text-xs text-on-surface-variant mt-1">Incidentes reportados por clientes por WhatsApp. Cada incidente (#C...) permite autorizar reemplazo inmediato por stock libre o poner al cliente en espera con 1 solo toque.</p>
+          </div>
+        </div>
+
+        <!-- Tabla de Reportes de Cuentas Caídas -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-3 sm:p-4 shadow-sm flex flex-col gap-3">
+          <div class="overflow-x-auto">
+            <table id="fallen-reports-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Cliente</th>
+                  <th>Servicio Afectado</th>
+                  <th>Mensaje del Cliente</th>
+                  <th>Estado</th>
+                  <th>Fecha</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{FALLEN_REPORTS_ROWS}}
               </tbody>
             </table>
           </div>
@@ -1629,6 +1676,11 @@
         'pending-payments': 'pending-payments',
         'pending_payments': 'pending-payments',
         'pending': 'pending-payments',
+        'tab-fallen': 'fallen-reports',
+        'tab-fallen-reports': 'fallen-reports',
+        'fallen-reports': 'fallen-reports',
+        'fallen_reports': 'fallen-reports',
+        'fallen': 'fallen-reports',
         'tab-active': 'accounts',
         'tab-accounts': 'accounts',
         'tab-screens': 'screens',

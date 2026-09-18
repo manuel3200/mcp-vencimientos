@@ -136,6 +136,16 @@ from db.repositories.payments_approval_repo import (
     reject_pending_payment
 )
 
+from db.repositories.fallen_reports_repo import (
+    create_fallen_report,
+    get_fallen_report,
+    list_fallen_reports,
+    count_pending_fallen_reports,
+    authorize_fallen_report,
+    put_fallen_report_on_wait,
+    dismiss_fallen_report
+)
+
 # Alias para compatibilidad con versiones previas
 register_streaming_sale = assign_or_sell_account
 get_client_360 = get_client_360_profile

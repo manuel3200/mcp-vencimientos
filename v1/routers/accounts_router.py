@@ -127,6 +127,75 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
     return RedirectResponse(url="/#pending-payments", status_code=303)
 
 
+@router.post("/api/fallen-reports/authorize/{report_id}")
+async def authorize_fallen_report_api(report_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+    res = database.authorize_fallen_report(report_id, admin_user=f"Web ({username})")
+    if res.get("success"):
+        if res.get("replaced"):
+            c_phone = res.get("clean_phone")
+            if c_phone:
+                try:
+                    import whatsapp_client
+                    await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+                except Exception:
+                    pass
+
+            new_a = res.get("new_account", {})
+            await send_telegram_message(
+                f"✅ <b>REPORTE #C{report_id} AUTORIZADO DESDE PANEL WEB</b>\n\n"
+                f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                f"• Servicio: <b>{res.get('platform')}</b>\n"
+                f"• Nueva Cuenta: <code>{new_a.get('email')}</code>\n"
+                f"• Clave: <code>{new_a.get('password')}</code>\n"
+                f"• Autorizado por: <b>{username}</b>"
+            )
+            return RedirectResponse(url="/?msg=fallen_authorized#fallen-reports", status_code=303)
+        elif res.get("out_of_stock"):
+            return RedirectResponse(url="/?msg=fallen_out_of_stock#fallen-reports", status_code=303)
+        elif res.get("already_resolved"):
+            return RedirectResponse(url="/?msg=fallen_already_resolved#fallen-reports", status_code=303)
+    return RedirectResponse(url="/?err=Error+al+autorizar+reporte#fallen-reports", status_code=303)
+
+
+@router.post("/api/fallen-reports/wait/{report_id}")
+async def wait_fallen_report_api(report_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+    res = database.put_fallen_report_on_wait(report_id, admin_user=f"Web ({username})")
+    if res.get("success"):
+        c_phone = res.get("clean_phone")
+        if c_phone:
+            try:
+                import whatsapp_client
+                await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+            except Exception:
+                pass
+
+        await send_telegram_message(
+            f"⏳ <b>CLIENTE PUESTO EN ESPERA (#C{report_id}) DESDE PANEL WEB</b>\n\n"
+            f"• Cliente: <b>{res.get('client_name')}</b>\n"
+            f"• Puesto en espera por: <b>{username}</b>"
+        )
+        return RedirectResponse(url="/?msg=fallen_wait#fallen-reports", status_code=303)
+    return RedirectResponse(url="/?err=Error+al+poner+en+espera#fallen-reports", status_code=303)
+
+
+@router.post("/api/fallen-reports/dismiss/{report_id}")
+async def dismiss_fallen_report_api(report_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+    database.dismiss_fallen_report(report_id, reason="Descartado desde panel web", admin_user=f"Web ({username})")
+    return RedirectResponse(url="/?msg=fallen_dismissed#fallen-reports", status_code=303)
+
+
 @router.post("/api/mark-fallen/{account_id}")
 async def mark_fallen_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))

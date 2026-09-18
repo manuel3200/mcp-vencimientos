@@ -336,6 +336,8 @@ def init_db():
                     auto_send_expiry INTEGER DEFAULT 0,
                     auto_send_sales INTEGER DEFAULT 0,
                     auto_reply_enabled INTEGER DEFAULT 1,
+                    admin_whatsapp TEXT DEFAULT '',
+                    gemini_api_key TEXT DEFAULT '',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
@@ -425,9 +427,14 @@ def init_db():
                 )
             """)
 
-            # Migración: Agregar columna admin_whatsapp a whatsapp_api_settings si no existe
+            # Migración: Agregar columna admin_whatsapp y gemini_api_key a whatsapp_api_settings si no existen
             try:
                 conn.execute("ALTER TABLE whatsapp_api_settings ADD COLUMN admin_whatsapp TEXT DEFAULT ''")
+            except Exception:
+                pass
+
+            try:
+                conn.execute("ALTER TABLE whatsapp_api_settings ADD COLUMN gemini_api_key TEXT DEFAULT ''")
             except Exception:
                 pass
     finally:

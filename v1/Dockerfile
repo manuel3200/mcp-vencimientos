@@ -14,6 +14,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     tzdata \
+    tesseract-ocr \
+    tesseract-ocr-spa \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar e instalar dependencias de Python

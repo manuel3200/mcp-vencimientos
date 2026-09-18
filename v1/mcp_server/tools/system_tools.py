@@ -371,7 +371,9 @@ def configurar_automatizacion_whatsapp(
         instance_name=new_inst,
         auto_send_expiry=new_expiry,
         auto_send_sales=new_sales,
-        auto_reply_enabled=new_reply
+        auto_reply_enabled=new_reply,
+        admin_whatsapp=current.get("admin_whatsapp", ""),
+        gemini_api_key=current.get("gemini_api_key", "")
     )
     return (
         f"✅ CONFIGURACIÓN DE WHATSAPP ACTUALIZADA:\n"

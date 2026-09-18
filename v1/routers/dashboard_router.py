@@ -601,6 +601,8 @@ async def dashboard(request: Request):
         "WA_API_URL": wa_settings.get('api_url', 'http://evolution-api:8080'),
         "WA_API_KEY": wa_settings.get('api_key', 'mcp-evolution-key-2026'),
         "WA_INSTANCE_NAME": wa_settings.get('instance_name', 'streaming-bot'),
+        "ADMIN_WHATSAPP": wa_settings.get('admin_whatsapp', ''),
+        "WA_GEMINI_KEY": wa_settings.get('gemini_api_key', ''),
         "WA_AUTO_EXPIRY_CHECKED": 'checked' if wa_settings.get('auto_send_expiry') == 1 else '',
         "WA_AUTO_SALES_CHECKED": 'checked' if wa_settings.get('auto_send_sales') == 1 else '',
         "WA_AUTO_REPLY_CHECKED": 'checked' if wa_settings.get('auto_reply_enabled', 1) == 1 else '',

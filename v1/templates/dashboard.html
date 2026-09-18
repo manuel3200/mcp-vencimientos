@@ -873,7 +873,7 @@
             <span class="font-label-code text-xs text-on-surface-variant">Última actualización: {{WA_UPDATED_AT}}</span>
           </div>
 
-          <form action="/api/settings/whatsapp-api" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <form action="/api/settings/whatsapp-api" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             <div>
               <label class="font-label-code text-xs text-on-surface-variant">URL de Evolution API:</label>
               <input type="text" name="api_url" value="{{WA_API_URL}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
@@ -890,8 +890,12 @@
               <label class="font-label-code text-xs text-amber-300 font-semibold">WhatsApp Privado del Admin:</label>
               <input type="text" name="admin_whatsapp" value="{{ADMIN_WHATSAPP}}" placeholder="+5491166099952" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-amber-300" title="Número donde recibirás los avisos de comprobantes y comandos /pagoapro">
             </div>
+            <div class="sm:col-span-2">
+              <label class="font-label-code text-xs text-purple-300 font-semibold">Google Gemini API Key (IA Visión para Comprobantes):</label>
+              <input type="password" name="gemini_api_key" value="{{WA_GEMINI_KEY}}" autocomplete="off" placeholder="Pega tu GEMINI_API_KEY (AIzaSy...)" class="w-full h-8 px-2 bg-surface-container font-mono text-xs rounded border border-surface-container-highest text-purple-300" title="Clave API de Google Gemini para reconocimiento visual de capturas y comprobantes">
+            </div>
 
-            <div class="sm:col-span-2 lg:col-span-4 flex flex-wrap items-center gap-4 pt-2">
+            <div class="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center gap-4 pt-2">
               <label class="flex items-center gap-2 text-xs cursor-pointer">
                 <input type="checkbox" name="auto_send_expiry" value="1" {{WA_AUTO_EXPIRY_CHECKED}} class="rounded bg-surface-container border-0 text-primary">
                 <span>Cobro automático diario a las 09:00 AM</span>
@@ -906,7 +910,7 @@
               </label>
             </div>
 
-            <div class="sm:col-span-2 lg:col-span-4 flex justify-end">
+            <div class="sm:col-span-2 lg:col-span-3 flex justify-end">
               <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Guardar Configuración WhatsApp</button>
             </div>
           </form>

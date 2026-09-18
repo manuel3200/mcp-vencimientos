@@ -12,26 +12,57 @@ logger = logging.getLogger("receipt_service")
 
 # Bancos y billeteras comunes en Argentina
 KNOWN_BANKS = [
-    "Mercado Pago", "Banco Galicia", "Santander", "BBVA", "Banco Macro",
-    "Banco Nacion", "Banco Nación", "Brubank", "Ualá", "Uala", "Cuenta DNI",
-    "Naranja X", "Reba", "Banco Provincia", "Banco Ciudad", "Supervielle",
-    "Banco Patagonia", "Itaú", "ICBC", "Banco Credicoop", "Banco Hipotecario",
-    "Openbank", "Lemon", "Lemon Cash", "Belo", "MODO", "Personal Pay", "Prex", "AstroPay"
+    "Mercado Pago", "MercadoPago", "MP", "Banco Galicia", "Galicia", "Santander", "BBVA", "Banco Macro", "Macro",
+    "Banco Nacion", "Banco Nación", "BNA", "Brubank", "Ualá", "Uala", "Cuenta DNI",
+    "Naranja X", "NaranjaX", "NX", "Reba", "Banco Provincia", "BAPRO", "Banco Ciudad", "Supervielle",
+    "Banco Patagonia", "Itaú", "Itau", "ICBC", "Banco Credicoop", "Credicoop", "Banco Hipotecario",
+    "Openbank", "Lemon", "Lemon Cash", "Belo", "MODO", "Personal Pay", "PersonalPay", "Prex", "AstroPay",
+    "NBCH", "NBCH24", "NBCH 24", "Nuevo Banco del Chaco", "Banco del Chaco", "Onda", "Onda Siempre",
+    "Banco Formosa", "Banco de Formosa", "Bancor", "Banco de Córdoba", "Banco de Cordoba", "Banco Entre Rios",
+    "Banco San Juan", "Banco Santa Cruz", "Banco Santa Fe", "Banco Comafi", "Comafi"
 ]
 
 
-def extract_text_from_pdf(pdf_bytes: bytes) -> Tuple[str, int]:
+def extract_text_from_image(image_bytes: bytes) -> str:
+    """Extrae texto de una imagen utilizando pytesseract si está disponible."""
+    if not image_bytes:
+        return ""
+    try:
+        from PIL import Image
+        import pytesseract
+
+        img = Image.open(io.BytesIO(image_bytes))
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+
+        # Intentar con español, luego con idioma por defecto
+        try:
+            text = pytesseract.image_to_string(img, lang="spa")
+        except Exception:
+            text = pytesseract.image_to_string(img)
+
+        return (text or "").strip()
+    except Exception as e:
+        logger.debug(f"OCR local (pytesseract) no pudo procesar imagen: {e}")
+        return ""
+
+
+def extract_text_from_pdf(pdf_bytes: bytes) -> Tuple[str, int, Optional[bytes]]:
     """Extrae el texto de un documento PDF utilizando pypdf o escaneo directo de streams.
-    Retorna (texto_extraido, total_paginas).
+    Si el PDF es una exportación de imagen bancaria sin capa de texto digital (ej. NBCH 24, Brubank, Personal Pay),
+    extrae la imagen interna y realiza OCR con Tesseract, además de retornar los bytes de la imagen primaria.
+    Retorna (texto_extraido, total_paginas, primary_image_bytes).
     Rechaza automáticamente archivos de más de 4MB o con más de 3 páginas (libros/manuales).
     """
     if not pdf_bytes:
-        return "", 0
+        return "", 0, None
 
     # Rechazar archivos de tamaño excesivo (> 4 MB). Un comprobante de pago pesa menos de 500 KB.
     if len(pdf_bytes) > 4 * 1024 * 1024:
         logger.info(f"PDF rechazado por tamaño excesivo ({len(pdf_bytes) / 1024 / 1024:.1f} MB > 4 MB). No es comprobante bancario.")
-        return "", 999
+        return "", 999, None
+
+    primary_img: Optional[bytes] = None
 
     # 1. Intentar con pypdf
     try:
@@ -40,15 +71,28 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> Tuple[str, int]:
         num_pages = len(reader.pages)
         if num_pages > 3:
             logger.info(f"PDF rechazado: tiene {num_pages} páginas (> 3). No es comprobante de pago.")
-            return "", num_pages
+            return "", num_pages, None
 
         pages_text = []
         for page in reader.pages:
             t = page.extract_text() or ""
             if t.strip():
                 pages_text.append(t)
+            else:
+                # Extraer imagen incrustada (comprobantes bancarios exportados como imagen única)
+                try:
+                    if hasattr(page, "images") and page.images:
+                        for img_obj in page.images:
+                            if not primary_img:
+                                primary_img = img_obj.data
+                            ocr_t = extract_text_from_image(img_obj.data)
+                            if ocr_t:
+                                pages_text.append(ocr_t)
+                except Exception as img_err:
+                    logger.debug(f"Error al extraer imágenes de página PDF: {img_err}")
+
         if pages_text:
-            return "\n".join(pages_text), num_pages
+            return "\n".join(pages_text), num_pages, primary_img
     except Exception as e:
         logger.debug(f"pypdf no pudo extraer texto: {e}")
 
@@ -58,11 +102,11 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> Tuple[str, int]:
         matches = re.findall(r'\(([^)]{2,100})\)', raw)
         clean_chunks = [m.strip() for m in matches if any(c.isalnum() for c in m)]
         if clean_chunks:
-            return " ".join(clean_chunks), 1
+            return " ".join(clean_chunks), 1, primary_img
     except Exception as e:
         logger.debug(f"Fallback regex PDF extraction error: {e}")
 
-    return "", 1
+    return "", 1, primary_img
 
 
 def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
@@ -76,6 +120,7 @@ def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
         "bank": None,
         "operation_id": None,
         "date": None,
+        "recipient": None,
         "summary": ""
     }
 
@@ -90,75 +135,133 @@ def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
         "psicologia", "psicología", "psicometria", "psicometría", "facultad",
         "universidad", "catedra", "cátedra", "materia", "alumno", "profesor",
         "profesora", "profe", "bibliografia", "bibliografía", "editorial", "capitulo",
-        "capítulo", "trabajo practico", "trabajo práctico", "evaluacion", "evaluación"
+        "capítulo", "trabajo practico", "trabajo práctico", "evaluacion", "evaluación",
+        "carrera", "parcial", "final", "resumen de lectura"
     ]
     has_negative = any(ns in t_lower for ns in negative_signals)
 
-    # 2. Frases fuertes de comprobante bancario
+    # 2. Detección de beneficiario / destinatario oficial de la cuenta (ANCLA de certeza máxima)
+    recipient_patterns = [
+        "juan manuel ortiz", "juan manuel", "ortiz juan manuel", "ortiz juan",
+        "0000003100098090274687", "20-42185991-5", "20421859915"
+    ]
+    recipient_matched = any(rp in t_lower for rp in recipient_patterns)
+    if recipient_matched:
+        res["recipient"] = "Juan Manuel Ortiz"
+
+    # 3. Frases fuertes de comprobante bancario
     strong_receipt_phrases = [
         "comprobante de transferencia", "transferencia exitosa", "enviaste dinero",
-        "transferiste a", "transferiste el", "pago realizado", "pago exitoso",
+        "transferiste a", "transferiste el", "transferiste", "pago realizado", "pago exitoso",
         "constancia de transferencia", "datos de la transferencia",
         "detalle de la transferencia", "detalle de la operacion", "detalle de la operación",
-        "dinero enviado", "comprobante de pago", "operación exitosa", "operacion exitosa",
-        "recibo de pago", "ticket de pago", "transferencia recibida", "pago acreditado"
+        "detalle de transferencia", "dinero enviado", "comprobante de pago", "operación exitosa", "operacion exitosa",
+        "recibo de pago", "ticket de pago", "transferencia recibida", "pago acreditado",
+        "transferencia enviada", "envío exitoso", "envio exitoso",
+        "destino", "destinatario", "cuenta de destino", "coelsa", "id de transferencia",
+        "onda siempre", "nbch24", "nuevo banco del chaco", "personal pay", "naranja x"
     ]
     has_strong_phrase = any(sp in t_lower for sp in strong_receipt_phrases)
 
-    # 3. Detectar Banco o Billetera
+    # 4. Detectar Banco o Billetera
     for bank in KNOWN_BANKS:
         if bank.lower() in t_lower:
             res["bank"] = bank
             break
-    if not res["bank"] and ("mp" in t_lower or "mercadopago" in t_lower or "mercado pago" in t_lower):
-        res["bank"] = "Mercado Pago"
+    if not res["bank"]:
+        if "mp" in t_lower or "mercadopago" in t_lower or "mercado pago" in t_lower:
+            res["bank"] = "Mercado Pago"
+        elif "nbch" in t_lower or "chaco" in t_lower:
+            res["bank"] = "NBCH 24"
+        elif "onda" in t_lower or "formosa" in t_lower:
+            res["bank"] = "Onda Siempre"
+        elif "personal" in t_lower or "ppay" in t_lower:
+            res["bank"] = "Personal Pay"
+        elif "naranja" in t_lower or "nx" in t_lower:
+            res["bank"] = "Naranja X"
+        elif "brubank" in t_lower:
+            res["bank"] = "Brubank"
 
-    # 4. Detectar Monto en Pesos
+    # 5. Detectar Monto en Pesos
     amount_patterns = [
-        r'(?:monto|importe|total|transferiste|enviaste|pagaste)\s*[:\$]?\s*\$?\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?)',
-        r'\$\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?)',
-        r'\$\s*([0-9]{4,6}(?:,[0-9]{2})?)',
+        r'(?:monto|importe|total|transferiste|enviaste|pagaste|transferencia por|envío por|pago de)\s*[:\$]?\s*\$?\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{2})?)',
+        r'\$\s*([0-9]{1,3}(?:\.[0-9]{3})+(?:,[0-9]{2})?)',
+        r'\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)',
+        r'\$\s*([0-9]{3,6}(?:,[0-9]{2})?)',
+        r'\$\s*([0-9]{3,6})\b',
         r'(?:ars|pesos)\s*([0-9]{1,3}(?:\.[0-9]{3})*)'
     ]
 
     for pat in amount_patterns:
-        m = re.search(pat, t, re.IGNORECASE)
-        if m:
-            val_str = m.group(1).replace(".", "").replace(",", ".")
+        for m in re.finditer(pat, t, re.IGNORECASE):
+            val_raw = m.group(1).strip()
+            if "." in val_raw and "," in val_raw:
+                val_clean = val_raw.replace(".", "").replace(",", ".")
+            elif "." in val_raw:
+                parts = val_raw.split(".")
+                if len(parts[-1]) == 3:
+                    val_clean = val_raw.replace(".", "")
+                else:
+                    val_clean = val_raw
+            elif "," in val_raw:
+                parts = val_raw.split(",")
+                if len(parts[-1]) == 2:
+                    val_clean = val_raw.replace(",", ".")
+                elif len(parts[-1]) == 3:
+                    val_clean = val_raw.replace(",", "")
+                else:
+                    val_clean = val_raw.replace(",", ".")
+            else:
+                val_clean = val_raw
+
             try:
-                num = float(val_str)
-                if 500 <= num <= 500000:
+                num = float(val_clean)
+                if 300 <= num <= 2000000:
                     res["amount"] = num
                     res["amount_formatted"] = f"${int(num):,}".replace(",", ".")
                     break
             except Exception:
                 continue
+        if res["amount"]:
+            break
 
-    # 5. Detectar Número de Operación / Código
-    op_match = re.search(r'(?:operaci[oó]n|comprobante|transacci[oó]n|nro|c[oó]digo)[\s:#.]*([0-9A-Za-z]{6,20})', t, re.IGNORECASE)
+    # 6. Detectar Número de Operación / Código
+    op_match = re.search(r'(?:operaci[oó]n|comprobante|transacci[oó]n|nro|c[oó]digo|control|referencia|coelsa|id)[\s:#.]*([0-9A-Za-z\-]{6,30})', t, re.IGNORECASE)
     if op_match:
-        res["operation_id"] = op_match.group(1)
+        res["operation_id"] = op_match.group(1).strip("-#:")
+    else:
+        coelsa_match = re.search(r'\b([0-9]{12,22})\b', t)
+        if coelsa_match:
+            res["operation_id"] = coelsa_match.group(1)
 
-    # 6. Detectar Datos Bancarios (CVU, CBU, Alias, Titular, Coelsa)
-    banking_fields = ["cvu", "cbu", "alias", "coelsa", "cuit", "cuil", "titular", "destinatario", "motivo"]
+    # 7. Detectar Datos Bancarios (CVU, CBU, Alias, Titular, Coelsa)
+    banking_fields = ["cvu", "cbu", "alias", "coelsa", "cuit", "cuil", "titular", "destinatario", "motivo", "cuenta", "billetera"]
     banking_matches = sum(1 for bf in banking_fields if bf in t_lower)
 
-    # 7. Detectar Fecha
+    # 8. Detectar Fecha
     date_match = re.search(r'\b([0-3]?[0-9][/-][0-1]?[0-9][/-]20[2-3][0-9])\b', t)
     if date_match:
         res["date"] = date_match.group(1)
+    else:
+        date_match_words = re.search(r'\b([0-3]?[0-9]\s+de\s+[a-zA-ZáéíóúÁÉÍÓÚ]+\s+(?:de\s+)?20[2-3][0-9])\b', t)
+        if date_match_words:
+            res["date"] = date_match_words.group(1)
 
-    # REGLA DE VALIDACIÓN ESTRICTA:
+    # REGLA DE VALIDACIÓN:
     if not has_negative:
-        if has_strong_phrase and (res["amount"] or res["bank"] or res["operation_id"]):
+        if recipient_matched:
+            # Si el destinatario es Juan Manuel Ortiz o su CVU/CUIL, es comprobante confirmado
+            res["is_receipt"] = True
+        elif has_strong_phrase and (res["amount"] or res["bank"] or res["operation_id"]):
             res["is_receipt"] = True
         elif res["bank"] and res["amount"] and (banking_matches >= 1 or res["operation_id"]):
             res["is_receipt"] = True
-        elif res["amount"] and res["operation_id"] and banking_matches >= 2:
+        elif res["amount"] and res["operation_id"] and banking_matches >= 1:
+            res["is_receipt"] = True
+        elif res["bank"] and banking_matches >= 2:
             res["is_receipt"] = True
     else:
-        # Si tenía palabras académicas, SOLO considerarlo si tiene tanto frase fuerte, como banco Y monto
-        if has_strong_phrase and res["bank"] and res["amount"] and res["operation_id"]:
+        if (recipient_matched or has_strong_phrase) and res["bank"] and res["amount"]:
             res["is_receipt"] = True
 
     # Resumen
@@ -178,6 +281,14 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
     """Analiza una imagen de comprobante bancario usando Google Gemini Vision API."""
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
+        try:
+            import database
+            wa_sett = database.get_whatsapp_api_settings()
+            api_key = wa_sett.get("gemini_api_key", "").strip()
+        except Exception as e:
+            logger.debug(f"No se pudo consultar gemini_api_key desde BD: {e}")
+
+    if not api_key:
         return None
 
     clean_b64 = image_b64
@@ -190,20 +301,24 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
             "parts": [
                 {
                     "text": (
-                        "Eres un clasificador experto de comprobantes de pago y transferencias bancarias en Argentina.\n"
-                        "Determina si la imagen corresponde a un COMPROBANTE DE PAGO O TRANSFERENCIA FINANCIERA REAL "
-                        "(ej: captura de Mercado Pago, Cuenta DNI, Ualá, Banco Galicia, Santander, BBVA, Macro, Naranja X, etc.).\n\n"
-                        "IMPORTANTE:\n"
-                        "- Si la imagen es una foto personal, un meme, una foto de texto, apuntes universitarios, un libro, "
-                        "un documento de estudio, una foto de una persona, paisaje o producto ajeno, "
-                        "debes responder estrictamente con is_receipt: false.\n"
-                        "- Responde únicamente en formato JSON con la siguiente estructura:\n"
+                        "Eres un clasificador y extractor experto de comprobantes de pago y transferencias bancarias en Argentina.\n"
+                        "Analiza la imagen adjunta con atención y precisión.\n"
+                        "Bancos y billeteras frecuentes: Mercado Pago, Personal Pay, Naranja X, Brubank, Onda Siempre (Banco Formosa), "
+                        "NBCH 24 (Nuevo Banco del Chaco), Banco Galicia, Santander, BBVA, Banco Nación, Macro, Ualá, Cuenta DNI, MODO, Lemon, etc.\n"
+                        "El titular destinatario habitual de esta cuenta es Juan Manuel Ortiz (CVU: 0000003100098090274687, CUIL: 20-42185991-5).\n\n"
+                        "REGLAS CRÍTICAS:\n"
+                        "1. Si la imagen es una captura de pantalla, foto de pantalla de celular (incluso con reflejos, polvo o en modo oscuro), "
+                        "o ticket de transferencia de dinero, pon is_receipt: true y extrae amount, bank, operation_id y date.\n"
+                        "2. Si es una foto de una persona, selfie, paisaje, meme, apuntes de estudio, libros o documento académico, "
+                        "debes responder con is_receipt: false.\n"
+                        "3. Responde ÚNICAMENTE en formato JSON con la siguiente estructura exacta:\n"
                         "{\n"
-                        '  "is_receipt": true/false,\n'
-                        '  "bank": string o null,\n'
-                        '  "amount": float o null,\n'
-                        '  "operation_id": string o null,\n'
-                        '  "date": string o null\n'
+                        '  "is_receipt": true,\n'
+                        '  "bank": "Nombre del banco o billetera (ej: Personal Pay, Naranja X, NBCH 24, Brubank, Onda Siempre, Mercado Pago)",\n'
+                        '  "amount": 15500.0,\n'
+                        '  "operation_id": "código o número de operación",\n'
+                        '  "date": "fecha del pago",\n'
+                        '  "recipient": "nombre o datos del destinatario"\n'
                         "}"
                     )
                 },
@@ -216,7 +331,7 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=18.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 data = resp.json()
@@ -228,7 +343,17 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
                         parsed["amount_formatted"] = f"${int(float(parsed['amount'])):,}".replace(",", ".")
                     except Exception:
                         parsed["amount_formatted"] = f"${parsed['amount']}"
+                parts = []
+                if parsed.get("bank"):
+                    parts.append(f"Banco: {parsed['bank']}")
+                if parsed.get("amount_formatted"):
+                    parts.append(f"Monto: {parsed['amount_formatted']}")
+                if parsed.get("operation_id"):
+                    parts.append(f"Op: #{parsed['operation_id']}")
+                parsed["summary"] = " | ".join(parts) if parts else ""
                 return parsed
+            else:
+                logger.warning(f"Gemini API retornó código HTTP {resp.status_code}: {resp.text[:200]}")
     except Exception as e:
         logger.debug(f"Gemini Vision falló al analizar comprobante: {e}")
 

@@ -51,6 +51,7 @@ async def api_whatsapp_settings(
     api_key: str = Form("mcp-evolution-key-2026"),
     instance_name: str = Form("streaming-bot"),
     admin_whatsapp: Optional[str] = Form(""),
+    gemini_api_key: Optional[str] = Form(""),
     auto_send_expiry: Optional[str] = Form(None),
     auto_send_sales: Optional[str] = Form(None),
     auto_reply_enabled: Optional[str] = Form(None)
@@ -65,7 +66,8 @@ async def api_whatsapp_settings(
         auto_send_expiry=1 if auto_send_expiry in ("1", "on", "true") else 0,
         auto_send_sales=1 if auto_send_sales in ("1", "on", "true") else 0,
         auto_reply_enabled=1 if auto_reply_enabled in ("1", "on", "true") else 0,
-        admin_whatsapp=admin_whatsapp.strip() if admin_whatsapp else ""
+        admin_whatsapp=admin_whatsapp.strip() if admin_whatsapp else "",
+        gemini_api_key=gemini_api_key.strip() if gemini_api_key else ""
     )
     return RedirectResponse(url="/?msg=wa_settings_saved#integrations", status_code=302)
 
@@ -395,18 +397,50 @@ async def whatsapp_webhook(request: Request):
                 if is_doc or "pdf" in mime or file_name_lower.endswith(".pdf"):
                     try:
                         pdf_bytes = base64.b64decode(b64_str.split(",")[-1])
-                        pdf_text, num_pages = receipt_service.extract_text_from_pdf(pdf_bytes)
-                        if pdf_text and num_pages <= 3:
-                            detected_info = receipt_service.parse_transfer_receipt_text(pdf_text)
-                            if detected_info and detected_info.get("is_receipt"):
+                        pdf_text, num_pages, pdf_img_bytes = receipt_service.extract_text_from_pdf(pdf_bytes)
+                        if num_pages <= 3:
+                            if pdf_text:
+                                detected_info = receipt_service.parse_transfer_receipt_text(pdf_text)
+                                if detected_info and detected_info.get("is_receipt"):
+                                    is_confirmed_receipt = True
+
+                            # Si no se detectó texto pero hay imagen incrustada (comprobantes bancarios exportados como imagen única)
+                            if not is_confirmed_receipt and pdf_img_bytes:
+                                try:
+                                    pdf_img_b64 = base64.b64encode(pdf_img_bytes).decode("utf-8")
+                                    gemini_res = await receipt_service.analyze_image_with_gemini(pdf_img_b64, mime_type="image/png")
+                                    if gemini_res and gemini_res.get("is_receipt"):
+                                        detected_info = gemini_res
+                                        is_confirmed_receipt = True
+                                except Exception as g_err:
+                                    logger.debug(f"Error analizando imagen incrustada de PDF con Gemini: {g_err}")
+
+                            # REGLA FAILSAFE PARA PDFs DE 1 A 3 PÁGINAS:
+                            # Si no fue filtrado por palabras académicas/manuales y tiene <= 3 páginas, no descartar
+                            if not is_confirmed_receipt:
                                 is_confirmed_receipt = True
+                                if not detected_info:
+                                    detected_info = {
+                                        "is_receipt": True,
+                                        "bank": "PDF Bancario",
+                                        "amount": None,
+                                        "operation_id": None,
+                                        "summary": "Comprobante en PDF (Revisar documento adjunto)"
+                                    }
                         else:
-                            logger.info(f"PDF de {client_name} rechazado como comprobante ({num_pages} páginas o texto vacío).")
+                            logger.info(f"PDF de {client_name} rechazado como comprobante ({num_pages} páginas > 3).")
                     except Exception as e:
                         logger.debug(f"Error analizando PDF: {e}")
 
                 # B. Si es Imagen
                 elif is_img or "image" in mime:
+                    img_bytes = None
+                    try:
+                        img_bytes = base64.b64decode(b64_str.split(",")[-1])
+                    except Exception:
+                        pass
+
+                    # 1. Probar Google Gemini Vision
                     try:
                         detected_info = await receipt_service.analyze_image_with_gemini(
                             b64_str,
@@ -414,14 +448,43 @@ async def whatsapp_webhook(request: Request):
                         )
                         if detected_info and detected_info.get("is_receipt"):
                             is_confirmed_receipt = True
+                        elif detected_info and detected_info.get("is_receipt") is False:
+                            logger.info(f"Gemini descartó imagen de {client_name}: no es comprobante de pago.")
+                            return JSONResponse({"status": "ignored", "reason": "not_a_receipt_image"})
                     except Exception as e:
                         logger.debug(f"Error analizando imagen con Gemini: {e}")
 
-                    # Si Gemini no confirmó o no está activo, pero el cliente escribió explícitamente palabras de pago en el caption
+                    # 2. Probar OCR Local con Tesseract si Gemini no confirmó
+                    if not is_confirmed_receipt and img_bytes:
+                        try:
+                            ocr_text = receipt_service.extract_text_from_image(img_bytes)
+                            if ocr_text:
+                                ocr_info = receipt_service.parse_transfer_receipt_text(ocr_text)
+                                if ocr_info and ocr_info.get("is_receipt"):
+                                    detected_info = ocr_info
+                                    is_confirmed_receipt = True
+                        except Exception as ocr_err:
+                            logger.debug(f"Error en OCR local de imagen: {ocr_err}")
+
+                    # 3. Si el cliente escribió palabras explícitas de pago en el caption
                     if not is_confirmed_receipt and has_receipt_intent:
                         is_confirmed_receipt = True
                         if not detected_info:
                             detected_info = receipt_service.parse_transfer_receipt_text(text)
+
+                    # 4. REGLA FAILSAFE PARA IMÁGENES:
+                    # Todo cliente que envía una captura sin texto de estudio debe registrarse como comprobante
+                    # para que NUNCA se pierda un pago y quede visible en 'Esperando Pago' para revisión visual.
+                    if not is_confirmed_receipt:
+                        is_confirmed_receipt = True
+                        if not detected_info:
+                            detected_info = {
+                                "is_receipt": True,
+                                "bank": "Captura / Comprobante",
+                                "amount": None,
+                                "operation_id": None,
+                                "summary": "Comprobante en imagen (Revisar captura)"
+                            }
         except Exception as e:
             logger.debug(f"No se pudo descargar media de Evolution: {e}")
 
@@ -445,7 +508,17 @@ async def whatsapp_webhook(request: Request):
         account_id_val = target_acc["id"] if target_acc else None
         platform_val = target_acc["platform"] if target_acc else (detected_info.get("platform") if detected_info else "")
         amount_val = float(detected_info.get("amount") or 0.0) if detected_info else 0.0
-        amount_fmt_val = (detected_info.get("amount_formatted") or (format_ars(amount_val) if amount_val > 0 else "")) if detected_info else ""
+
+        # Si no se detectó el monto numérico del ticket, inferir de la tarifa del servicio activo del cliente
+        if (not amount_val or amount_val == 0.0) and target_acc and target_acc.get("price"):
+            try:
+                raw_digits = re.sub(r'[^\d]', '', str(target_acc.get("price")))
+                if raw_digits:
+                    amount_val = float(raw_digits)
+            except Exception:
+                pass
+
+        amount_fmt_val = (detected_info.get("amount_formatted") or (format_ars(amount_val) if amount_val > 0 else "")) if detected_info else (format_ars(amount_val) if amount_val > 0 else "")
         bank_val = (detected_info.get("bank") or "") if detected_info else ""
         op_val = (detected_info.get("operation_id") or "") if detected_info else ""
         date_val = (detected_info.get("date") or "") if detected_info else ""

@@ -549,6 +549,23 @@ async def handle_telegram_message(msg: Dict[str, Any]):
     elif cmd in ("/stock", "stock", "/alerta_stock", "/stock_bajo", "/alertas_stock", "/inventario"):
         await format_and_send_stock_alert(chat_id=chat_id)
 
+    elif cmd in ("/catalogo", "catalogo", "/precios", "precios", "/precio", "precio", "/planes", "planes", "/servicios", "servicios"):
+        cat_text = database.generate_catalog_message(client_type="consumidor_final", include_payment_methods=True)
+        tg_cat = (
+            cat_text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        tg_cat = re.sub(r'\*([^*]+)\*', r'<b>\1</b>', tg_cat)
+        tg_cat = re.sub(r'_([^_]+)_', r'<i>\1</i>', tg_cat)
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔙 Menú Principal", "callback_data": "menu_main"}]
+            ]
+        }
+        await send_telegram_message(tg_cat, reply_markup=kb, chat_id=chat_id)
+
     elif cmd in ("/escanear", "/scan"):
         from scheduler import check_and_send_alerts
         sent = await check_and_send_alerts(days_window=7, force=True)
@@ -730,20 +747,21 @@ async def handle_telegram_callback(query: Dict[str, Any]):
 
     elif data == "menu_catalog":
         await answer_callback_query(query_id)
-        cat = database.get_price_catalog()
-        if not cat:
-            await send_telegram_message("🏷️ El catálogo de precios está vacío actualmente.", reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
-        else:
-            lines = ["🏷️ <b>LISTA OFICIAL DE PRECIOS (ARS):</b>\n"]
-            for c in cat:
-                st = "📱" if c["service_type"] == "pantalla" else "👑"
-                lines.append(
-                    f"{st} <b>{c['platform']}</b>\n"
-                    f"   👤 Final: <b>{c['price_final_formatted']}</b> | 👔 Rev: <b>{c['price_reseller_formatted']}</b>\n"
-                    f"   📉 Costo: {c['cost_price_formatted']}\n"
-                )
-            lines.append("<i>Precios actualizados automáticamente.</i>")
-            await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+        cat_text = database.generate_catalog_message(client_type="consumidor_final", include_payment_methods=False)
+        tg_cat = (
+            cat_text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        tg_cat = re.sub(r'\*([^*]+)\*', r'<b>\1</b>', tg_cat)
+        tg_cat = re.sub(r'_([^_]+)_', r'<i>\1</i>', tg_cat)
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔙 Volver al Menú", "callback_data": "menu_main"}]
+            ]
+        }
+        await send_telegram_message(tg_cat, reply_markup=kb, chat_id=chat_id)
 
     elif data == "menu_combos":
         await answer_callback_query(query_id)

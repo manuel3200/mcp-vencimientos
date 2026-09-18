@@ -111,7 +111,8 @@ from db.repositories.catalog_repo import (
     get_combos,
     create_or_update_combo,
     delete_combo,
-    sell_combo
+    sell_combo,
+    generate_catalog_message
 )
 
 from db.repositories.suppliers_repo import (

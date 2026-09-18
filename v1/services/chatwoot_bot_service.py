@@ -356,6 +356,22 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
             return {"status": "ok", "action": "payment_info_sent"}
 
         # -------------------------------------------------------------
+        # 5.1 ENVIAR O CONSULTAR CATÁLOGO Y PRECIOS (/catalogo, /precios, /planes)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/catalogo", "/precios", "/precio", "/planes", "/combos")):
+            parts = content.strip().split(maxsplit=1)
+            plat_arg = parts[1].strip() if len(parts) > 1 else None
+
+            client_type_val = client.get("client_type") or "consumidor_final"
+            catalog_text = database.generate_catalog_message(
+                client_type=client_type_val,
+                platform_filter=plat_arg,
+                include_payment_methods=True
+            )
+            await whatsapp_client.send_chatwoot_message(conv_id, catalog_text, private=is_private)
+            return {"status": "ok", "action": "catalog_sent", "platform_filter": plat_arg}
+
+        # -------------------------------------------------------------
         # 6. MENÚ DE AYUDA Y COMANDOS DISPONIBLES (/ayuda, /comandos, /help)
         # -------------------------------------------------------------
         elif clean_cmd.startswith(("/ayuda", "/comandos", "/help")):
@@ -375,6 +391,7 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 "• `/pagoapro_<ID>` : Aprueba el pago #ID, renueva el servicio y confirma al cliente\n"
                 "• `/pagodene_<ID>` : Deniega el pago #ID y notifica al cliente que revise el envío\n\n"
                 "**Consultas & Operaciones:**\n"
+                "• `/catalogo` o `/precios` : Enviar lista de precios, combos y stock actualizado\n"
                 "• `/stock` : Ver stock libre en tiempo real\n"
                 "• `/info` : Ver suscripciones activas del cliente actual\n"
                 "• `/cbu` : Enviar datos bancarios y alias al cliente\n"

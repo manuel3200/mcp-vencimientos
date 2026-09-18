@@ -34,6 +34,19 @@ def consultar_catalogo_precios() -> str:
 
 
 @mcp.tool()
+def generar_mensaje_catalogo_whatsapp(tipo_cliente: str = "consumidor_final", plataforma: str = "") -> str:
+    """Genera el mensaje de catálogo formateado con diseño profesional y emojis para WhatsApp, indicando disponibilidad de stock en tiempo real y precios vigentes.
+    - tipo_cliente: 'consumidor_final' o 'revendedor'.
+    - plataforma: Opcional, filtrar por una plataforma en particular (ej: 'netflix', 'disney').
+    """
+    return database.generate_catalog_message(
+        client_type=tipo_cliente,
+        platform_filter=plataforma.strip() if plataforma else None,
+        include_payment_methods=True
+    )
+
+
+@mcp.tool()
 def configurar_precio_catalogo(
     plataforma: str,
     precio_final_ars: float,

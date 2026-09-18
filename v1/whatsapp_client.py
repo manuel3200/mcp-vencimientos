@@ -1000,6 +1000,8 @@ async def setup_chatwoot_canned_responses() -> Dict[str, Any]:
         {"short_code": "stock", "content": "/stock"},
         {"short_code": "info", "content": "/info"},
         {"short_code": "cbu", "content": "/cbu"},
+        {"short_code": "catalogo", "content": "/catalogo"},
+        {"short_code": "precios", "content": "/precios"},
         {"short_code": "ayuda", "content": "/ayuda"}
     ]
 

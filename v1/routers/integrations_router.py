@@ -717,6 +717,38 @@ async def whatsapp_webhook(request: Request):
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "payment_info_sent"})
 
+    # REGLA D: Consultas de Catálogo, Precios y Disponibilidad
+    catalog_intents = [
+        "/catalogo", "/precios", "/precio", "/planes", "/combos", "/servicios",
+        "catalogo", "catálogo", "precios", "precio", "lista de precios",
+        "planes", "servicios", "combos", "que tenes", "qué tenés",
+        "que tenes disponible", "qué tenés disponible", "que tenés disponible",
+        "que servicios tenes", "qué servicios tenés", "que cuentas tenes",
+        "qué cuentas tenés", "cuanto sale", "cuánto sale", "cuanto cuesta",
+        "cuánto cuesta", "cuanto esta", "cuánto está", "info de precios",
+        "quiero contratar", "para comprar", "que plataformas tenes", "qué plataformas tenés"
+    ]
+    if any(k in text_lower for k in catalog_intents):
+        platform_keywords = [
+            "netflix", "disney", "max", "hbo", "prime", "amazon", "spotify",
+            "youtube", "paramount", "crunchyroll", "apple", "star", "iptv"
+        ]
+        target_platform = None
+        for pk in platform_keywords:
+            if pk in text_lower:
+                target_platform = pk
+                break
+
+        client_type_val = (client_profile.get("client", {}).get("client_type") or "consumidor_final") if client_profile else "consumidor_final"
+        reply = database.generate_catalog_message(
+            client_type=client_type_val,
+            platform_filter=target_platform,
+            include_payment_methods=True
+        )
+        await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+        _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+        return JSONResponse({"status": "ok", "action": "catalog_sent", "platform_filter": target_platform})
+
     return JSONResponse({"status": "ok", "action": "none"})
 
 

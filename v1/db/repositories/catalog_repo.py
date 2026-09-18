@@ -388,3 +388,149 @@ def sell_combo(
         }
     finally:
         conn.close()
+
+
+def generate_catalog_message(
+    client_type: str = "consumidor_final",
+    platform_filter: Optional[str] = None,
+    include_payment_methods: bool = True
+) -> str:
+    """Genera un catálogo interactivo y profesional para WhatsApp con servicios, combos,
+    precios vigentes y disponibilidad de stock en tiempo real.
+    - client_type: 'consumidor_final' o 'revendedor' (ajusta tarifas automáticamente).
+    - platform_filter: Si se pasa (ej: 'netflix'), genera una respuesta enfocada en esa plataforma.
+    - include_payment_methods: Si incluye resumen de medios de pago al pie.
+    """
+    conn = get_connection()
+    try:
+        is_reseller = "revend" in str(client_type).lower()
+
+        # 1. Obtener conteo de stock libre por plataforma
+        free_rows = conn.execute("""
+            SELECT platform, COUNT(*) as count 
+            FROM streaming_accounts 
+            WHERE status = 'libre'
+            GROUP BY platform
+        """).fetchall()
+        free_stock_map: Dict[str, int] = {}
+        for r in free_rows:
+            p_name = r["platform"].strip().lower()
+            free_stock_map[p_name] = r["count"]
+
+        # 2. Obtener catálogo de precios
+        cat_rows = conn.execute("""
+            SELECT * FROM price_catalog
+            ORDER BY platform ASC, service_type ASC
+        """).fetchall()
+
+        # Mapeo de emojis para plataformas
+        def get_platform_emoji(name: str) -> str:
+            n = name.lower()
+            if "netflix" in n: return "🔴"
+            if "disney" in n: return "🏰"
+            if "max" in n or "hbo" in n: return "🟣"
+            if "prime" in n or "amazon" in n: return "📦"
+            if "spotify" in n: return "🟢"
+            if "youtube" in n: return "▶️"
+            if "paramount" in n: return "⛰️"
+            if "crunchyroll" in n: return "🟠"
+            if "apple" in n: return "🍏"
+            if "star" in n: return "🌟"
+            if "iptv" in n: return "📺"
+            return "📺"
+
+        # Función auxiliar para chequear stock libre
+        def check_stock(plat_name: str) -> int:
+            p_low = plat_name.strip().lower()
+            if p_low in free_stock_map:
+                return free_stock_map[p_low]
+            total = 0
+            for k, cnt in free_stock_map.items():
+                if k in p_low or p_low in k:
+                    total += cnt
+            return total
+
+        clean_filter = platform_filter.strip().lower() if platform_filter else None
+
+        # CASO A: Filtro por plataforma específica (ej: 'netflix', 'disney', 'max')
+        if clean_filter:
+            matched_items = []
+            for r in cat_rows:
+                p_curr = r["platform"].strip().lower()
+                st_curr = r["service_type"].strip().lower()
+                if clean_filter in p_curr or clean_filter in st_curr or p_curr in clean_filter:
+                    matched_items.append(dict(r))
+
+            if matched_items:
+                lines = []
+                lines.append("🍿 *PLANES Y TARIFAS DISPONIBLES:*\n")
+                if is_reseller:
+                    lines.append("👔 _(Lista con precios mayoristas de Revendedor)_\n")
+
+                for it in matched_items:
+                    emoji = get_platform_emoji(it["platform"])
+                    stype_label = "1 Pantalla / Perfil" if it["service_type"] == "pantalla" else "Cuenta Completa"
+                    price_val = it["price_reseller"] if is_reseller else it["price_final"]
+                    price_str = format_ars(price_val)
+                    stock_qty = check_stock(it["platform"])
+                    stock_badge = "✅ *Disponible* _(Entrega inmediata)_" if stock_qty > 0 else "⏳ *A pedido* _(Entrega rápida)_"
+
+                    lines.append(f"{emoji} *{it['platform']}* ({stype_label})")
+                    lines.append(f"• Tarifa: *{price_str}* / mes")
+                    lines.append(f"• Stock: {stock_badge}")
+                    if it.get("notes"):
+                        lines.append(f"• Detalle: _{it['notes']}_")
+                    lines.append("")
+
+                if include_payment_methods:
+                    lines.append("💳 *Medios de Pago:* Transferencia, Mercado Pago, Ualá, Naranja X.")
+                    lines.append("\n👉 *¿Deseas activarlo?* Responde a este mensaje y te enviamos los datos para disfrutar de inmediato. ✨")
+                return "\n".join(lines).strip()
+
+        # CASO B: Catálogo Completo General
+        lines = []
+        lines.append("✨ *CATÁLOGO OFICIAL DE STREAMING* ✨")
+        lines.append("🍿 _Cuentas y perfiles premium con garantía total de 30 días._\n")
+
+        if is_reseller:
+            lines.append("👔 *LISTA MAYORISTA PARA REVENDEDORES:*\n")
+        else:
+            lines.append("📺 *SERVICIOS DISPONIBLES:*\n")
+
+        if cat_rows:
+            for r in cat_rows:
+                emoji = get_platform_emoji(r["platform"])
+                stype_label = "1 Pantalla" if r["service_type"] == "pantalla" else "Completa"
+                price_val = r["price_reseller"] if is_reseller else r["price_final"]
+                price_str = format_ars(price_val)
+                stock_qty = check_stock(r["platform"])
+                stock_icon = "✅" if stock_qty > 0 else "⏳"
+                lines.append(f"• {emoji} *{r['platform']}* ({stype_label}): *{price_str}* {stock_icon}")
+            lines.append("\n_Referencias: ✅ Entrega inmediata | ⏳ A pedido_")
+        else:
+            lines.append("• 🔴 *Netflix*: $6.500 ✅")
+            lines.append("• 🏰 *Disney+ Premium*: $4.500 ✅")
+            lines.append("• 🟣 *Max Estándar*: $4.000 ✅")
+            lines.append("• 📦 *Prime Video*: $3.500 ✅")
+            lines.append("• 🟢 *Spotify Premium*: $3.800 ✅")
+
+        # Combos Activos
+        combos_list = get_combos(only_active=True)
+        if combos_list:
+            lines.append("\n🔥 *COMBOS Y PROMOS EXCLUSIVAS:*")
+            for c in combos_list:
+                c_price = c["price_reseller"] if is_reseller else c["price_final"]
+                lines.append(f"• ⭐ *{c['name']}* ({c['platforms_str']}): *{format_ars(c_price)}*")
+                if c.get("description"):
+                    lines.append(f"  _{c['description']}_")
+
+        if include_payment_methods:
+            lines.append("\n💳 *MEDIOS DE PAGO:*")
+            lines.append("• Mercado Pago, Transferencia Bancaria (CBU/CVU), Ualá, Naranja X y más.")
+
+        lines.append("\n👉 *¿CÓMO CONTRATAR?*")
+        lines.append("Escribe el nombre del servicio o combo que deseas contratar y te enviamos los datos de pago al instante para activarlo. 🚀")
+
+        return "\n".join(lines).strip()
+    finally:
+        conn.close()

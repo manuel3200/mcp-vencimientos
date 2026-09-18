@@ -112,10 +112,15 @@ def count_pending_payments() -> int:
         conn.close()
 
 
-def approve_pending_payment(payment_id: int, admin_user: str = "admin") -> Dict[str, Any]:
+def approve_pending_payment(
+    payment_id: int,
+    admin_user: str = "admin",
+    custom_amount: Optional[float] = None
+) -> Dict[str, Any]:
     """Aprueba un pago pendiente:
     - Actualiza el estado a 'approved'.
-    - Si tiene una cuenta vinculada, registra el cobro en finanzas y actualiza la cuenta a 'pagado' (extendiendo fecha si corresponde).
+    - Si tiene una cuenta vinculada o encontrada para el cliente, registra el cobro en finanzas y extiende el servicio.
+    - Si no tiene cuenta asociada (compra inicial sin asignar aún), registra el ingreso directamente en el libro de pagos (Finanzas & Cobros).
     """
     item = get_pending_payment(payment_id)
     if not item:
@@ -128,37 +133,98 @@ def approve_pending_payment(payment_id: int, admin_user: str = "admin") -> Dict[
             "payment": item
         }
 
+    from core.utils import clean_whatsapp_phone, format_ars
+
+    amt_val = custom_amount if (custom_amount is not None and custom_amount > 0) else (float(item.get("amount") or 0.0))
+    bank_name = item.get("bank") or "Mercado Pago"
+    op_code = item.get("operation_id") or "-"
+
     conn = get_connection()
     try:
         with conn:
-            # Si hay cuenta asociada, ejecutar cobro
+            # Si se especificó monto personalizado o se actualizó, persistirlo
+            if custom_amount is not None and custom_amount > 0:
+                conn.execute("""
+                    UPDATE pending_payments
+                    SET amount = ?, amount_formatted = ?
+                    WHERE id = ?
+                """, (amt_val, format_ars(amt_val), payment_id))
+
             acc_id = item.get("account_id")
+            client_id = item.get("client_id")
             finance_res = None
+
+            # 1. Si no hay cuenta asociada directamente, intentar buscar una cuenta activa del cliente
+            if not acc_id:
+                found_acc = None
+                if client_id:
+                    row_acc = conn.execute("""
+                        SELECT * FROM streaming_accounts
+                        WHERE client_id = ? AND status = 'ocupada'
+                        ORDER BY expiry_date ASC LIMIT 1
+                    """, (client_id,)).fetchone()
+                    if row_acc:
+                        found_acc = dict(row_acc)
+                elif item.get("sender_phone"):
+                    s_clean = clean_whatsapp_phone(item["sender_phone"])
+                    if s_clean:
+                        suffix = s_clean[-8:]
+                        row_acc = conn.execute("""
+                            SELECT a.* FROM streaming_accounts a
+                            JOIN clients c ON a.client_id = c.id
+                            WHERE a.status = 'ocupada' AND (c.whatsapp LIKE ? OR c.whatsapp LIKE ?)
+                            ORDER BY a.expiry_date ASC LIMIT 1
+                        """, (f"%{suffix}%", f"%{s_clean}%")).fetchone()
+                        if row_acc:
+                            found_acc = dict(row_acc)
+
+                if found_acc:
+                    acc_id = found_acc["id"]
+                    if not client_id and found_acc.get("client_id"):
+                        client_id = found_acc["client_id"]
+                    conn.execute("UPDATE pending_payments SET account_id = ?, client_id = ? WHERE id = ?", (acc_id, client_id, payment_id))
+
+            # 2. Si tenemos cuenta (vinculada u obtenida), impactar renovación en finanzas
             if acc_id:
                 try:
-                    # Determinar si es compra nueva o renovación
                     curr_exp = item.get("account_expiry")
                     is_initial = False
                     if curr_exp:
                         try:
-                            exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
                             from datetime import date
+                            exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
                             days_left = (exp_d - date.today()).days
                             if days_left > 15:
                                 is_initial = True
                         except Exception:
                             pass
 
-                    amt_val = item.get("amount") or 0.0
                     finance_res = finance_repo.collect_payment(
                         account_id=acc_id,
                         extend_days=0 if is_initial else 30,
                         amount=amt_val if amt_val > 0 else None,
-                        payment_method=item.get("bank") or "Transferencia",
-                        notes=f"Aprobado desde Pago #{payment_id} (Op: {item.get('operation_id', '-')})"
+                        payment_method=bank_name,
+                        notes=f"Aprobado desde Pago #{payment_id} (Op: {op_code})"
                     )
                 except Exception as e:
                     logger.error(f"Error al impactar cobro financiero para cuenta #{acc_id}: {e}")
+            else:
+                # 3. Si NO hay cuenta activa (compra nueva que aún no tiene cuenta asignada), ASENTAR INGRESO EN FINANZAS DIRECTAMENTE
+                if amt_val > 0:
+                    try:
+                        conn.execute("""
+                            INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                            VALUES (NULL, ?, ?, 0.0, ?, ?, ?)
+                        """, (client_id, amt_val, amt_val, bank_name, f"Cobro aprobado #{payment_id} (Cliente: {item.get('client_name')}, Op: {op_code})"))
+                        finance_res = {
+                            "success": True,
+                            "amount": amt_val,
+                            "profit": amt_val,
+                            "payment_method": bank_name,
+                            "action_label": "Cobro sin cuenta vinculada"
+                        }
+                    except Exception as e:
+                        logger.error(f"Error al asentar cobro en payments: {e}")
 
             # Marcar el registro como aprobado
             conn.execute("""

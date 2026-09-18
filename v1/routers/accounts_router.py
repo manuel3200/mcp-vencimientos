@@ -48,7 +48,22 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
     if not user:
         raise HTTPException(status_code=401)
     username = user.get("username", "admin")
-    res = database.approve_pending_payment(payment_id, admin_user=f"Web ({username})")
+    custom_amt = None
+    try:
+        if request.headers.get("content-type", "").startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
+            form_data = await request.form()
+            custom_amt_str = form_data.get("amount")
+        else:
+            custom_amt_str = request.query_params.get("amount")
+        if custom_amt_str:
+            from core.utils import parse_money
+            parsed_a = parse_money(custom_amt_str)
+            if parsed_a > 0:
+                custom_amt = parsed_a
+    except Exception:
+        pass
+
+    res = database.approve_pending_payment(payment_id, admin_user=f"Web ({username})", custom_amount=custom_amt)
     if res.get("success"):
         p = res.get("payment", {})
         amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)

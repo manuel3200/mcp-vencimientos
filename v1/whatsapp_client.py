@@ -995,6 +995,8 @@ async def setup_chatwoot_canned_responses() -> Dict[str, Any]:
         {"short_code": "nc_crunchyroll", "content": "/nc_crunchyroll"},
         {"short_code": "pago", "content": "/pago"},
         {"short_code": "renovar", "content": "/renovar"},
+        {"short_code": "caida", "content": "/caida"},
+        {"short_code": "reemplazo", "content": "/reemplazo"},
         {"short_code": "pagoapro", "content": "/pagoapro_"},
         {"short_code": "pagodene", "content": "/pagodene_"},
         {"short_code": "stock", "content": "/stock"},

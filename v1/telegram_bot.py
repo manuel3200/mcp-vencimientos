@@ -581,6 +581,70 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         else:
             await send_telegram_message("No hay cuentas activas registradas para enviar alerta.", chat_id=chat_id)
 
+    elif cmd.startswith(("/caida", "/reemplazo", "/reemplazar")):
+        parts = text.split(maxsplit=1)
+        if len(parts) < 2 or not parts[1].strip():
+            fallen_list = database.get_fallen_accounts()
+            if not fallen_list:
+                msg = (
+                    "🎉 <b>¡No hay cuentas caídas reportadas actualmente!</b>\n\n"
+                    "Para forzar el reemplazo de una cuenta por stock libre de la misma plataforma, escribe el comando con su ID, correo o cliente:\n\n"
+                    "👉 <code>/caida 15</code>\n"
+                    "👉 <code>/caida netflix@gmail.com</code>\n"
+                    "👉 <code>/caida Lucas</code>"
+                )
+                await send_telegram_message(msg, reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
+            else:
+                for f_item in fallen_list[:3]:
+                    f_id = f_item["id"]
+                    c_name = f_item.get("client_name") or "Sin cliente"
+                    f_msg = (
+                        f"🚨 <b>Cuenta Caída Pendiente:</b>\n"
+                        f"• {f_item['platform']}: <code>{f_item['email']}</code>\n"
+                        f"• Cliente: <b>{c_name}</b>\n"
+                        f"• Detalle: {f_item.get('notes') or '-'}"
+                    )
+                    kb = {"inline_keyboard": [[{"text": "🔄 Reemplazar Automáticamente (1 Toque)", "callback_data": f"repl_{f_id}"}]]}
+                    await send_telegram_message(f_msg, reply_markup=kb, chat_id=chat_id)
+        else:
+            target_val = parts[1].strip()
+            res = database.report_and_auto_replace_account(target_val, reason="Comando /caida desde Telegram Bot")
+            if res.get("replaced"):
+                new_a = res["new_account"]
+                old_a = res["old_account"]
+                c_name = res.get("client_name") or "Cliente"
+                wa_url = res.get("wa_link", "")
+                kb = {"inline_keyboard": [[{"text": "📲 Enviar Nueva Cuenta por WhatsApp", "url": wa_url}]]} if wa_url else None
+                await send_telegram_message(
+                    f"🎉 <b>REEMPLAZO EN 1 CLIC EXITOSO:</b>\n\n"
+                    f"👤 <b>Cliente:</b> {c_name}\n"
+                    f"📺 <b>Plataforma:</b> {res.get('platform')}\n"
+                    f"❌ <b>Cuenta anterior:</b> <code>{old_a.get('email')}</code>\n\n"
+                    f"✨ <b>NUEVAS CREDENCIALES ASIGNADAS:</b>\n"
+                    f"• Correo: <code>{new_a['email']}</code>\n"
+                    f"• Clave: <code>{new_a['password']}</code>" + (f"\n• Perfil: {new_a['profile_name']}" if new_a.get('profile_name') else "") + (f" [PIN: {new_a['profile_pin']}]" if new_a.get('profile_pin') else "") + "\n"
+                    f"📅 Mantiene vencimiento: <code>{new_a['expiry_date']}</code>",
+                    reply_markup=kb,
+                    chat_id=chat_id
+                )
+            elif res.get("out_of_stock"):
+                old_a = res["old_account"]
+                await send_telegram_message(
+                    f"⚠️ <b>¡ATENCIÓN: SIN STOCK LIBRE PARA REEMPLAZAR!</b>\n\n"
+                    f"• Plataforma: <b>{res.get('platform')}</b>\n"
+                    f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                    f"• Cuenta: <code>{old_a.get('email')}</code>\n\n"
+                    f"La cuenta quedó marcada como <b>CAÍDA</b>. Por favor carga cuentas libres en el panel para proceder.",
+                    reply_markup=get_main_menu_keyboard(),
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(
+                    f"❌ No se encontró ninguna cuenta que coincida con '<b>{target_val}</b>'.",
+                    reply_markup=get_main_menu_keyboard(),
+                    chat_id=chat_id
+                )
+
     elif cmd.startswith("/cliente") or cmd.startswith("/ficha") or cmd.startswith("/buscar"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():

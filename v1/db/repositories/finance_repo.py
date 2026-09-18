@@ -101,6 +101,23 @@ def register_customer_payment(
     finally:
         conn.close()
 
+def collect_payment(
+    account_id: Union[int, str],
+    amount: Optional[float] = None,
+    payment_method: str = "Transferencia",
+    extend_days: Optional[int] = None,
+    notes: str = ""
+) -> Dict[str, Any]:
+    """Cobra y asienta el pago de una cuenta de streaming, actualizando vencimiento y finanzas."""
+    extend_exp = False if (extend_days == 0) else (True if extend_days else None)
+    return register_customer_payment(
+        email_or_id=str(account_id),
+        amount=amount,
+        payment_method=payment_method,
+        extend_expiry=extend_exp,
+        notes=notes
+    )
+
 def get_recent_transactions(limit: int = 15) -> List[Dict[str, Any]]:
     """Obtiene el historial reciente de transacciones y pagos."""
     conn = get_connection()

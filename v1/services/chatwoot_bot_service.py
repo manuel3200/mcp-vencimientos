@@ -391,6 +391,7 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                 "• `/pagoapro_<ID>` : Aprueba el pago #ID, renueva el servicio y confirma al cliente\n"
                 "• `/pagodene_<ID>` : Deniega el pago #ID y notifica al cliente que revise el envío\n\n"
                 "**Consultas & Operaciones:**\n"
+                "• `/caida` : Reemplazo instantáneo en 1 clic de cuenta caída por stock libre\n"
                 "• `/catalogo` o `/precios` : Enviar lista de precios, combos y stock actualizado\n"
                 "• `/stock` : Ver stock libre en tiempo real\n"
                 "• `/info` : Ver suscripciones activas del cliente actual\n"
@@ -515,6 +516,79 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
                         private=True
                     )
                     return {"status": "error", "error": res.get("error")}
+
+        # -------------------------------------------------------------
+        # 9. REEMPLAZO INSTANTÁNEO DE CUENTA CAÍDA (/caida, /reemplazo)
+        # -------------------------------------------------------------
+        elif clean_cmd.startswith(("/caida", "/reemplazo", "/reemplazar")):
+            parts = content.strip().split(maxsplit=1)
+            target_arg = parts[1].strip() if len(parts) > 1 else ""
+
+            # Si no se pasó argumento específico, buscar cuenta activa del cliente de la conversación
+            if not target_arg:
+                c_info = database.get_client_360_profile(client["id"])
+                active_accs = c_info.get("active_accounts", []) if c_info else []
+                if not active_accs:
+                    await whatsapp_client.send_chatwoot_message(
+                        conv_id,
+                        f"⚠️ [StreamVault CRM] **{client['name']}** no registra suscripciones activas ni caídas para reemplazar.",
+                        private=True
+                    )
+                    return {"status": "ok", "action": "no_account_to_replace"}
+                target_arg = str(active_accs[0]["id"])
+
+            res = database.report_and_auto_replace_account(
+                target_arg,
+                reason=f"Reemplazo en 1 clic desde Chatwoot (Conv #{conv_id})"
+            )
+
+            if res.get("replaced"):
+                new_a = res["new_account"]
+                old_a = res["old_account"]
+                # 1. Enviar mensaje de nuevas credenciales al cliente (visible en el chat)
+                await whatsapp_client.send_chatwoot_message(conv_id, res["whatsapp_message"], private=False)
+
+                # 2. Enviar nota privada para el agente
+                note_agent = (
+                    f"✅ **[StreamVault CRM] ¡Reemplazo Instantáneo Exitoso!**\n\n"
+                    f"• Cliente: **{res.get('client_name')}**\n"
+                    f"• Plataforma: **{res.get('platform')}**\n"
+                    f"• Cuenta vieja (caída): `{old_a.get('email')}`\n"
+                    f"• Nueva cuenta asignada: `{new_a.get('email')}`\n"
+                    f"• Clave: `{new_a.get('password')}`" + (f" | Perfil: `{new_a.get('profile_name')}`" if new_a.get('profile_name') else "") + (f" [PIN: `{new_a.get('profile_pin')}`]" if new_a.get('profile_pin') else "") + "\n"
+                    f"• Vencimiento mantenido: `{new_a.get('expiry_date')}`\n"
+                    f"• Las nuevas credenciales fueron enviadas directamente al cliente en esta conversación."
+                )
+                await whatsapp_client.send_chatwoot_message(conv_id, note_agent, private=True)
+
+                # 3. Notificar a Telegram
+                await send_telegram_message(
+                    f"🔄 <b>REEMPLAZO EN 1 CLIC DESDE CHATWOOT</b>\n\n"
+                    f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                    f"• Servicio: <b>{res.get('platform')}</b>\n"
+                    f"• Nueva cuenta: <code>{new_a.get('email')}</code>\n"
+                    f"• Clave: <code>{new_a.get('password')}</code>"
+                )
+                return {"status": "ok", "action": "account_replaced", "details": res}
+            elif res.get("out_of_stock"):
+                old_a = res["old_account"]
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    f"⚠️ **[StreamVault CRM] ¡SIN STOCK LIBRE PARA REEMPLAZAR!**\n\n"
+                    f"• Servicio: **{res.get('platform')}**\n"
+                    f"• Cuenta: `{old_a.get('email')}`\n"
+                    f"La cuenta fue marcada como **CAÍDA** en el CRM, pero no hay stock libre en inventario para asignar una nueva.\n"
+                    f"Por favor añade stock de esta plataforma en el Panel Web.",
+                    private=True
+                )
+                return {"status": "ok", "action": "out_of_stock", "details": res}
+            else:
+                await whatsapp_client.send_chatwoot_message(
+                    conv_id,
+                    f"⚠️ [StreamVault CRM] Error al reemplazar cuenta: {res.get('error')}",
+                    private=True
+                )
+                return {"status": "error", "error": res.get("error")}
 
         return {"status": "ignored", "reason": "unknown_command"}
 

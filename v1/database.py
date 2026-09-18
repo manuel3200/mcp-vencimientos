@@ -50,11 +50,13 @@ from db.repositories.accounts_repo import (
     get_stock_health_summary,
     update_account_price,
     purge_accounts_except_client,
-    reactivate_fallen_account
+    reactivate_fallen_account,
+    report_and_auto_replace_account
 )
 
 from db.repositories.finance_repo import (
     register_customer_payment,
+    collect_payment,
     get_recent_transactions
 )
 

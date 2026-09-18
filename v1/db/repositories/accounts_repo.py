@@ -222,19 +222,55 @@ def reactivate_fallen_account(email_or_id_or_client: str) -> Optional[Dict[str, 
         conn.close()
 
 
-def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
+def replace_fallen_account(
+    email_or_query: str,
+    reason: str = "Reporte de caída",
+    platform_filter: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     q = email_or_query.strip()
     try:
         with conn:
-            old_row = conn.execute("""
+            clean_digits = re.sub(r'\D', '', q)
+            is_small_id = clean_digits.isdigit() and len(clean_digits) <= 6 and q.isdigit()
+            is_phone = len(clean_digits) >= 7
+
+            conditions = []
+            params: List[Any] = []
+
+            if is_small_id:
+                conditions.append("a.id = ?")
+                params.append(int(clean_digits))
+
+            if is_phone:
+                conditions.append("c.whatsapp LIKE ?")
+                params.append(f"%{clean_digits[-8:]}%")
+
+            conditions.append("lower(a.email) LIKE lower(?)")
+            params.append(f"%{q}%")
+
+            conditions.append("lower(c.name) LIKE lower(?)")
+            params.append(f"%{q}%")
+
+            where_clause = " OR ".join(conditions)
+
+            extra_plat_sql = ""
+            if platform_filter:
+                extra_plat_sql = " AND lower(a.platform) LIKE lower(?) "
+                params.append(f"%{platform_filter.strip()}%")
+
+            # Priorizar cuentas caídas (status='caida'), luego ocupadas (status='ocupada')
+            sql = f"""
                 SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type 
                 FROM streaming_accounts a
                 LEFT JOIN clients c ON a.client_id = c.id
-                WHERE (lower(a.email) LIKE lower(?) OR a.id = ?)
-                AND a.status IN ('caida', 'ocupada')
-                ORDER BY a.id DESC LIMIT 1
-            """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
+                WHERE ({where_clause})
+                  {extra_plat_sql}
+                  AND a.status IN ('caida', 'ocupada')
+                ORDER BY CASE WHEN a.status = 'caida' THEN 0 ELSE 1 END, a.updated_at DESC, a.id DESC
+                LIMIT 1
+            """
+            old_row = conn.execute(sql, params).fetchone()
 
             if not old_row:
                 return None
@@ -253,22 +289,42 @@ def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
             """, (platform,)).fetchone()
 
             if not free_row:
+                curr_notes = old_acc.get("notes") or ""
+                updated_notes = f"{curr_notes} | CAÍDA: {reason} ({date.today().isoformat()})".strip(" |")
+                conn.execute("""
+                    UPDATE streaming_accounts 
+                    SET status = 'caida', notes = ?, updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                """, (updated_notes, old_acc["id"]))
+
+                old_acc["status"] = "caida"
+                old_acc["notes"] = updated_notes
                 return {
-                    "success": False,
+                    "success": True,
+                    "replaced": False,
+                    "out_of_stock": True,
+                    "platform": platform,
                     "error": f"No hay cuentas libres disponibles en inventario para la plataforma '{platform}'",
                     "old_account": old_acc
                 }
 
             new_acc = dict(free_row)
 
-            conn.execute("UPDATE streaming_accounts SET status = 'reemplazada_caida', updated_at = CURRENT_TIMESTAMP WHERE id = ?", (old_acc["id"],))
+            curr_notes = old_acc.get("notes") or ""
+            updated_old_notes = f"{curr_notes} | CAÍDA REEMPLAZADA: {reason} ({date.today().isoformat()}) -> Reemplazo #{new_acc['id']}".strip(" |")
+            conn.execute("""
+                UPDATE streaming_accounts 
+                SET status = 'reemplazada_caida', notes = ?, updated_at = CURRENT_TIMESTAMP 
+                WHERE id = ?
+            """, (updated_old_notes, old_acc["id"]))
 
+            repl_notes = f"Reemplazo por caída de cuenta #{old_acc['id']} ({old_acc['email']})"
             conn.execute("""
                 UPDATE streaming_accounts
                 SET client_id = ?, status = 'ocupada', expiry_date = ?, 
                     price = ?, recurrence = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-            """, (client_id, expiry, price, recurrence, f"Reemplazo de {old_acc['email']}", new_acc["id"]))
+            """, (client_id, expiry, price, recurrence, repl_notes, new_acc["id"]))
 
             fresh_new = conn.execute("""
                 SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
@@ -279,12 +335,71 @@ def replace_fallen_account(email_or_query: str) -> Optional[Dict[str, Any]]:
 
             return {
                 "success": True,
+                "replaced": True,
                 "platform": platform,
                 "old_account": old_acc,
                 "new_account": dict(fresh_new)
             }
     finally:
         conn.close()
+
+def report_and_auto_replace_account(
+    identifier: str,
+    reason: str = "Reporte de caída",
+    platform_filter: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Gestiona el reporte y reemplazo inmediato en 1 clic de una cuenta.
+    Si hay stock libre, asigna la nueva cuenta y genera el mensaje de WhatsApp con credenciales.
+    Si no hay stock libre, marca la cuenta como caída y genera un mensaje tranquilizador para el cliente.
+    """
+    from services.template_service import generate_whatsapp_message
+    from core.utils import clean_whatsapp_phone
+
+    res = replace_fallen_account(identifier, reason=reason, platform_filter=platform_filter)
+    if not res:
+        return {
+            "success": False,
+            "replaced": False,
+            "error": f"No se encontró ninguna cuenta activa o registrada que coincida con '{identifier}'."
+        }
+
+    if res.get("replaced"):
+        new_acc = res["new_account"]
+        wa_data = generate_whatsapp_message(new_acc, message_type="reemplazo")
+        return {
+            "success": True,
+            "replaced": True,
+            "platform": res["platform"],
+            "client_name": new_acc.get("client_name") or "Cliente",
+            "old_account": res["old_account"],
+            "new_account": new_acc,
+            "whatsapp_message": wa_data.get("message_text", ""),
+            "wa_link": wa_data.get("wa_link", ""),
+            "clean_phone": wa_data.get("clean_phone") or clean_whatsapp_phone(new_acc.get("whatsapp") or "")
+        }
+    else:
+        old_acc = res["old_account"]
+        c_name = old_acc.get("client_name") or "Cliente"
+        plat = res["platform"] or "Streaming"
+        c_phone = clean_whatsapp_phone(old_acc.get("whatsapp") or "")
+        apology_msg = (
+            f"🛠️ *¡Hola {c_name}!* Hemos registrado tu reporte sobre el inconveniente con tu servicio de *{plat}*.\n\n"
+            f"Nuestro equipo técnico ya se encuentra gestionando la reposición de tu cuenta con el proveedor. "
+            f"Te enviaremos tus nuevos datos de acceso por este mismo chat a la brevedad posible.\n\n"
+            f"¡Te pedimos sinceras disculpas por las molestias y muchas gracias por tu paciencia! 🙌"
+        )
+        return {
+            "success": True,
+            "replaced": False,
+            "out_of_stock": True,
+            "platform": plat,
+            "client_name": c_name,
+            "old_account": old_acc,
+            "whatsapp_message": apology_msg,
+            "clean_phone": c_phone,
+            "error": res.get("error")
+        }
 
 def get_free_stock(platform: Optional[str] = None) -> List[Dict[str, Any]]:
     conn = get_connection()

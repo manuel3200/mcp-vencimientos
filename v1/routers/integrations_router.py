@@ -182,17 +182,7 @@ async def whatsapp_webhook(request: Request):
     from_me = key.get("fromMe", False)
     remote_jid = key.get("remoteJid", "")
 
-    # 1. Ignorar mensajes salientes propios o grupos para evitar bucles
-    if from_me or not remote_jid or "@g.us" in remote_jid or "status@broadcast" in remote_jid:
-        return JSONResponse({"status": "ignored"})
-
-    # 2. Extraer número de teléfono limpio
-    phone_raw = remote_jid.split("@")[0]
-    sender_phone = re.sub(r'[^0-9]', '', phone_raw)
-    if not sender_phone or len(sender_phone) < 8:
-        return JSONResponse({"status": "ignored", "reason": "invalid_phone"})
-
-    # 3. Extraer contenido de texto o caption de imagen/documento
+    # 1. Extraer contenido de texto o caption primero para verificar si es un comando administrativo
     msg_obj = data.get("message", {}) or body.get("message", {}) or {}
     text = (
         msg_obj.get("conversation") or
@@ -202,6 +192,24 @@ async def whatsapp_webhook(request: Request):
         ""
     ).strip()
     is_media = bool(msg_obj.get("imageMessage") or msg_obj.get("documentMessage"))
+    text_lower = text.lower().strip()
+
+    # Ignorar mensajes de grupos o transmisiones/estados
+    if not remote_jid or "@g.us" in remote_jid or "status@broadcast" in remote_jid:
+        return JSONResponse({"status": "ignored"})
+
+    # Extraer número de teléfono limpio
+    phone_raw = remote_jid.split("@")[0].split(":")[0]
+    sender_phone = re.sub(r'[^0-9]', '', phone_raw)
+    if not sender_phone or len(sender_phone) < 8:
+        return JSONResponse({"status": "ignored", "reason": "invalid_phone"})
+
+    # Verificar si es un comando administrativo o comando de caída
+    is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|caida|reemplazo|reemplazar)', text_lower))
+
+    # Si es from_me (mensaje saliente propio) y NO es un comando administrativo, ignorar para evitar bucles
+    if from_me and not is_admin_cmd:
+        return JSONResponse({"status": "ignored", "reason": "outgoing_non_command"})
 
     # 4. Extraer contexto de reenvío (Forwarded)
     context_info = (
@@ -223,29 +231,39 @@ async def whatsapp_webhook(request: Request):
     client_profile = database.get_client_by_phone(sender_phone)
     client_name = client_profile["client"]["name"] if client_profile else push_name
 
-    text_lower = text.lower()
-
-    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagodene_<ID>)
-    admin_approval_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)', text_lower)
+    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagodene_<ID>, /caida, /reemplazo)
+    admin_approval_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)(?:\s+(\d+(?:[.,]\d+)?))?', text_lower)
     admin_reject_match = re.search(r'^/(?:pagodene|rechazarpago)[_\s]+(\d+)', text_lower)
-    if admin_approval_match or admin_reject_match:
+    admin_fallen_match = re.search(r'^/(?:caida|reemplazo|reemplazar)(?:[_\s]+(.+))?', text_lower)
+
+    if admin_approval_match or admin_reject_match or (admin_fallen_match and (from_me or (settings.get("admin_whatsapp") and sender_phone.endswith(database.clean_whatsapp_phone(settings.get("admin_whatsapp"))[-8:])))):
         admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
         clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
 
         is_auth = False
-        if clean_admin:
+        if from_me:
+            # Mensaje emitido desde la propia sesión de WhatsApp vinculada
+            is_auth = True
+        elif clean_admin:
             if sender_phone == clean_admin or sender_phone.endswith(clean_admin[-8:]) or clean_admin.endswith(sender_phone[-8:]):
                 is_auth = True
         else:
             is_auth = True
 
         if not is_auth:
-            logger.warning(f"Intento de comando de pago no autorizado desde {sender_phone}")
+            logger.warning(f"Intento de comando administrativo no autorizado desde {sender_phone}")
             return JSONResponse({"status": "ignored", "reason": "unauthorized_admin_command"})
 
         if admin_approval_match:
             pid = int(admin_approval_match.group(1))
-            res = database.approve_pending_payment(pid, admin_user=f"WhatsApp Admin (+{sender_phone})")
+            custom_amt_str = admin_approval_match.group(2)
+            custom_amt = float(custom_amt_str.replace(",", ".")) if custom_amt_str else None
+
+            res = database.approve_pending_payment(
+                pid,
+                admin_user=f"WhatsApp Admin (+{sender_phone})",
+                custom_amount=custom_amt
+            )
             if res.get("success"):
                 p = res.get("payment", {})
                 amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
@@ -253,8 +271,8 @@ async def whatsapp_webhook(request: Request):
                     f"✅ *PAGO #P{pid} APROBADO EXITOSAMENTE*\n\n"
                     f"• Cliente: *{p.get('client_name')}*\n"
                     f"• Servicio: *{p.get('platform') or 'Streaming'}*\n"
-                    f"• Monto: *{amt_fmt}*\n"
-                    f"• Estado: Renovado/activado y asentado en Finanzas."
+                    f"• Monto Acreditado: *{amt_fmt}*\n"
+                    f"• Estado: Renovado/activado y asentado en Finanzas & MCP."
                 )
                 await whatsapp_client.send_text_message(sender_phone, admin_ack)
 
@@ -274,7 +292,7 @@ async def whatsapp_webhook(request: Request):
                     f"• Cliente: <b>{p.get('client_name')}</b>\n"
                     f"• Servicio: <b>{p.get('platform')}</b>\n"
                     f"• Monto: <b>{amt_fmt}</b>\n"
-                    f"• Comando ejecutado por el administrador desde WhatsApp privado."
+                    f"• Comando ejecutado por el administrador desde WhatsApp."
                 )
                 return JSONResponse({"status": "ok", "action": "payment_approved", "payment_id": pid})
             else:
@@ -312,6 +330,88 @@ async def whatsapp_webhook(request: Request):
                 await whatsapp_client.send_text_message(
                     sender_phone,
                     f"⚠️ Error al denegar el pago #P{pid}: {res.get('error')}"
+                )
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_fallen_match:
+            target_q = (admin_fallen_match.group(1) or "").strip()
+            # Si el admin no especificó argumento
+            if not target_q and (sender_phone == clean_admin or from_me):
+                fallen_list = database.get_fallen_accounts()
+                lines = ["🚨 *GESTIÓN INSTANTÁNEA DE CUENTAS CAÍDAS (/caida)*\n"]
+                if fallen_list:
+                    lines.append(f"Hay *{len(fallen_list)}* cuenta(s) caídas pendientes de reemplazo:")
+                    for f_item in fallen_list[:5]:
+                        lines.append(f"• ID #{f_item['id']} ({f_item['platform']}): `{f_item['email']}` - Cliente: *{f_item.get('client_name') or 'Sin cliente'}*")
+                    lines.append("\nPara reemplazar una cuenta por una libre al instante, escribe:")
+                    lines.append("👉 `/caida <ID>` (ej: `/caida 15`)")
+                    lines.append("👉 `/caida <correo>`")
+                else:
+                    lines.append("No hay cuentas caídas pendientes en este momento.")
+                    lines.append("\nPuedes forzar el reemplazo de cualquier cuenta o cliente escribiendo:")
+                    lines.append("👉 `/caida <ID>`")
+                    lines.append("👉 `/caida <correo>`")
+                    lines.append("👉 `/caida <nombre_cliente>`")
+                    lines.append("👉 `/caida <teléfono>`")
+                lines.append("\n💡 El sistema buscará stock libre de la plataforma, reasignará la cuenta y enviará los nuevos datos al cliente.")
+                await whatsapp_client.send_text_message(sender_phone, "\n".join(lines))
+                return JSONResponse({"status": "ok", "action": "fallen_help_sent"})
+
+            target_search = target_q if target_q else sender_phone
+            res = database.report_and_auto_replace_account(target_search, reason=f"Comando WhatsApp Admin (+{sender_phone})")
+            if res.get("replaced"):
+                new_a = res["new_account"]
+                old_a = res["old_account"]
+                c_phone = res.get("clean_phone")
+
+                # Enviar automáticamente nuevas credenciales al cliente
+                if c_phone:
+                    await whatsapp_client.send_text_message(c_phone, res["whatsapp_message"], delay_seconds=1.0)
+
+                admin_ack = (
+                    f"✅ *CUENTA REEMPLAZADA EN 1 CLIC EXITOSAMENTE*\n\n"
+                    f"• Cliente: *{res.get('client_name')}*\n"
+                    f"• Plataforma: *{res.get('platform')}*\n"
+                    f"• Cuenta anterior (caída): `{old_a.get('email')}`\n"
+                    f"• Nueva cuenta: `{new_a.get('email')}`\n"
+                    f"• Clave: `{new_a.get('password')}`" + (f"\n• Perfil: {new_a.get('profile_name')}" if new_a.get('profile_name') else "") + (f" [PIN: {new_a.get('profile_pin')}]" if new_a.get('profile_pin') else "") + "\n"
+                    f"• Vencimiento conservado: `{new_a.get('expiry_date')}`\n\n"
+                    f"📲 Los nuevos datos de acceso ya fueron enviados por WhatsApp al cliente."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+
+                await send_telegram_message(
+                    f"🔄 <b>REEMPLAZO EN 1 CLIC EJECUTADO (WHATSAPP ADMIN)</b>\n\n"
+                    f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                    f"• Plataforma: <b>{res.get('platform')}</b>\n"
+                    f"• Nueva Cuenta: <code>{new_a.get('email')}</code>\n"
+                    f"• Clave: <code>{new_a.get('password')}</code>\n"
+                    f"• Ejecutado por administrador vía WhatsApp."
+                )
+                return JSONResponse({"status": "ok", "action": "account_replaced", "details": res})
+            elif res.get("out_of_stock"):
+                old_a = res["old_account"]
+                admin_ack = (
+                    f"⚠️ *ATENCIÓN: SIN STOCK LIBRE PARA REEMPLAZO*\n\n"
+                    f"• Cliente: *{res.get('client_name')}*\n"
+                    f"• Plataforma: *{res.get('platform')}*\n"
+                    f"• Cuenta: `{old_a.get('email')}`\n\n"
+                    f"La cuenta fue marcada como *CAÍDA*. No se encontró stock libre en el inventario para asignarle un reemplazo automático.\n"
+                    f"Por favor ingresa al panel web para agregar cuentas libres de esta plataforma."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+                await send_telegram_message(
+                    f"🚨 <b>ALERTA: CAÍDA SIN STOCK LIBRE</b>\n\n"
+                    f"• Cliente: <b>{res.get('client_name')}</b>\n"
+                    f"• Plataforma: <b>{res.get('platform')}</b>\n"
+                    f"• Cuenta: <code>{old_a.get('email')}</code>\n"
+                    f"• Se requiere recarga urgente de stock libre."
+                )
+                return JSONResponse({"status": "ok", "action": "out_of_stock", "details": res})
+            else:
+                await whatsapp_client.send_text_message(
+                    sender_phone,
+                    f"⚠️ No se encontró ninguna cuenta activa o caída para '{target_search}'."
                 )
                 return JSONResponse({"status": "error", "error": res.get("error")})
 
@@ -748,6 +848,99 @@ async def whatsapp_webhook(request: Request):
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "catalog_sent", "platform_filter": target_platform})
+
+    # REGLA E: Gestión y Reporte Instantáneo de Cuentas Caídas por el Cliente (/caida, /reemplazo, soporte)
+    fallen_intents = [
+        "/caida", "/reemplazo", "/soporte", "caida", "caída", "reemplazo",
+        "se cayo", "se cayó", "se me cayo", "se me cayó",
+        "cuenta caida", "cuenta caída", "mi cuenta se cayo", "mi cuenta se cayó",
+        "no anda la cuenta", "no me anda la cuenta", "no funciona la cuenta",
+        "no anda mi cuenta", "no funciona mi cuenta",
+        "no anda netflix", "se cayo netflix", "se cayó netflix",
+        "no anda disney", "se cayo disney", "se cayó disney",
+        "no anda max", "se cayo max", "se cayó max",
+        "no anda prime", "se cayo prime", "se cayó prime",
+        "clave incorrecta", "contraseña incorrecta", "contrasena incorrecta",
+        "no me deja entrar", "no puedo entrar", "cambiaron la clave",
+        "cambiaron la contrasena", "cambiaron la contraseña",
+        "pantalla ocupada", "limite de pantallas", "límite de pantallas",
+        "actualizar hogar", "hogar netflix"
+    ]
+    if any(k in text_lower for k in fallen_intents):
+        active_accs = client_profile.get("active_accounts", []) if client_profile else []
+        if not active_accs:
+            reply = (
+                f"¡Hola {client_name}! En este momento no registramos una suscripción activa asociada a tu número en el sistema. "
+                f"Si contrataste con otro nombre o correo, indícanoslo por favor para verificar tu servicio."
+            )
+            await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+            return JSONResponse({"status": "ok", "action": "no_active_for_replacement"})
+
+        target_account = None
+        if len(active_accs) == 1:
+            target_account = active_accs[0]
+        else:
+            for acc in active_accs:
+                plat_slug = acc["platform"].lower()
+                if any(slug in text_lower for slug in plat_slug.split()):
+                    target_account = acc
+                    break
+
+        if not target_account:
+            lines = [
+                f"🛠️ ¡Hola {client_name}! Vemos que tienes varios servicios activos con nosotros:\n"
+            ]
+            for a in active_accs:
+                lines.append(f"• *{a['platform']}* (`{a['email']}`)")
+            lines.append(f"\nPor favor indícanos cuál presenta inconvenientes respondiendo con el nombre del servicio o escribiendo: */caida <plataforma>*")
+            reply = "\n".join(lines)
+            await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+            return JSONResponse({"status": "ok", "action": "multiple_accounts_clarification"})
+
+        res = database.report_and_auto_replace_account(
+            str(target_account["id"]),
+            reason=f"Reporte de cliente vía WhatsApp ({text[:50]})",
+            platform_filter=target_account.get("platform")
+        )
+
+        if res.get("replaced"):
+            await whatsapp_client.send_text_message(sender_phone, res["whatsapp_message"], delay_seconds=2.0)
+
+            new_a = res["new_account"]
+            await send_telegram_message(
+                f"⚡ <b>AUTO-REEMPLAZO INSTANTÁNEO A CLIENTE</b>\n\n"
+                f"• Cliente: <b>{client_name}</b> (<code>+{sender_phone}</code>)\n"
+                f"• Servicio: <b>{res.get('platform')}</b>\n"
+                f"• Motivo: Reporte de caída de cliente\n"
+                f"• Nueva Cuenta: <code>{new_a.get('email')}</code>\n"
+                f"• Clave: <code>{new_a.get('password')}</code>\n"
+                f"• Entregada automáticamente por WhatsApp."
+            )
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+            return JSONResponse({"status": "ok", "action": "client_auto_replacement_success", "details": res})
+
+        elif res.get("out_of_stock"):
+            await whatsapp_client.send_text_message(sender_phone, res["whatsapp_message"], delay_seconds=2.0)
+
+            await send_telegram_message(
+                f"🚨 <b>CLIENTE REPORTÓ CAÍDA - ¡SIN STOCK LIBRE!</b>\n\n"
+                f"• Cliente: <b>{client_name}</b> (<code>+{sender_phone}</code>)\n"
+                f"• Plataforma: <b>{res.get('platform')}</b>\n"
+                f"• Cuenta: <code>{target_account.get('email')}</code>\n"
+                f"• Mensaje del cliente: <i>\"{text}\"</i>\n"
+                f"• Se notificó al cliente que se está gestionando la reposición con urgencia."
+            )
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+            return JSONResponse({"status": "ok", "action": "client_auto_replacement_out_of_stock", "details": res})
+        else:
+            reply = (
+                f"¡Hola {client_name}! Hemos registrado tu consulta. Nuestro equipo técnico revisará el estado de tu servicio a la brevedad."
+            )
+            await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+            return JSONResponse({"status": "ok", "action": "client_report_fallback"})
 
     return JSONResponse({"status": "ok", "action": "none"})
 

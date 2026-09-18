@@ -460,13 +460,215 @@ def get_active_accounts() -> List[Dict[str, Any]]:
         conn.close()
 
 def get_expiring_streaming_accounts(days_window: int = 2) -> List[Dict[str, Any]]:
+    """
+    Retorna cuentas activas que vencen en la ventana especificada.
+    PROTECCIÓN ANTI-ZOMBIE: Solo incluye cuentas cuyo vencimiento esté entre HOY (0) y days_window.
+    Excluye cuentas con vencimiento negativo (ya pasadas) para no spamear a ex-clientes.
+    """
     all_active = get_active_accounts()
     expiring = []
     for a in all_active:
         d = a.get("days_remaining")
-        if d is not None and d <= days_window:
+        if d is not None and 0 <= d <= days_window:
             expiring.append(a)
     return expiring
+
+def get_due_today_unpaid_accounts() -> List[Dict[str, Any]]:
+    """Retorna cuentas activas que vencen estrictamente HOY (days_remaining == 0) y que siguen impagas."""
+    all_active = get_active_accounts()
+    due_today = []
+    for a in all_active:
+        if a.get("days_remaining") == 0 and a.get("payment_status") != "pagado":
+            due_today.append(a)
+    return due_today
+
+def mark_overdue_accounts_for_password_change(overdue_days_threshold: int = 1) -> List[Dict[str, Any]]:
+    """
+    Pone en estado 'por_cambiar_clave' las cuentas que vencieron hace más de overdue_days_threshold días y no pagaron.
+    Frena definitivamente los mensajes diarios al cliente y coloca la cuenta en la lista prioritaria de cambio de clave.
+    """
+    conn = get_connection()
+    all_active = get_active_accounts()
+    changed = []
+    try:
+        with conn:
+            for a in all_active:
+                d = a.get("days_remaining")
+                if d is not None and d <= -overdue_days_threshold and a.get("payment_status") != "pagado":
+                    acc_id = a["id"]
+                    conn.execute("""
+                        UPDATE streaming_accounts
+                        SET status = 'por_cambiar_clave', updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ?
+                    """, (acc_id,))
+                    a["status"] = "por_cambiar_clave"
+                    changed.append(a)
+        return changed
+    finally:
+        conn.close()
+
+def get_accounts_pending_password_change() -> List[Dict[str, Any]]:
+    """Retorna cuentas con corte pendiente o en estado 'por_cambiar_clave'."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+            FROM streaming_accounts a
+            LEFT JOIN clients c ON a.client_id = c.id
+            WHERE a.status = 'por_cambiar_clave'
+            ORDER BY a.expiry_date ASC, a.id ASC
+        """).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+def mark_account_for_password_change(account_id_or_email: str) -> Dict[str, Any]:
+    """Pone una cuenta individual en estado 'por_cambiar_clave' para cortar alertas y proceder a baja/cambio de contraseña."""
+    conn = get_connection()
+    q = str(account_id_or_email).strip()
+    try:
+        with conn:
+            row = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) = lower(?) OR a.id = ?
+                LIMIT 1
+            """, (q, int(q) if q.isdigit() else -1)).fetchone()
+            if not row:
+                return {"success": False, "error": f"Cuenta '{q}' no encontrada."}
+            acc = dict(row)
+            conn.execute("""
+                UPDATE streaming_accounts
+                SET status = 'por_cambiar_clave', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (acc["id"],))
+            return {
+                "success": True,
+                "account_id": acc["id"],
+                "email": acc["email"],
+                "platform": acc["platform"],
+                "client_name": acc.get("client_name"),
+                "whatsapp": acc.get("whatsapp")
+            }
+    finally:
+        conn.close()
+
+def rotate_master_password_and_broadcast(
+    email_or_account_id: str,
+    new_password: str,
+    unpaid_account_id: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Actualiza la contraseña de la cuenta madre y, si es compartida por perfiles:
+    1. Si se especifica unpaid_account_id, libera ese perfil a stock libre ('libre').
+    2. Actualiza la contraseña en todos los perfiles de ese correo.
+    3. Genera los datos de los demás clientes activos para notificarles su nueva contraseña por WhatsApp.
+    """
+    conn = get_connection()
+    q = str(email_or_account_id).strip()
+    clean_pwd = new_password.strip()
+    if not clean_pwd:
+        return {"success": False, "error": "La nueva contraseña no puede estar vacía."}
+
+    try:
+        with conn:
+            # 1. Identificar la cuenta base
+            base_row = conn.execute("""
+                SELECT * FROM streaming_accounts
+                WHERE lower(email) = lower(?) OR id = ?
+                LIMIT 1
+            """, (q, int(q) if q.isdigit() else -1)).fetchone()
+
+            if not base_row:
+                return {"success": False, "error": f"No se encontró ninguna cuenta con '{q}'"}
+
+            target_email = base_row["email"].strip()
+            target_platform = base_row["platform"].strip()
+
+            # 2. Obtener todos los perfiles asociados a este correo y plataforma
+            all_profiles = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) = lower(?) AND lower(a.platform) = lower(?)
+            """, (target_email, target_platform)).fetchall()
+
+            profile_list = [dict(p) for p in all_profiles]
+            is_shared = len(profile_list) > 1 or any(p.get("profile_name") for p in profile_list)
+
+            # 3. Actualizar la contraseña en todas las filas de esa cuenta madre
+            conn.execute("""
+                UPDATE streaming_accounts
+                SET password = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE lower(email) = lower(?) AND lower(platform) = lower(?)
+            """, (clean_pwd, target_email, target_platform))
+
+            # 4. Si se especificó el perfil impago que no renovó, liberarlo
+            freed_profile = None
+            if unpaid_account_id:
+                conn.execute("""
+                    UPDATE streaming_accounts
+                    SET status = 'libre', client_id = NULL, payment_status = 'pagado',
+                        debt_balance = 0.0, expiry_date = '', last_alert_sent = '',
+                        notes = 'Liberada por falta de pago (Rotación de contraseña)',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (unpaid_account_id,))
+                for p in profile_list:
+                    if p["id"] == unpaid_account_id:
+                        p["status"] = "libre"
+                        p["client_id"] = None
+                        freed_profile = p
+                        break
+
+            # 5. Detectar co-usuarios activos que deben recibir la nueva credencial
+            active_co_users = []
+            for p in profile_list:
+                # Omitir el perfil que fue dado de baja/liberado
+                if unpaid_account_id and p["id"] == unpaid_account_id:
+                    continue
+                # Si está ocupada y tiene cliente y teléfono
+                if p.get("status") == "ocupada" and p.get("client_id"):
+                    c_name = p.get("client_name") or "Cliente"
+                    raw_phone = p.get("client_whatsapp") or p.get("whatsapp") or ""
+                    clean_phone = re.sub(r'\\D', '', str(raw_phone))
+                    pin_info = f" [PIN: {p.get('profile_pin')}]" if p.get("profile_pin") else ""
+
+                    wa_msg = (
+                        f"🔐 *¡Hola {c_name}!* Te informamos que por mantenimiento y seguridad hemos actualizado la contraseña de tu cuenta de *{target_platform}*.\n\n"
+                        f"✨ *Tus Nuevos Accesos:*\n"
+                        f"📺 *Servicio:* {target_platform}\n"
+                        f"📧 *Correo:* `{target_email}`\n"
+                        f"🔑 *Nueva Contraseña:* `{clean_pwd}`\n"
+                        f"👤 *Tu Perfil:* {p.get('profile_name') or 'Principal'}{pin_info}\n"
+                        f"📅 *Tu servicio continúa activo normalmente hasta el:* {p.get('expiry_date') or 'fin de tu ciclo'}\n\n"
+                        f"📌 *Importante:* Recuerda no modificar la clave ni el correo dentro de la aplicación. ¡Muchas gracias por tu preferencia! 🙌🍿"
+                    )
+                    active_co_users.append({
+                        "account_id": p["id"],
+                        "client_name": c_name,
+                        "clean_phone": clean_phone,
+                        "platform": target_platform,
+                        "email": target_email,
+                        "profile_name": p.get("profile_name", ""),
+                        "profile_pin": p.get("profile_pin", ""),
+                        "expiry_date": p.get("expiry_date", ""),
+                        "whatsapp_message": wa_msg
+                    })
+
+            return {
+                "success": True,
+                "email": target_email,
+                "platform": target_platform,
+                "new_password": clean_pwd,
+                "total_profiles": len(profile_list),
+                "is_shared": is_shared,
+                "freed_profile": freed_profile,
+                "active_co_users": active_co_users
+            }
+    finally:
+        conn.close()
 
 def renew_account(account_id_or_email: str, new_expiry_date: str) -> bool:
     conn = get_connection()

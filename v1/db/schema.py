@@ -457,5 +457,53 @@ def init_db():
                 conn.execute("ALTER TABLE whatsapp_api_settings ADD COLUMN gemini_api_key TEXT DEFAULT ''")
             except Exception:
                 pass
+
+            try:
+                conn.execute("ALTER TABLE whatsapp_api_settings ADD COLUMN expiry_cutoff_hour INTEGER DEFAULT 17")
+            except Exception:
+                pass
+
+            # Migración: Columnas para Rollback, Pagos Parciales y Deuda en streaming_accounts
+            try:
+                conn.execute("ALTER TABLE streaming_accounts ADD COLUMN previous_expiry_date TEXT DEFAULT ''")
+            except Exception:
+                pass
+
+            try:
+                conn.execute("ALTER TABLE streaming_accounts ADD COLUMN debt_balance REAL DEFAULT 0.0")
+            except Exception:
+                pass
+
+            # Migración: Columnas para Pagos Parciales y Reversión en payments
+            try:
+                conn.execute("ALTER TABLE payments ADD COLUMN is_partial INTEGER DEFAULT 0")
+            except Exception:
+                pass
+
+            try:
+                conn.execute("ALTER TABLE payments ADD COLUMN status TEXT DEFAULT 'completed'")
+            except Exception:
+                pass
+
+            try:
+                conn.execute("ALTER TABLE payments ADD COLUMN remaining_balance REAL DEFAULT 0.0")
+            except Exception:
+                pass
+
+            # Migración: Columnas para Seguimiento y Rollback en fallen_reports
+            try:
+                conn.execute("ALTER TABLE fallen_reports ADD COLUMN reassigned_account_id INTEGER DEFAULT NULL")
+            except Exception:
+                pass
+
+            try:
+                conn.execute("ALTER TABLE fallen_reports ADD COLUMN last_followup_at TIMESTAMP DEFAULT NULL")
+            except Exception:
+                pass
+
+            try:
+                conn.execute("ALTER TABLE fallen_reports ADD COLUMN followup_count INTEGER DEFAULT 0")
+            except Exception:
+                pass
     finally:
         conn.close()

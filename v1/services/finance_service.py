@@ -20,7 +20,7 @@ def get_financial_balance(period: str = "mes_actual") -> Dict[str, Any]:
                     COALESCE(SUM(profit), 0.0) as net_profit,
                     COUNT(*) as total_transactions
                 FROM payments
-                WHERE created_at LIKE ?
+                WHERE created_at LIKE ? AND (status IS NULL OR status != 'reversed')
             """, (month_str,)).fetchone()
 
             total_income = float(res["total_income"])

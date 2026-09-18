@@ -887,10 +887,11 @@
                   <th>Fecha</th>
                   <th>Cliente</th>
                   <th>Plataforma</th>
-                  <th>Tipo</th>
                   <th>Monto</th>
+                  <th>Costo</th>
                   <th>Ganancia</th>
-                  <th>Detalle</th>
+                  <th>Método</th>
+                  <th>Acción</th>
                 </tr>
               </thead>
               <tbody>
@@ -936,6 +937,13 @@
             <div>
               <label class="font-label-code text-xs text-amber-300 font-semibold">WhatsApp Privado del Admin:</label>
               <input type="text" name="admin_whatsapp" value="{{ADMIN_WHATSAPP}}" placeholder="+5491166099952" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-amber-300" title="Número donde recibirás los avisos de comprobantes y comandos /pagoapro">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-amber-300 font-semibold">Hora de Corte Vencimiento (2° Aviso):</label>
+              <div class="flex items-center gap-2">
+                <input type="number" name="expiry_cutoff_hour" min="0" max="23" value="{{WA_EXPIRY_CUTOFF_HOUR}}" class="w-20 h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-center font-bold text-amber-300" title="Hora a la que se envía el 2° recordatorio el mismo día de vencimiento si el cliente aún no pagó">
+                <span class="text-xs text-on-surface-variant font-mono">:00 hs</span>
+              </div>
             </div>
             <div class="sm:col-span-2">
               <label class="font-label-code text-xs text-purple-300 font-semibold">Google Gemini API Key (IA Visión para Comprobantes):</label>
@@ -1663,6 +1671,87 @@
     </div>
   </div>
 
+  <!-- Modal: Rotar Contraseña y Notificar Co-Usuarios -->
+  <div id="modal-rotate-password" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-pink-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="rotate-modal-title" class="text-base font-bold text-pink-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">lock_reset</span> Rotar Contraseña y Notificar
+        </h3>
+        <button onclick="closeRotatePasswordModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <form id="rotate-password-form" action="/api/accounts/rotate-password" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" id="rotate-email-input" name="email_or_account_id" value="">
+        <input type="hidden" id="rotate-unpaid-id-input" name="unpaid_account_id" value="">
+        
+        <p class="text-xs text-on-surface-variant">
+          Cuenta: <b id="rotate-acc-label" class="text-on-surface font-mono"></b>
+        </p>
+        <div class="bg-surface-container p-2.5 rounded text-xs text-amber-300">
+          💡 <b>Multi-Perfil Inteligente:</b> Si otros clientes comparten esta cuenta, el sistema actualizará la contraseña en todos los perfiles y les enviará automáticamente sus nuevos accesos por WhatsApp. El perfil impago quedará libre a stock.
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Nueva Contraseña Maestra:</label>
+          <input type="text" name="new_password" required placeholder="NuevaClave2026*" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-pink-300 font-bold">
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeRotatePasswordModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-pink-600 text-white text-xs font-semibold rounded hover:bg-pink-700">Rotar y Notificar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Registrar Pago Parcial / Seña -->
+  <div id="modal-partial-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-amber-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="partial-modal-title" class="text-base font-bold text-amber-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">payments</span> Registrar Pago Parcial / Seña
+        </h3>
+        <button onclick="closePartialPaymentModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <form id="partial-payment-form" action="/api/accounts/partial-payment" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" id="partial-account-id-input" name="account_id" value="">
+        
+        <p class="text-xs text-on-surface-variant">
+          Cliente: <b id="partial-client-label" class="text-on-surface"></b> | Servicio: <b id="partial-platform-label" class="text-on-surface"></b>
+        </p>
+
+        <div id="partial-debt-banner" class="bg-surface-container p-2 rounded text-xs text-amber-300">
+          Saldo actual: <b id="partial-debt-amount">$0</b>
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Monto Abonado ($ ARS):</label>
+          <input type="number" step="any" name="amount" required placeholder="Ej: 3500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-emerald-400 font-bold">
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Medio de Pago:</label>
+          <select name="payment_method" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <option value="Transferencia Bancaria">Transferencia Bancaria</option>
+            <option value="Mercado Pago">Mercado Pago</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="USDT / Cripto">USDT / Cripto</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Nota / Referencia (opcional):</label>
+          <input type="text" name="notes" placeholder="Seña entrega 1ra parte" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closePartialPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-amber-600 text-white text-xs font-semibold rounded hover:bg-amber-700">Guardar Pago Parcial</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Vanilla JavaScript: View Switcher, Ficha 360, Filtros y Modales -->
   <script>
     // 1. Tabbed Multi-View Switcher Logic con Persistencia y Soporte de Hash
@@ -2040,6 +2129,29 @@
       document.getElementById('modal-reject-payment').style.display = 'none';
     }
 
+    function openRotatePasswordModal(email, platform, unpaidAccountId) {
+      document.getElementById('rotate-email-input').value = email;
+      document.getElementById('rotate-unpaid-id-input').value = unpaidAccountId || '';
+      document.getElementById('rotate-acc-label').innerText = `${platform} (${email})`;
+      document.getElementById('modal-rotate-password').style.display = 'flex';
+    }
+
+    function closeRotatePasswordModal() {
+      document.getElementById('modal-rotate-password').style.display = 'none';
+    }
+
+    function openPartialPaymentModal(accountId, clientName, platform, currentDebt) {
+      document.getElementById('partial-account-id-input').value = accountId;
+      document.getElementById('partial-client-label').innerText = clientName;
+      document.getElementById('partial-platform-label').innerText = platform;
+      document.getElementById('partial-debt-amount').innerText = currentDebt > 0 ? ('$' + currentDebt) : 'Tarifa estándar';
+      document.getElementById('modal-partial-payment').style.display = 'flex';
+    }
+
+    function closePartialPaymentModal() {
+      document.getElementById('modal-partial-payment').style.display = 'none';
+    }
+
     // Tecla Escape para cerrar modales
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -2051,6 +2163,8 @@
         closeCsvModal();
         closeReceiptModal();
         closeRejectPaymentModal();
+        closeRotatePasswordModal();
+        closePartialPaymentModal();
         closeMobileSidebar();
       }
     });

@@ -1,4 +1,5 @@
 import urllib.parse
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Request, Form, HTTPException
@@ -9,6 +10,7 @@ from core.security import verify_session_cookie
 from telegram_bot import send_telegram_message, format_and_send_stock_alert
 from scheduler import check_and_send_alerts, check_and_send_stock_alerts
 
+logger = logging.getLogger("routers.accounts")
 router = APIRouter()
 
 @router.post("/api/collect-payment/{account_id}")
@@ -194,6 +196,165 @@ async def dismiss_fallen_report_api(report_id: int, request: Request):
     username = user.get("username", "admin")
     database.dismiss_fallen_report(report_id, reason="Descartado desde panel web", admin_user=f"Web ({username})")
     return RedirectResponse(url="/?msg=fallen_dismissed#fallen-reports", status_code=303)
+
+
+@router.post("/api/fallen-reports/rollback/{report_id}")
+async def rollback_fallen_report_api(report_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+
+    res = database.rollback_fallen_report_replacement(report_id)
+    if res.get("success"):
+        await send_telegram_message(
+            f"🔄 <b>REEMPLAZO #C{report_id} DESHECHO (PANEL WEB)</b>\n\n"
+            f"• Cuenta anterior reactivada: #{res.get('old_account_id')}\n"
+            f"• Cuenta asignada devuelta a stock: #{res.get('reassigned_account_id')}\n"
+            f"• Operador: <b>{username}</b>"
+        )
+        return RedirectResponse(url="/?msg=report_rolled_back#fallen-reports", status_code=303)
+    else:
+        return RedirectResponse(url=f"/?err={urllib.parse.quote(res.get('error', 'Error'))}#fallen-reports", status_code=303)
+
+
+@router.post("/api/accounts/rotate-password")
+async def rotate_password_api(
+    request: Request,
+    email_or_account_id: str = Form(...),
+    new_password: str = Form(...),
+    unpaid_account_id: Optional[str] = Form(None)
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+
+    unpaid_id = int(unpaid_account_id.strip()) if (unpaid_account_id and unpaid_account_id.strip().isdigit()) else None
+    res = database.rotate_master_password_and_broadcast(
+        email_or_account_id=email_or_account_id.strip(),
+        new_password=new_password.strip(),
+        unpaid_account_id=unpaid_id
+    )
+
+    if res.get("success"):
+        active_co_users = res.get("active_co_users", [])
+        notified_count = 0
+        for co in active_co_users:
+            if co.get("clean_phone") and co.get("whatsapp_message"):
+                try:
+                    import whatsapp_client
+                    await whatsapp_client.send_text_message(co["clean_phone"], co["whatsapp_message"], delay_seconds=1.0)
+                    notified_count += 1
+                except Exception as e:
+                    logger.error(f"Error notificando nueva contraseña a {co.get('client_name')}: {e}")
+
+        await send_telegram_message(
+            f"🔐 <b>ROTACIÓN DE CONTRASEÑA EJECUTADA (PANEL WEB)</b>\n\n"
+            f"• Cuenta: <code>{res.get('email')}</code> ({res.get('platform')})\n"
+            f"• Nueva clave: <code>{res.get('new_password')}</code>\n"
+            f"• Perfiles actualizados: <b>{res.get('total_profiles')}</b>\n"
+            + (f"• Perfil impago liberado: #{unpaid_id}\n" if unpaid_id else "")
+            + f"• Co-usuarios notificados por WhatsApp: <b>{notified_count}</b>\n"
+            f"• Operador: <b>{username}</b>"
+        )
+        return RedirectResponse(url="/?msg=password_rotated#accounts", status_code=303)
+    else:
+        return RedirectResponse(url=f"/?err={urllib.parse.quote(res.get('error', 'Error'))}#accounts", status_code=303)
+
+
+@router.post("/api/accounts/partial-payment")
+async def partial_payment_api(
+    request: Request,
+    account_id: str = Form(...),
+    amount: float = Form(...),
+    payment_method: Optional[str] = Form("Transferencia"),
+    notes: Optional[str] = Form("")
+):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+
+    res = database.register_partial_payment(
+        email_or_id=account_id.strip(),
+        amount=float(amount),
+        payment_method=payment_method or "Transferencia",
+        notes=f"{notes.strip()} (Registrado por {username})".strip()
+    )
+    if res.get("success"):
+        c_phone = res.get("client_whatsapp")
+        c_name = res.get("client_name") or "Cliente"
+        paid_fmt = database.format_ars(amount)
+        rem_fmt = database.format_ars(res.get("remaining_debt", 0.0))
+
+        if c_phone:
+            try:
+                import whatsapp_client
+                c_clean = database.clean_whatsapp_phone(c_phone)
+                if c_clean:
+                    c_msg = (
+                        f"¡Hola {c_name}! 🙌 Registramos tu pago parcial de *{paid_fmt}* para tu suscripción de *{res.get('platform')}*.\n\n"
+                        f"📌 Tu saldo pendiente restante es de: *{rem_fmt}*.\n"
+                        f"¡Muchas gracias! Cuando completes el saldo total se extenderá tu ciclo completo. ✨"
+                    )
+                    await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+            except Exception:
+                pass
+
+        await send_telegram_message(
+            f"💵 <b>PAGO PARCIAL REGISTRADO (PANEL WEB)</b>\n\n"
+            f"• Cliente: <b>{c_name}</b>\n"
+            f"• Servicio: <b>{res.get('platform')}</b>\n"
+            f"• Monto abonado: <b>{paid_fmt}</b>\n"
+            f"• Saldo restante: <b>{rem_fmt}</b>\n"
+            f"• Registrado por: <b>{username}</b>"
+        )
+        return RedirectResponse(url="/?msg=partial_payment_saved#accounts", status_code=303)
+    else:
+        return RedirectResponse(url=f"/?err={urllib.parse.quote(res.get('error', 'Error'))}#accounts", status_code=303)
+
+
+@router.post("/api/accounts/mark-baja/{account_id}")
+async def mark_baja_api(account_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+
+    res = database.mark_account_for_password_change(str(account_id))
+    if res.get("success"):
+        await send_telegram_message(
+            f"🛑 <b>CUENTA #{account_id} MARCADA PARA BAJA (PANEL WEB)</b>\n\n"
+            f"• Servicio: <b>{res.get('platform')}</b> (<code>{res.get('email')}</code>)\n"
+            f"• Estado: <code>por_cambiar_clave</code> (alertas automáticas detenidas)\n"
+            f"• Operador: <b>{username}</b>"
+        )
+        return RedirectResponse(url="/?msg=marked_for_baja#accounts", status_code=303)
+    else:
+        return RedirectResponse(url=f"/?err={urllib.parse.quote(res.get('error', 'Error'))}#accounts", status_code=303)
+
+
+@router.post("/api/payments/reverse/{payment_id}")
+async def reverse_payment_api(payment_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user.get("username", "admin")
+
+    res = database.reverse_customer_payment(payment_id, reason=f"Revertido desde Panel Web ({username})")
+    if res.get("success"):
+        rev_amt = database.format_ars(res.get("reversed_amount", 0.0))
+        await send_telegram_message(
+            f"🔄 <b>COBRO #{payment_id} REVERTIDO (PANEL WEB)</b>\n\n"
+            f"• Monto Anulado: <b>{rev_amt}</b>\n"
+            f"• Cuenta #{res.get('account_id')} restaurada al vencimiento previo: <code>{res.get('restored_expiry') or 'original'}</code>\n"
+            f"• Descontado del balance financiero.\n"
+            f"• Operador: <b>{username}</b>"
+        )
+        return RedirectResponse(url="/?msg=payment_reversed#finance", status_code=303)
+    else:
+        return RedirectResponse(url=f"/?err={urllib.parse.quote(res.get('error', 'Error'))}#finance", status_code=303)
 
 
 @router.post("/api/mark-fallen/{account_id}")

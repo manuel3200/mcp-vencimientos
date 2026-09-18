@@ -140,12 +140,13 @@ def authorize_fallen_report(report_id: int, admin_user: str = "Admin") -> Dict[s
                 admin_note = f"Autorizado por {admin_user}. Reemplazo #{new_acc_id} ({new_acc.get('email')})"
                 conn.execute("""
                     UPDATE fallen_reports
-                    SET status = 'resolved', admin_notes = ?, resolved_at = CURRENT_TIMESTAMP
+                    SET status = 'resolved', admin_notes = ?, reassigned_account_id = ?, resolved_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (admin_note, report_id))
+                """, (admin_note, new_acc_id, report_id))
 
                 item["status"] = "resolved"
                 item["admin_notes"] = admin_note
+                item["reassigned_account_id"] = new_acc_id
                 return {
                     "success": True,
                     "replaced": True,
@@ -239,5 +240,114 @@ def dismiss_fallen_report(report_id: int, reason: str = "Desestimado", admin_use
                 WHERE id = ?
             """, (admin_note, report_id))
             return {"success": True, "report_id": report_id, "status": "dismissed"}
+    finally:
+        conn.close()
+
+
+def find_active_fallen_report_by_phone(phone: str) -> Optional[Dict[str, Any]]:
+    """Busca si un cliente ya tiene un reporte de caída activo ('pending' o 'waiting') para evitar duplicados."""
+    conn = get_connection()
+    clean_p = clean_whatsapp_phone(phone)
+    if not clean_p:
+        return None
+    try:
+        row = conn.execute("""
+            SELECT * FROM fallen_reports
+            WHERE sender_phone LIKE ? AND status IN ('pending', 'waiting')
+            ORDER BY id DESC LIMIT 1
+        """, (f"%{clean_p[-8:]}%",)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def record_fallen_report_followup(report_id: int, message: str) -> Dict[str, Any]:
+    """Registra una consulta de seguimiento del cliente en su reporte existente."""
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                UPDATE fallen_reports
+                SET followup_count = COALESCE(followup_count, 0) + 1,
+                    last_followup_at = CURRENT_TIMESTAMP,
+                    admin_notes = admin_notes || ' | Re-consulta: ' || ?
+                WHERE id = ?
+            """, (message.strip()[:100], report_id))
+            row = conn.execute("SELECT * FROM fallen_reports WHERE id = ?", (report_id,)).fetchone()
+            return dict(row) if row else {}
+    finally:
+        conn.close()
+
+
+def get_stale_waiting_reports(hours_threshold: float = 4.0) -> List[Dict[str, Any]]:
+    """Obtiene los reportes en espera ('waiting') que llevan más de hours_threshold horas sin resolverse."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT r.*, c.name as c_name, c.whatsapp as client_whatsapp
+            FROM fallen_reports r
+            LEFT JOIN clients c ON r.client_id = c.id
+            WHERE r.status = 'waiting'
+              AND (strftime('%s', 'now') - strftime('%s', r.created_at)) >= (? * 3600)
+            ORDER BY r.created_at ASC
+        """, (hours_threshold,)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def rollback_fallen_report_replacement(report_id: int, admin_user: str = "Admin") -> Dict[str, Any]:
+    """
+    Revierte un reemplazo de cuenta realizado por error:
+    - Devuelve la nueva cuenta asignada al stock libre ('libre').
+    - Restaura la cuenta original anterior del cliente a 'ocupada'.
+    - Marca el reporte como 'dismissed' indicando la reversión.
+    """
+    conn = get_connection()
+    try:
+        with conn:
+            rep_row = conn.execute("SELECT * FROM fallen_reports WHERE id = ?", (report_id,)).fetchone()
+            if not rep_row:
+                return {"success": False, "error": f"No se encontró el reporte #C{report_id}"}
+
+            rep = dict(rep_row)
+            if rep["status"] != "resolved":
+                return {"success": False, "error": f"El reporte #C{report_id} no está resuelto; no hay reemplazo para revertir."}
+
+            old_acc_id = rep.get("account_id")
+            new_acc_id = rep.get("reassigned_account_id")
+
+            # 1. Liberar la nueva cuenta entregada
+            if new_acc_id:
+                conn.execute("""
+                    UPDATE streaming_accounts
+                    SET status = 'libre', client_id = NULL, notes = 'Devuelta a stock (Reversión de reemplazo #C' || ? || ')',
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (report_id, new_acc_id))
+
+            # 2. Reactivar la cuenta original al cliente
+            if old_acc_id:
+                conn.execute("""
+                    UPDATE streaming_accounts
+                    SET status = 'ocupada', client_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (rep.get("client_id"), old_acc_id))
+
+            admin_note = f"REVERTIDO por {admin_user}: Cuenta #{new_acc_id} devuelta a stock y cuenta #{old_acc_id} reactivada al cliente."
+            conn.execute("""
+                UPDATE fallen_reports
+                SET status = 'dismissed', admin_notes = admin_notes || ' | ' || ?, resolved_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (admin_note, report_id))
+
+            return {
+                "success": True,
+                "report_id": report_id,
+                "old_account_id": old_acc_id,
+                "freed_account_id": new_acc_id,
+                "client_name": rep.get("client_name"),
+                "platform": rep.get("platform")
+            }
     finally:
         conn.close()

@@ -54,7 +54,8 @@ async def api_whatsapp_settings(
     gemini_api_key: Optional[str] = Form(""),
     auto_send_expiry: Optional[str] = Form(None),
     auto_send_sales: Optional[str] = Form(None),
-    auto_reply_enabled: Optional[str] = Form(None)
+    auto_reply_enabled: Optional[str] = Form(None),
+    expiry_cutoff_hour: Optional[int] = Form(17)
 ):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
@@ -67,7 +68,8 @@ async def api_whatsapp_settings(
         auto_send_sales=1 if auto_send_sales in ("1", "on", "true") else 0,
         auto_reply_enabled=1 if auto_reply_enabled in ("1", "on", "true") else 0,
         admin_whatsapp=admin_whatsapp.strip() if admin_whatsapp else "",
-        gemini_api_key=gemini_api_key.strip() if gemini_api_key else ""
+        gemini_api_key=gemini_api_key.strip() if gemini_api_key else "",
+        expiry_cutoff_hour=int(expiry_cutoff_hour or 17)
     )
     return RedirectResponse(url="/?msg=wa_settings_saved#integrations", status_code=302)
 
@@ -205,7 +207,7 @@ async def whatsapp_webhook(request: Request):
         return JSONResponse({"status": "ignored", "reason": "invalid_phone"})
 
     # Verificar si es un comando administrativo o comando de caída/autorización
-    is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer)', text_lower))
+    is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|pagoparcial|parcial|revertir_pago|revertirpago|anularpago|deshacer_cambio|deshacercambio|baja|cortar|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer)', text_lower))
 
     # Si es from_me (mensaje saliente propio) y NO es un comando administrativo, ignorar para evitar bucles
     if from_me and not is_admin_cmd:
@@ -231,14 +233,21 @@ async def whatsapp_webhook(request: Request):
     client_profile = database.get_client_by_phone(sender_phone)
     client_name = client_profile["client"]["name"] if client_profile else push_name
 
-    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagodene_<ID>, /cambiar_<ID>, /esperar_<ID>, /caida)
+    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagoapro_<ID>_all, /pagodene_<ID>, /pagoparcial_<ID>, /revertir_pago_<ID>, /deshacer_cambio_<ID>, /baja_<ID>, /cambiar_<ID>, /esperar_<ID>, /caida)
+    admin_approval_all_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)_all', text_lower)
     admin_approval_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)(?:\s+(\d+(?:[.,]\d+)?))?', text_lower)
     admin_reject_match = re.search(r'^/(?:pagodene|rechazarpago)[_\s]+(\d+)', text_lower)
+    admin_partial_pay_match = re.search(r'^/(?:pagoparcial|parcial)[_\s]+(\d+)(?:\s+(\d+(?:[.,]\d+)?))?', text_lower)
+    admin_reverse_pay_match = re.search(r'^/(?:revertir_pago|revertirpago|anularpago)[_\s]+(\d+)', text_lower)
+    admin_undo_replace_match = re.search(r'^/(?:deshacer_cambio|deshacercambio|revertircambio)[_\s]+(\d+)', text_lower)
+    admin_baja_match = re.search(r'^/(?:baja|cortar|desactivar)[_\s]+(\d+)', text_lower)
     admin_change_match = re.search(r'^/(?:cambiar|reemplazar|autorizar)[_\s]+(\d+)', text_lower)
     admin_wait_match = re.search(r'^/(?:esperar|espera|posponer)[_\s]+(\d+)', text_lower)
     admin_fallen_match = re.search(r'^/(?:caida|reemplazo)(?:[_\s]+(.+))?', text_lower)
 
-    if (admin_approval_match or admin_reject_match or admin_change_match or admin_wait_match or
+    if (admin_approval_all_match or admin_approval_match or admin_reject_match or admin_partial_pay_match or
+        admin_reverse_pay_match or admin_undo_replace_match or admin_baja_match or
+        admin_change_match or admin_wait_match or
         (admin_fallen_match and (from_me or (settings.get("admin_whatsapp") and sender_phone.endswith(database.clean_whatsapp_phone(settings.get("admin_whatsapp"))[-8:]))))):
         admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
         clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
@@ -257,7 +266,55 @@ async def whatsapp_webhook(request: Request):
             logger.warning(f"Intento de comando administrativo no autorizado desde {sender_phone}")
             return JSONResponse({"status": "ignored", "reason": "unauthorized_admin_command"})
 
-        if admin_approval_match:
+        if admin_approval_all_match:
+            pid = int(admin_approval_all_match.group(1))
+            res = database.approve_pending_payment(
+                pid,
+                admin_user=f"WhatsApp Admin (+{sender_phone})",
+                renew_all=True
+            )
+            if res.get("success"):
+                p = res.get("payment", {})
+                renewed = res.get("renewed_accounts", [])
+                lines_renewed = "\n".join([f"• *{r['platform']}*: `{r['email']}` (Vence: {r.get('new_expiry_date')})" for r in renewed]) or "• Servicio activo renovado"
+                amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+                admin_ack = (
+                    f"✅ *PAGO #P{pid} APROBADO (MULTI-SERVICIO)*\n\n"
+                    f"• Cliente: *{p.get('client_name')}*\n"
+                    f"• Cuentas Renovadas ({len(renewed)}):\n{lines_renewed}\n\n"
+                    f"• Monto Total Acreditado: *{amt_fmt}*\n"
+                    f"• Estado: Todas renovadas y asentadas en Finanzas & MCP."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+
+                c_phone = p.get("sender_phone") or p.get("client_whatsapp")
+                if c_phone and c_phone != sender_phone:
+                    c_clean = database.clean_whatsapp_phone(c_phone)
+                    if c_clean:
+                        c_msg = (
+                            f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción de tu pago"
+                            + (f" de *{amt_fmt}*" if amt_fmt else "")
+                            + f" y la renovación exitosa de todos tus servicios activos:\n\n{lines_renewed}\n\n"
+                            f"¡Tus suscripciones quedaron al día! Muchas gracias por tu pago y preferencia. 🙌✨"
+                        )
+                        await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+
+                await send_telegram_message(
+                    f"✅ <b>PAGO #P{pid} MULTI-SERVICIO APROBADO (WHATSAPP ADMIN)</b>\n\n"
+                    f"• Cliente: <b>{p.get('client_name')}</b>\n"
+                    f"• Servicios Renovados: <b>{len(renewed)}</b>\n"
+                    f"• Monto: <b>{amt_fmt}</b>\n"
+                    f"• Renovación masiva ejecutada por admin."
+                )
+                return JSONResponse({"status": "ok", "action": "payment_approved_all", "payment_id": pid})
+            else:
+                await whatsapp_client.send_text_message(
+                    sender_phone,
+                    f"⚠️ Error al procesar multi-servicio #P{pid}: {res.get('error')}"
+                )
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_approval_match:
             pid = int(admin_approval_match.group(1))
             custom_amt_str = admin_approval_match.group(2)
             custom_amt = float(custom_amt_str.replace(",", ".")) if custom_amt_str else None
@@ -334,6 +391,143 @@ async def whatsapp_webhook(request: Request):
                     sender_phone,
                     f"⚠️ Error al denegar el pago #P{pid}: {res.get('error')}"
                 )
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_partial_pay_match:
+            target_id = int(admin_partial_pay_match.group(1))
+            amt_str = admin_partial_pay_match.group(2)
+            if not amt_str:
+                await whatsapp_client.send_text_message(
+                    sender_phone,
+                    f"⚠️ Debes indicar el monto del pago parcial.\nEjemplo: `/pagoparcial_{target_id} 3500`"
+                )
+                return JSONResponse({"status": "error", "error": "missing_amount"})
+            amt_val = float(amt_str.replace(",", "."))
+
+            # Buscar si target_id es un comprobante pendiente
+            pending_item = database.get_pending_payment(target_id)
+            acc_target = None
+            if pending_item:
+                acc_target = pending_item.get("account_id")
+                if not acc_target and pending_item.get("client_id"):
+                    c_pro = database.get_client_360_profile(pending_item["client_id"])
+                    accs = c_pro.get("active_accounts", []) if c_pro else []
+                    if accs:
+                        acc_target = accs[0]["id"]
+            if not acc_target:
+                acc_target = str(target_id)
+
+            res = database.register_partial_payment(
+                email_or_id=str(acc_target),
+                amount=amt_val,
+                payment_method="Transferencia",
+                notes=f"Pago parcial vía WhatsApp Admin (+{sender_phone}) [Ref #{target_id}]"
+            )
+            if res.get("success"):
+                if pending_item:
+                    database.reject_pending_payment(target_id, reason=f"Acreditado como pago parcial de {database.format_ars(amt_val)} (Saldo rest: {database.format_ars(res.get('remaining_debt', 0))})", admin_user=f"WhatsApp Admin (+{sender_phone})")
+
+                c_name = res.get("client_name") or "Cliente"
+                rem_fmt = database.format_ars(res.get("remaining_debt", 0.0))
+                paid_fmt = database.format_ars(amt_val)
+                admin_ack = (
+                    f"✅ *PAGO PARCIAL / SEÑA REGISTRADO*\n\n"
+                    f"• Cliente: *{c_name}*\n"
+                    f"• Servicio: *{res.get('platform')}*\n"
+                    f"• Monto Acreditado: *{paid_fmt}*\n"
+                    f"• Saldo Restante Pendiente: *{rem_fmt}*\n"
+                    f"• Estado de cuenta: *{res.get('payment_status', 'parcial').upper()}*"
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+
+                c_phone = res.get("client_whatsapp") or (pending_item.get("sender_phone") if pending_item else None)
+                if c_phone and c_phone != sender_phone:
+                    c_clean = database.clean_whatsapp_phone(c_phone)
+                    if c_clean:
+                        c_msg = (
+                            f"¡Hola {c_name}! 🙌 Registramos tu pago parcial de *{paid_fmt}* para tu suscripción de *{res.get('platform')}*.\n\n"
+                            f"📌 Tu saldo pendiente restante es de: *{rem_fmt}*.\n"
+                            f"¡Muchas gracias! Cuando completes el saldo total se extenderá tu ciclo completo. ✨"
+                        )
+                        await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+
+                await send_telegram_message(
+                    f"💵 <b>PAGO PARCIAL REGISTRADO (WHATSAPP ADMIN)</b>\n\n"
+                    f"• Cliente: <b>{c_name}</b>\n"
+                    f"• Servicio: <b>{res.get('platform')}</b>\n"
+                    f"• Monto recibido: <b>{paid_fmt}</b>\n"
+                    f"• Saldo pendiente: <b>{rem_fmt}</b>\n"
+                    f"• Asentado en finanzas."
+                )
+                return JSONResponse({"status": "ok", "action": "partial_payment_registered", "details": res})
+            else:
+                await whatsapp_client.send_text_message(sender_phone, f"⚠️ Error al registrar pago parcial: {res.get('error')}")
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_reverse_pay_match:
+            pay_id = int(admin_reverse_pay_match.group(1))
+            res = database.reverse_customer_payment(pay_id, reason=f"Revertido por Admin WhatsApp (+{sender_phone})")
+            if res.get("success"):
+                rev_amt = database.format_ars(res.get("reversed_amount", 0.0))
+                admin_ack = (
+                    f"🔄 *COBRO #{pay_id} REVERTIDO EXITOSAMENTE*\n\n"
+                    f"• Monto Anulado: *{rev_amt}*\n"
+                    f"• Cuenta #{res.get('account_id')} restaurada al vencimiento previo: `{res.get('restored_expiry') or 'original'}`\n"
+                    f"• El importe fue descontado de los reportes y métricas de ganancias."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+                await send_telegram_message(
+                    f"🔄 <b>COBRO #{pay_id} REVERTIDO (WHATSAPP ADMIN)</b>\n\n"
+                    f"• Monto anulado: <b>{rev_amt}</b>\n"
+                    f"• Vencimiento restaurado a: <code>{res.get('restored_expiry') or '-'}</code>"
+                )
+                return JSONResponse({"status": "ok", "action": "payment_reversed", "payment_id": pay_id})
+            else:
+                await whatsapp_client.send_text_message(sender_phone, f"⚠️ Error al revertir cobro #{pay_id}: {res.get('error')}")
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_undo_replace_match:
+            rid = int(admin_undo_replace_match.group(1))
+            res = database.rollback_fallen_report_replacement(rid)
+            if res.get("success"):
+                admin_ack = (
+                    f"🔄 *REEMPLAZO #C{rid} DESHECHO / REVERTIDO*\n\n"
+                    f"• Cuenta anterior reactivada: #{res.get('old_account_id')}\n"
+                    f"• Cuenta nueva devuelta a stock libre: #{res.get('reassigned_account_id')}\n"
+                    f"• Estado del reporte restaurado a 'waiting'."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+                await send_telegram_message(
+                    f"🔄 <b>REEMPLAZO #C{rid} DESHECHO (WHATSAPP ADMIN)</b>\n\n"
+                    f"• Reporte #C{rid} devuelto a estado de espera.\n"
+                    f"• Inventario restaurado a su estado original."
+                )
+                return JSONResponse({"status": "ok", "action": "replacement_undone", "report_id": rid})
+            else:
+                await whatsapp_client.send_text_message(sender_phone, f"⚠️ Error al deshacer reemplazo #C{rid}: {res.get('error')}")
+                return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_baja_match:
+            acc_target = admin_baja_match.group(1)
+            res = database.mark_account_for_password_change(acc_target)
+            if res.get("success"):
+                admin_ack = (
+                    f"🛑 *CUENTA MARCADA PARA BAJA / ROTACIÓN DE CLAVE*\n\n"
+                    f"• Cuenta #{res.get('account_id')}: `{res.get('email')}` ({res.get('platform')})\n"
+                    f"• Cliente: *{res.get('client_name') or 'Sin asignar'}*\n"
+                    f"• Estado: `por_cambiar_clave`\n"
+                    f"• Se cancelaron todos los avisos automáticos diarios al cliente.\n\n"
+                    f"💡 Puedes cambiar la contraseña desde el panel web en la pestaña 'Cuentas' y notificar a los demás usuarios si es compartida."
+                )
+                await whatsapp_client.send_text_message(sender_phone, admin_ack)
+                await send_telegram_message(
+                    f"🛑 <b>CUENTA #{res.get('account_id')} MARCADA PARA BAJA</b>\n\n"
+                    f"• Servicio: <b>{res.get('platform')}</b> (<code>{res.get('email')}</code>)\n"
+                    f"• Estado: <code>por_cambiar_clave</code>"
+                )
+                return JSONResponse({"status": "ok", "action": "account_marked_for_baja", "account_id": res.get("account_id")})
+            else:
+                await whatsapp_client.send_text_message(sender_phone, f"⚠️ Error al dar de baja cuenta: {res.get('error')}")
                 return JSONResponse({"status": "error", "error": res.get("error")})
 
         elif admin_fallen_match:
@@ -740,8 +934,13 @@ async def whatsapp_webhook(request: Request):
         client_tag = "👔 Revendedor" if "revend" in (client_profile.get("client", {}).get("client_type") or "").lower() else "👤 Consumidor Final"
 
         # Armar mensaje interactivo con botones para Telegram
+        is_multi = len(active_accs) > 1
         service_lines = ""
-        if target_acc:
+        multi_summary = ""
+        if is_multi:
+            m_list = [f"• <b>{a['platform']}</b>: <code>{a['email']}</code> ({a.get('price') or '-'} | Vence: {a.get('expiry_date') or '-'})" for a in active_accs]
+            multi_summary = f"📑 <b>Cliente con {len(active_accs)} servicios activos:</b>\n" + "\n".join(m_list) + "\n\n"
+        elif target_acc:
             price_str = target_acc.get("price") or "-"
             exp_date = target_acc.get("expiry_date") or "-"
             days_left = target_acc.get("days_remaining", 0)
@@ -754,12 +953,16 @@ async def whatsapp_webhook(request: Request):
             )
 
         client_btn = [{"text": "👤 Ficha 360°", "callback_data": f"client_{client_id_val}"}] if client_id_val else []
+        action_buttons = [
+            {"text": f"✅ Aprobar (#{payment_id})", "callback_data": f"payapp_{payment_id}"},
+            {"text": f"❌ Denegar (#{payment_id})", "callback_data": f"payrej_{payment_id}"}
+        ]
+        if is_multi:
+            action_buttons.insert(1, {"text": f"🔥 Renovar Todas ({len(active_accs)})", "callback_data": f"payapp_all_{payment_id}"})
+
         kb = {
             "inline_keyboard": [
-                [
-                    {"text": f"✅ Aprobar Pago (#P{payment_id})", "callback_data": f"payapp_{payment_id}"},
-                    {"text": f"❌ Denegar (#P{payment_id})", "callback_data": f"payrej_{payment_id}"}
-                ],
+                action_buttons,
                 client_btn + [{"text": "💬 Abrir WhatsApp", "url": f"https://wa.me/{sender_phone}"}]
             ]
         }
@@ -769,6 +972,7 @@ async def whatsapp_webhook(request: Request):
             f"• Cliente: <b>{client_name}</b> ({client_tag})\n"
             f"• WhatsApp: <code>{sender_phone}</code>\n"
             f"{service_lines}"
+            f"{multi_summary}"
             f"• Adjunto: {caption_txt}\n"
             f"{analysis_line}"
             f"• Estado: ⏳ <b>Esperando Pago / Aprobación</b>\n\n"
@@ -780,14 +984,22 @@ async def whatsapp_webhook(request: Request):
         admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
         clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
         if clean_admin and clean_admin != sender_phone:
+            multi_wa = ""
+            if is_multi:
+                m_lines = [f"  - {a['platform']}: {a['email']} (Vence: {a.get('expiry_date')})" for a in active_accs]
+                multi_wa = f"\n📑 *El cliente tiene {len(active_accs)} servicios activos:*\n" + "\n".join(m_lines) + f"\n\n👉 *Para renovar TODOS sus servicios:*\n/pagoapro_{payment_id}_all\n"
+
             admin_notice = (
                 f"🧾 *NUEVO COMPROBANTE RECIBIDO (#P{payment_id})*\n"
                 f"• *Cliente:* {client_name} (+{sender_phone})\n"
-                f"• *Servicio:* {platform_val or 'Suscripción'}" + (f" ({target_acc['email']})" if target_acc else "") + "\n"
+                f"• *Servicio Principal:* {platform_val or 'Suscripción'}" + (f" ({target_acc['email']})" if target_acc else "") + "\n"
                 f"• *Monto Detectado:* {amount_fmt_val or 'No detectado'}" + (f" | *Banco:* {bank_val}" if bank_val else "") + "\n"
-                + (f"• *Op:* #{op_val}\n" if op_val else "") +
-                f"\n👉 *Para APROBAR y renovar/activar:*\n"
+                + (f"• *Op:* #{op_val}\n" if op_val else "")
+                + multi_wa +
+                f"\n👉 *Para APROBAR y renovar servicio:*\n"
                 f"/pagoapro_{payment_id}\n\n"
+                f"👉 *Para registrar PAGO PARCIAL / SEÑA:*\n"
+                f"/pagoparcial_{payment_id} <monto>\n\n"
                 f"👉 *Para DENEGAR / RECHAZAR:*\n"
                 f"/pagodene_{payment_id}"
             )
@@ -975,6 +1187,37 @@ async def whatsapp_webhook(request: Request):
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "multiple_accounts_clarification"})
+
+        # 0. Anti-Duplicación: Verificar si el cliente ya tiene un reporte de caída activo ('pending' o 'waiting')
+        existing_report = database.find_active_fallen_report_by_phone(sender_phone)
+        if existing_report:
+            rep_id = existing_report["id"]
+            st = existing_report.get("status", "pending")
+            database.record_fallen_report_followup(rep_id, text)
+
+            client_reply = (
+                f"🛠️ *¡Hola {client_name}!* Tu reporte previo (*#C{rep_id}*) por tu servicio de *{existing_report.get('platform')}* "
+                + ("ya se encuentra en cola de atención técnica prioritaria" if st == "waiting" else "está siendo atendido por soporte")
+                + f".\n\n📌 Hemos adjuntado tu nuevo mensaje a la solicitud abierta y te avisaremos por aquí apenas la nueva cuenta quede activa. ¡Muchas gracias por tu paciencia! 🙌✨"
+            )
+            await whatsapp_client.send_text_message(sender_phone, client_reply, delay_seconds=1.5)
+
+            admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
+            clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
+            if clean_admin and clean_admin != sender_phone:
+                admin_notice = (
+                    f"💬 *MENSAJE DE SEGUIMIENTO EN REPORTE ACTIVO (#C{rep_id})*\n"
+                    f"• *Cliente:* {client_name} (+{sender_phone})\n"
+                    f"• *Servicio:* {existing_report.get('platform')}\n"
+                    f"• *Estado actual:* {st.upper()}\n"
+                    f"• *Mensaje nuevo:* \"{text}\"\n\n"
+                    f"👉 *Para autorizar cambio:* /cambiar_{rep_id}\n"
+                    f"👉 *Para poner/mantener en espera:* /esperar_{rep_id}"
+                )
+                await whatsapp_client.send_text_message(clean_admin, admin_notice)
+
+            _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+            return JSONResponse({"status": "ok", "action": "followup_recorded", "report_id": rep_id})
 
         # 1. Crear el reporte de cuenta caída en el sistema (#C<ID>)
         report = database.create_fallen_report(

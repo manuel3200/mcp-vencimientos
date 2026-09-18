@@ -51,11 +51,18 @@ from db.repositories.accounts_repo import (
     update_account_price,
     purge_accounts_except_client,
     reactivate_fallen_account,
-    report_and_auto_replace_account
+    report_and_auto_replace_account,
+    get_due_today_unpaid_accounts,
+    mark_overdue_accounts_for_password_change,
+    get_accounts_pending_password_change,
+    mark_account_for_password_change,
+    rotate_master_password_and_broadcast
 )
 
 from db.repositories.finance_repo import (
     register_customer_payment,
+    register_partial_payment,
+    reverse_customer_payment,
     collect_payment,
     get_recent_transactions
 )
@@ -143,7 +150,11 @@ from db.repositories.fallen_reports_repo import (
     count_pending_fallen_reports,
     authorize_fallen_report,
     put_fallen_report_on_wait,
-    dismiss_fallen_report
+    dismiss_fallen_report,
+    find_active_fallen_report_by_phone,
+    record_fallen_report_followup,
+    get_stale_waiting_reports,
+    rollback_fallen_report_replacement
 )
 
 # Alias para compatibilidad con versiones previas

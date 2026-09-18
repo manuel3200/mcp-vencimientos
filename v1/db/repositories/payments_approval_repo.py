@@ -115,10 +115,12 @@ def count_pending_payments() -> int:
 def approve_pending_payment(
     payment_id: int,
     admin_user: str = "admin",
-    custom_amount: Optional[float] = None
+    custom_amount: Optional[float] = None,
+    renew_all: bool = False
 ) -> Dict[str, Any]:
     """Aprueba un pago pendiente:
     - Actualiza el estado a 'approved'.
+    - Si renew_all=True, busca todas las cuentas activas del cliente y las renueva juntas.
     - Si tiene una cuenta vinculada o encontrada para el cliente, registra el cobro en finanzas y extiende el servicio.
     - Si no tiene cuenta asociada (compra inicial sin asignar aún), registra el ingreso directamente en el libro de pagos (Finanzas & Cobros).
     """
@@ -153,92 +155,149 @@ def approve_pending_payment(
             acc_id = item.get("account_id")
             client_id = item.get("client_id")
             finance_res = None
+            renewed_accounts = []
 
-            # 1. Si no hay cuenta asociada directamente, intentar buscar una cuenta activa del cliente
-            if not acc_id:
-                found_acc = None
+            # 1. Si renew_all está activo, buscar todas las cuentas activas del cliente
+            if renew_all:
+                all_active = []
                 if client_id:
-                    row_acc = conn.execute("""
+                    rows_all = conn.execute("""
                         SELECT * FROM streaming_accounts
                         WHERE client_id = ? AND status = 'ocupada'
-                        ORDER BY expiry_date ASC LIMIT 1
-                    """, (client_id,)).fetchone()
-                    if row_acc:
-                        found_acc = dict(row_acc)
+                        ORDER BY expiry_date ASC
+                    """, (client_id,)).fetchall()
+                    all_active = [dict(r) for r in rows_all]
                 elif item.get("sender_phone"):
                     s_clean = clean_whatsapp_phone(item["sender_phone"])
                     if s_clean:
                         suffix = s_clean[-8:]
-                        row_acc = conn.execute("""
+                        rows_all = conn.execute("""
                             SELECT a.* FROM streaming_accounts a
                             JOIN clients c ON a.client_id = c.id
                             WHERE a.status = 'ocupada' AND (c.whatsapp LIKE ? OR c.whatsapp LIKE ?)
-                            ORDER BY a.expiry_date ASC LIMIT 1
-                        """, (f"%{suffix}%", f"%{s_clean}%")).fetchone()
+                            ORDER BY a.expiry_date ASC
+                        """, (f"%{suffix}%", f"%{s_clean}%")).fetchall()
+                        all_active = [dict(r) for r in rows_all]
+
+                if all_active:
+                    # Distribuir monto entre las cuentas si se especificó, o usar precios unitarios
+                    split_amt = (amt_val / len(all_active)) if (amt_val > 0 and len(all_active) > 0) else None
+                    for a_item in all_active:
+                        try:
+                            f_item_res = finance_repo.collect_payment(
+                                account_id=a_item["id"],
+                                extend_days=30,
+                                amount=split_amt,
+                                payment_method=bank_name,
+                                notes=f"Aprobación Multi-Servicio #{payment_id} (Op: {op_code})"
+                            )
+                            renewed_accounts.append({
+                                "account_id": a_item["id"],
+                                "platform": a_item["platform"],
+                                "email": a_item["email"],
+                                "profile_name": a_item.get("profile_name"),
+                                "new_expiry_date": f_item_res.get("new_expiry_date")
+                            })
+                        except Exception as e:
+                            logger.error(f"Error renovando cuenta #{a_item['id']} en approve_pending_payment(renew_all=True): {e}")
+
+                    finance_res = {
+                        "success": True,
+                        "renew_all": True,
+                        "renewed_count": len(renewed_accounts),
+                        "renewed_accounts": renewed_accounts,
+                        "total_amount": amt_val
+                    }
+
+            # 2. Si no es renew_all o no se encontraron cuentas en renew_all:
+            if not renewed_accounts:
+                # Si no hay cuenta asociada directamente, intentar buscar una cuenta activa del cliente
+                if not acc_id:
+                    found_acc = None
+                    if client_id:
+                        row_acc = conn.execute("""
+                            SELECT * FROM streaming_accounts
+                            WHERE client_id = ? AND status = 'ocupada'
+                            ORDER BY expiry_date ASC LIMIT 1
+                        """, (client_id,)).fetchone()
                         if row_acc:
                             found_acc = dict(row_acc)
+                    elif item.get("sender_phone"):
+                        s_clean = clean_whatsapp_phone(item["sender_phone"])
+                        if s_clean:
+                            suffix = s_clean[-8:]
+                            row_acc = conn.execute("""
+                                SELECT a.* FROM streaming_accounts a
+                                JOIN clients c ON a.client_id = c.id
+                                WHERE a.status = 'ocupada' AND (c.whatsapp LIKE ? OR c.whatsapp LIKE ?)
+                                ORDER BY a.expiry_date ASC LIMIT 1
+                            """, (f"%{suffix}%", f"%{s_clean}%")).fetchone()
+                            if row_acc:
+                                found_acc = dict(row_acc)
 
-                if found_acc:
-                    acc_id = found_acc["id"]
-                    if not client_id and found_acc.get("client_id"):
-                        client_id = found_acc["client_id"]
-                    conn.execute("UPDATE pending_payments SET account_id = ?, client_id = ? WHERE id = ?", (acc_id, client_id, payment_id))
+                    if found_acc:
+                        acc_id = found_acc["id"]
+                        if not client_id and found_acc.get("client_id"):
+                            client_id = found_acc["client_id"]
+                        conn.execute("UPDATE pending_payments SET account_id = ?, client_id = ? WHERE id = ?", (acc_id, client_id, payment_id))
 
-            # 2. Si tenemos cuenta (vinculada u obtenida), impactar renovación en finanzas
-            if acc_id:
-                try:
-                    curr_exp = item.get("account_expiry")
-                    is_initial = False
-                    if curr_exp:
-                        try:
-                            from datetime import date
-                            exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
-                            days_left = (exp_d - date.today()).days
-                            if days_left > 15:
-                                is_initial = True
-                        except Exception:
-                            pass
-
-                    finance_res = finance_repo.collect_payment(
-                        account_id=acc_id,
-                        extend_days=0 if is_initial else 30,
-                        amount=amt_val if amt_val > 0 else None,
-                        payment_method=bank_name,
-                        notes=f"Aprobado desde Pago #{payment_id} (Op: {op_code})"
-                    )
-                except Exception as e:
-                    logger.error(f"Error al impactar cobro financiero para cuenta #{acc_id}: {e}")
-            else:
-                # 3. Si NO hay cuenta activa (compra nueva que aún no tiene cuenta asignada), ASENTAR INGRESO EN FINANZAS DIRECTAMENTE
-                if amt_val > 0:
+                # Si tenemos cuenta (vinculada u obtenida), impactar renovación en finanzas
+                if acc_id:
                     try:
-                        conn.execute("""
-                            INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
-                            VALUES (NULL, ?, ?, 0.0, ?, ?, ?)
-                        """, (client_id, amt_val, amt_val, bank_name, f"Cobro aprobado #{payment_id} (Cliente: {item.get('client_name')}, Op: {op_code})"))
-                        finance_res = {
-                            "success": True,
-                            "amount": amt_val,
-                            "profit": amt_val,
-                            "payment_method": bank_name,
-                            "action_label": "Cobro sin cuenta vinculada"
-                        }
+                        curr_exp = item.get("account_expiry")
+                        is_initial = False
+                        if curr_exp:
+                            try:
+                                from datetime import date
+                                exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
+                                days_left = (exp_d - date.today()).days
+                                if days_left > 15:
+                                    is_initial = True
+                            except Exception:
+                                pass
+
+                        finance_res = finance_repo.collect_payment(
+                            account_id=acc_id,
+                            extend_days=0 if is_initial else 30,
+                            amount=amt_val if amt_val > 0 else None,
+                            payment_method=bank_name,
+                            notes=f"Aprobado desde Pago #{payment_id} (Op: {op_code})"
+                        )
                     except Exception as e:
-                        logger.error(f"Error al asentar cobro en payments: {e}")
+                        logger.error(f"Error al impactar cobro financiero para cuenta #{acc_id}: {e}")
+                else:
+                    # Si NO hay cuenta activa (compra nueva que aún no tiene cuenta asignada), ASENTAR INGRESO EN FINANZAS DIRECTAMENTE
+                    if amt_val > 0:
+                        try:
+                            conn.execute("""
+                                INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                                VALUES (NULL, ?, ?, 0.0, ?, ?, ?)
+                            """, (client_id, amt_val, amt_val, bank_name, f"Cobro aprobado #{payment_id} (Cliente: {item.get('client_name')}, Op: {op_code})"))
+                            finance_res = {
+                                "success": True,
+                                "amount": amt_val,
+                                "profit": amt_val,
+                                "payment_method": bank_name,
+                                "action_label": "Cobro sin cuenta vinculada"
+                            }
+                        except Exception as e:
+                            logger.error(f"Error al asentar cobro en payments: {e}")
 
             # Marcar el registro como aprobado
+            approve_tag = f" | Aprobado por {admin_user}" + (f" [Multi-Servicio: {len(renewed_accounts)} cuentas]" if renewed_accounts else "")
             conn.execute("""
                 UPDATE pending_payments
                 SET status = 'approved', resolved_at = CURRENT_TIMESTAMP,
-                    notes = notes || ' | Aprobado por ' || ?
+                    notes = notes || ?
                 WHERE id = ?
-            """, (admin_user, payment_id))
+            """, (approve_tag, payment_id))
 
         updated_item = get_pending_payment(payment_id)
         return {
             "success": True,
             "payment_id": payment_id,
             "payment": updated_item,
+            "renewed_accounts": renewed_accounts,
             "finance_details": finance_res
         }
     finally:

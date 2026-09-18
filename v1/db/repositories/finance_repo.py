@@ -79,13 +79,15 @@ def register_customer_payment(
             # Actualizar cuenta como pagada
             conn.execute("""
                 UPDATE streaming_accounts 
-                SET expiry_date = ?, payment_status = 'pagado', status = 'ocupada',
-                    last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
+                SET previous_expiry_date = expiry_date, expiry_date = ?, payment_status = 'pagado', status = 'ocupada',
+                    debt_balance = 0.0, last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             """, (final_expiry, acc_id))
 
             return {
                 "success": True,
+                "account_id": acc_id,
+                "client_id": client_id,
                 "client_name": acc.get("client_name"),
                 "whatsapp": acc.get("whatsapp"),
                 "client_type": acc.get("client_type"),
@@ -97,6 +99,141 @@ def register_customer_payment(
                 "is_initial": is_initial,
                 "action_label": action_label,
                 "payment_method": payment_method
+            }
+    finally:
+        conn.close()
+
+def register_partial_payment(
+    email_or_id: str,
+    amount: float,
+    payment_method: str = "Transferencia",
+    notes: str = ""
+) -> Dict[str, Any]:
+    """Registra un pago parcial / seña, calculando el saldo restante adeudado por el cliente."""
+    conn = get_connection()
+    q = str(email_or_id).strip()
+    paid_amt = float(amount)
+    try:
+        with conn:
+            row = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) LIKE lower(?) OR a.id = ?
+                LIMIT 1
+            """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
+
+            if not row:
+                return {"success": False, "error": f"No se encontró la cuenta '{email_or_id}'"}
+
+            acc = dict(row)
+            acc_id = acc["id"]
+            client_id = acc.get("client_id")
+            price_total = parse_money(acc.get("price")) or paid_amt
+            cost_num = parse_money(acc.get("cost"))
+            profit_num = max(0.0, paid_amt - cost_num)
+
+            # Saldo pendiente
+            current_debt = acc.get("debt_balance") or 0.0
+            total_due = current_debt if current_debt > 0 else price_total
+            new_remaining_debt = max(0.0, total_due - paid_amt)
+
+            action_label = f"Pago parcial (Saldo rest: {format_ars(new_remaining_debt)})"
+            final_notes = notes.strip() or action_label
+
+            # Registrar en payments
+            cur = conn.execute("""
+                INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes, is_partial, remaining_balance)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """, (acc_id, client_id, paid_amt, cost_num, profit_num, payment_method.strip(), final_notes, new_remaining_debt))
+            tx_id = cur.lastrowid
+
+            # Actualizar cuenta con el saldo pendiente
+            new_payment_st = "pagado" if new_remaining_debt == 0 else "parcial"
+            conn.execute("""
+                UPDATE streaming_accounts
+                SET debt_balance = ?, payment_status = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (new_remaining_debt, new_payment_st, acc_id))
+
+            c_name = acc.get("client_name") or "Cliente"
+            plat = acc.get("platform") or "Streaming"
+            exp_date = acc.get("expiry_date") or "fin de ciclo"
+            amt_fmt = format_ars(paid_amt)
+            debt_fmt = format_ars(new_remaining_debt)
+
+            wa_msg = (
+                f"💵 *¡Hola {c_name}!* Hemos registrado tu pago parcial de *{amt_fmt}* para tu servicio de *{plat}*.\n\n"
+                f"📊 *Estado del Pago:*\n"
+                f"• Monto abonado: *{amt_fmt}*\n"
+                f"• Saldo restante pendiente: *{debt_fmt}*\n"
+                f"• Fecha límite de vencimiento: `{exp_date}`\n\n"
+                f"Por favor recuerda cancelar el saldo restante antes de la fecha para mantener tu servicio sin interrupciones. ¡Muchas gracias! 🙌✨"
+            )
+
+            return {
+                "success": True,
+                "payment_id": tx_id,
+                "account_id": acc_id,
+                "client_name": c_name,
+                "clean_phone": re.sub(r'\\D', '', str(acc.get("whatsapp") or "")),
+                "platform": plat,
+                "paid_amount": paid_amt,
+                "remaining_debt": new_remaining_debt,
+                "paid_formatted": amt_fmt,
+                "debt_formatted": debt_fmt,
+                "expiry_date": exp_date,
+                "whatsapp_message": wa_msg
+            }
+    finally:
+        conn.close()
+
+def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobación", admin_user: str = "Admin") -> Dict[str, Any]:
+    """Revierte un pago aprobado por error: restaura el vencimiento anterior y anula la transacción contable."""
+    conn = get_connection()
+    try:
+        with conn:
+            row = conn.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
+            if not row:
+                return {"success": False, "error": f"No se encontró la transacción de pago #{payment_id}"}
+
+            p = dict(row)
+            if p.get("status") == "reversed":
+                return {"success": False, "error": f"El pago #{payment_id} ya fue revertido con anterioridad."}
+
+            acc_id = p.get("account_id")
+            restored_expiry = None
+
+            # Si la transacción estaba asociada a una cuenta de streaming, restaurar la fecha de corte previa
+            if acc_id:
+                acc_row = conn.execute("SELECT * FROM streaming_accounts WHERE id = ?", (acc_id,)).fetchone()
+                if acc_row:
+                    acc = dict(acc_row)
+                    prev_exp = acc.get("previous_expiry_date")
+                    if prev_exp and prev_exp != acc.get("expiry_date"):
+                        conn.execute("""
+                            UPDATE streaming_accounts
+                            SET expiry_date = ?, payment_status = 'pendiente', updated_at = CURRENT_TIMESTAMP
+                            WHERE id = ?
+                        """, (prev_exp, acc_id))
+                        restored_expiry = prev_exp
+
+            # Anular el pago en payments
+            rev_note = f"REVERTIDO por {admin_user}: {reason}"
+            conn.execute("""
+                UPDATE payments
+                SET status = 'reversed', notes = notes || ' | ' || ?
+                WHERE id = ?
+            """, (rev_note, payment_id))
+
+            return {
+                "success": True,
+                "payment_id": payment_id,
+                "amount": p["amount"],
+                "profit": p["profit"],
+                "account_id": acc_id,
+                "restored_expiry": restored_expiry,
+                "reason": reason
             }
     finally:
         conn.close()

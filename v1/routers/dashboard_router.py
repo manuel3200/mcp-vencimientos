@@ -116,6 +116,16 @@ async def dashboard(request: Request):
             msg_text = "⚠️ ¡Sin stock libre para reemplazar! Carga una cuenta en la sección Stock antes de autorizar."
         elif msg_raw == "fallen_already_resolved":
             msg_text = "ℹ️ Este reporte ya fue resuelto previamente."
+        elif msg_raw == "password_rotated":
+            msg_text = "🔐 ¡Contraseña actualizada con éxito! Se transmitieron las nuevas credenciales a todos los co-usuarios activos por WhatsApp."
+        elif msg_raw == "partial_payment_saved":
+            msg_text = "💵 ¡Pago parcial / seña registrado con éxito! Saldo pendiente actualizado y notificado al cliente."
+        elif msg_raw == "payment_reversed":
+            msg_text = "🔄 Cobro revertido exitosamente y vencimiento previo restaurado."
+        elif msg_raw == "report_rolled_back":
+            msg_text = "🔄 Reemplazo de cuenta deshecho exitosamente. Las cuentas fueron restauradas a su estado original."
+        elif msg_raw == "marked_for_baja":
+            msg_text = "🛑 Cuenta marcada para baja / rotación de clave. Se cancelaron los recordatorios diarios automáticos."
         else:
             msg_text = msg_raw
         msg_banner = f"""
@@ -129,14 +139,23 @@ async def dashboard(request: Request):
     active_rows = ""
     for a in active_accounts:
         days = a.get("days_remaining")
-        badge = "badge-ok"
-        badge_txt = f"En {days}d"
-        if days is None:
+        st = a.get("status") or "ocupada"
+        debt = float(a.get("debt_balance") or 0.0)
+
+        if st == "por_cambiar_clave":
+            badge = "badge-danger"
+            badge_txt = "🛑 Rotar Clave"
+        elif days is None:
             badge = "badge-warn"; badge_txt = "Fecha inválida"
         elif days < 0:
             badge = "badge-danger"; badge_txt = f"Vencida (-{abs(days)}d)"
         elif days <= 2:
             badge = "badge-warn"; badge_txt = f"¡Vence en {days}d!"
+        else:
+            badge = "badge-ok"
+            badge_txt = f"En {days}d"
+
+        debt_badge = f"<br><span class='badge' style='background:#7c2d12;color:#fdba74;font-size:0.7rem;'>Debe {database.format_ars(debt)}</span>" if debt > 0 else ""
 
         wa_clean = re.sub(r'[^0-9]', '', a.get("whatsapp", ""))
         wa_link = f'<a href="https://wa.me/{wa_clean}" target="_blank" style="color: #22c55e;">{a.get("whatsapp")}</a>' if wa_clean else '-'
@@ -170,6 +189,14 @@ async def dashboard(request: Request):
             </form>
             """
 
+        safe_cname = (a.get('client_name') or 'Cliente').replace("'", "\\'")
+        safe_email = (a.get('email') or '').replace("'", "\\'")
+        safe_plat = (a.get('platform') or '').replace("'", "\\'")
+
+        btn_rotate = f'<button type="button" onclick="openRotatePasswordModal(\'{safe_email}\', \'{safe_plat}\', {a[\'id\']})" class="btn-action" style="background:#be185d;color:white;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Rotar Contraseña y Notificar Co-Usuarios">🔐 Rotar Clave</button>'
+        btn_partial = f'<button type="button" onclick="openPartialPaymentModal({a[\'id\']}, \'{safe_cname}\', \'{safe_plat}\', {debt})" class="btn-action" style="background:#78350f;color:#fde68a;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Registrar Pago Parcial">💵 Parcial</button>'
+        btn_baja = f'<form action="/api/accounts/mark-baja/{a[\'id\']}" method="POST" style="display:inline;" onsubmit="return confirm(\'¿Marcar cuenta #{a[\'id\']} para baja / cambio de clave? Se detendrán los avisos automáticos diarios.\');"><button type="submit" class="btn-action" style="color:#f43f5e;padding:4px 6px;border-radius:5px;font-size:0.75rem;" title="Marcar para Baja / Detener alertas">🛑</button></form>' if st != 'por_cambiar_clave' else ''
+
         active_rows += f"""
         <tr>
             <td><strong {client_click}>{client_tag}</strong><br><small style="color:#64748b;">{a.get('client_code') or ''}</small></td>
@@ -177,13 +204,16 @@ async def dashboard(request: Request):
             <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{a['platform']}</span>{perf}</td>
             <td><code>{a['email']}</code><br><code>{a['password']}</code> {pin}</td>
             <td><code>{a['expiry_date']}</code></td>
-            <td><span class="badge {badge}">{badge_txt}</span></td>
+            <td><span class="badge {badge}">{badge_txt}</span>{debt_badge}</td>
             <td><strong>{a.get('price') or '-'}</strong></td>
             <td style="white-space: nowrap;">
                 {btn_360}
                 <a href="{wa_link_cobro}" target="_blank" class="btn-action" style="background:#15803d;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con mensaje de cobro listo">💬 Cobro</a>
                 <a href="{wa_link_entrega}" target="_blank" class="btn-action" style="background:#0284c7;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con credenciales listas">📩 Datos</a>
                 {btn_pago}
+                {btn_partial}
+                {btn_rotate if st == 'por_cambiar_clave' else ''}
+                {btn_baja}
                 <form action="/api/mark-fallen/{a['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Marcar {a['email']} como caída?');">
                     <button type="submit" class="btn-action btn-warn" style="padding:4px 7px;border-radius:5px;font-size:0.75rem;" title="Reportar Caída">🚨</button>
                 </form>
@@ -292,19 +322,29 @@ async def dashboard(request: Request):
         c_name = t.get("client_name") or "Venta General"
         plat = t.get("platform") or "Streaming"
         c_type = "👔 Revendedor" if "revend" in (t.get("client_type") or "").lower() else "👤 Final"
+        is_rev = t.get("status") == "reversed"
+        amt_html = f"<s style='color:#ef4444;'>{database.format_ars(t['amount'])}</s>" if is_rev else f"<strong style='color:#10b981;'>+{database.format_ars(t['amount'])}</strong>"
+        profit_html = "<small style='color:#64748b;'>Anulado</small>" if is_rev else f"<strong style='color:#38bdf8;'>+{database.format_ars(t['profit'])}</strong>"
+        rev_btn = f"""
+        <form action="/api/payments/reverse/{t['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Revertir y anular este cobro #{t['id']}? Se restaurará el vencimiento previo.');">
+            <button type="submit" class="btn-action" style="color:#f59e0b;font-size:0.7rem;padding:2px 5px;border-radius:4px;" title="Revertir y anular cobro">🔄</button>
+        </form>
+        """ if not is_rev else "<span class='badge' style='background:#450a0a;color:#fca5a5;font-size:0.65rem;'>Revertido</span>"
+
         tx_rows += f"""
         <tr>
             <td><small style="color:#94a3b8;">{t['created_at'][:16]}</small></td>
             <td><strong>{c_name}</strong> ({c_type})</td>
             <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span></td>
-            <td><strong style="color:#10b981;">+{database.format_ars(t['amount'])}</strong></td>
+            <td>{amt_html}</td>
             <td><span style="color:#f59e0b;">-{database.format_ars(t['cost'])}</span></td>
-            <td><strong style="color:#38bdf8;">+{database.format_ars(t['profit'])}</strong></td>
+            <td>{profit_html}</td>
             <td><small>{t.get('payment_method') or 'Transf.'}</small></td>
+            <td>{rev_btn}</td>
         </tr>
         """
     if not tx_rows:
-        tx_rows = "<tr><td colspan='7' style='text-align:center;color:#64748b;padding:20px;'>No hay transacciones registradas este mes aún.</td></tr>"
+        tx_rows = "<tr><td colspan='8' style='text-align:center;color:#64748b;padding:20px;'>No hay transacciones registradas este mes aún.</td></tr>"
 
     # 5. Cuentas Madre y Pantallas Compartidas
     screens_overview = database.get_shared_screens_overview()
@@ -569,6 +609,7 @@ async def dashboard(request: Request):
                 <form action="/api/pending-payments/approve/{pid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Aprobar pago #P{pid} de {safe_client_name}? Se renovará la suscripción y se registrará en finanzas.');">
                     <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Aprobar Pago">✅ Aprobar</button>
                 </form>
+                <button type="button" onclick="openPartialPaymentModal({p.get('account_id') or pid}, '{safe_client_name}', '{plat}', 0)" class="btn-action" style="background:#78350f;color:#fde68a;border:none;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Registrar Pago Parcial">💵 Parcial</button>
                 <button type="button" onclick="openRejectPaymentModal({pid}, '{safe_client_name}')" class="btn-action" style="background:#dc2626;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Denegar Pago">❌ Denegar</button>
             </td>
         </tr>
@@ -625,6 +666,12 @@ async def dashboard(request: Request):
         else:
             notes_str = (r.get("admin_notes") or "Completado").replace('"', '&quot;')
             actions_html = f'<small style="color:#94a3b8;" title="{notes_str}">Finalizado</small>'
+            if r.get("reassigned_account_id"):
+                actions_html += f"""
+                <form action="/api/fallen-reports/rollback/{rid}" method="POST" style="display:inline;margin-left:6px;" onsubmit="return confirm('¿Deshacer reemplazo del reporte #C{rid}? Se devolverá la cuenta asignada a stock y se reactivará la anterior.');">
+                    <button type="submit" class="btn-action" style="color:#f59e0b;font-size:0.7rem;padding:2px 6px;" title="Deshacer reemplazo y restaurar inventario">🔄 Deshacer</button>
+                </form>
+                """
 
         fallen_reports_rows += f"""
         <tr>
@@ -682,6 +729,7 @@ async def dashboard(request: Request):
         "WA_AUTO_EXPIRY_CHECKED": 'checked' if wa_settings.get('auto_send_expiry') == 1 else '',
         "WA_AUTO_SALES_CHECKED": 'checked' if wa_settings.get('auto_send_sales') == 1 else '',
         "WA_AUTO_REPLY_CHECKED": 'checked' if wa_settings.get('auto_reply_enabled', 1) == 1 else '',
+        "WA_EXPIRY_CUTOFF_HOUR": wa_settings.get('expiry_cutoff_hour', 17),
         "WA_UPDATED_AT": wa_settings.get('updated_at', 'Predeterminado'),
         "CW_URL": cw_settings.get('url', 'https://chat.joif.net'),
         "CW_TOKEN": cw_settings.get('token', ''),

@@ -141,12 +141,15 @@ def get_whatsapp_api_settings() -> Dict[str, Any]:
             "auto_send_sales": 0,
             "auto_reply_enabled": 1,
             "admin_whatsapp": "",
-            "gemini_api_key": ""
+            "gemini_api_key": "",
+            "expiry_cutoff_hour": 17
         }
         if "admin_whatsapp" not in res or not res["admin_whatsapp"]:
             res["admin_whatsapp"] = os.getenv("ADMIN_WHATSAPP", "")
         if "gemini_api_key" not in res or not res["gemini_api_key"]:
             res["gemini_api_key"] = os.getenv("GEMINI_API_KEY", "")
+        if "expiry_cutoff_hour" not in res or res["expiry_cutoff_hour"] is None:
+            res["expiry_cutoff_hour"] = int(os.getenv("EXPIRY_CUTOFF_HOUR", "17"))
         return res
     finally:
         conn.close()
@@ -159,15 +162,16 @@ def save_whatsapp_api_settings(
     auto_send_sales: int = 0,
     auto_reply_enabled: int = 1,
     admin_whatsapp: str = "",
-    gemini_api_key: str = ""
+    gemini_api_key: str = "",
+    expiry_cutoff_hour: int = 17
 ) -> Dict[str, Any]:
     """Guarda la configuración de conexión de Evolution API y opciones de envío automático."""
     conn = get_connection()
     try:
         with conn:
             conn.execute("""
-                INSERT INTO whatsapp_api_settings (id, api_url, api_key, instance_name, auto_send_expiry, auto_send_sales, auto_reply_enabled, admin_whatsapp, gemini_api_key, updated_at)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO whatsapp_api_settings (id, api_url, api_key, instance_name, auto_send_expiry, auto_send_sales, auto_reply_enabled, admin_whatsapp, gemini_api_key, expiry_cutoff_hour, updated_at)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(id) DO UPDATE SET
                     api_url = excluded.api_url,
                     api_key = excluded.api_key,
@@ -177,8 +181,9 @@ def save_whatsapp_api_settings(
                     auto_reply_enabled = excluded.auto_reply_enabled,
                     admin_whatsapp = excluded.admin_whatsapp,
                     gemini_api_key = excluded.gemini_api_key,
+                    expiry_cutoff_hour = excluded.expiry_cutoff_hour,
                     updated_at = CURRENT_TIMESTAMP
-            """, (api_url.strip(), api_key.strip(), instance_name.strip(), int(auto_send_expiry), int(auto_send_sales), int(auto_reply_enabled), admin_whatsapp.strip(), gemini_api_key.strip()))
+            """, (api_url.strip(), api_key.strip(), instance_name.strip(), int(auto_send_expiry), int(auto_send_sales), int(auto_reply_enabled), admin_whatsapp.strip(), gemini_api_key.strip(), int(expiry_cutoff_hour)))
         return get_whatsapp_api_settings()
     finally:
         conn.close()

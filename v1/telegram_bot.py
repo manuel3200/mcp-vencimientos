@@ -699,6 +699,130 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         else:
             await send_telegram_message("Uso: <code>/esperar &lt;ID_reporte&gt;</code> (ej: <code>/esperar 1</code>)", chat_id=chat_id)
 
+    elif cmd.startswith(("/pagoparcial", "/parcial")):
+        parts = text.split()
+        if len(parts) >= 3:
+            raw_id = parts[1].replace("#", "").replace("P", "").replace("p", "").strip()
+            raw_amt = parts[2].replace(",", ".").strip()
+            try:
+                amt_val = float(raw_amt)
+                target_id = int(raw_id)
+            except ValueError:
+                await send_telegram_message("⚠️ Formato inválido. Uso: <code>/pagoparcial &lt;ID&gt; &lt;monto&gt;</code>", chat_id=chat_id)
+                return
+
+            pending_item = database.get_pending_payment(target_id)
+            acc_target = None
+            if pending_item:
+                acc_target = pending_item.get("account_id")
+                if not acc_target and pending_item.get("client_id"):
+                    c_pro = database.get_client_360_profile(pending_item["client_id"])
+                    accs = c_pro.get("active_accounts", []) if c_pro else []
+                    if accs:
+                        acc_target = accs[0]["id"]
+            if not acc_target:
+                acc_target = str(target_id)
+
+            res = database.register_partial_payment(
+                email_or_id=str(acc_target),
+                amount=amt_val,
+                payment_method="Transferencia",
+                notes=f"Pago parcial vía Telegram Bot [Ref #{target_id}]"
+            )
+            if res.get("success"):
+                if pending_item:
+                    database.reject_pending_payment(target_id, reason=f"Acreditado como pago parcial de {database.format_ars(amt_val)} (Saldo rest: {database.format_ars(res.get('remaining_debt', 0))})", admin_user="Telegram Bot")
+
+                c_name = res.get("client_name") or "Cliente"
+                rem_fmt = database.format_ars(res.get("remaining_debt", 0.0))
+                paid_fmt = database.format_ars(amt_val)
+
+                c_phone = res.get("client_whatsapp") or (pending_item.get("sender_phone") if pending_item else None)
+                if c_phone:
+                    try:
+                        import whatsapp_client
+                        c_clean = database.clean_whatsapp_phone(c_phone)
+                        if c_clean:
+                            c_msg = (
+                                f"¡Hola {c_name}! 🙌 Registramos tu pago parcial de *{paid_fmt}* para tu suscripción de *{res.get('platform')}*.\n\n"
+                                f"📌 Tu saldo pendiente restante es de: *{rem_fmt}*.\n"
+                                f"¡Muchas gracias! Cuando completes el saldo total se extenderá tu ciclo completo. ✨"
+                            )
+                            await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+                    except Exception:
+                        pass
+
+                await send_telegram_message(
+                    f"💵 <b>PAGO PARCIAL REGISTRADO EXITOSAMENTE</b>\n\n"
+                    f"• Cliente: <b>{c_name}</b>\n"
+                    f"• Servicio: <b>{res.get('platform')}</b>\n"
+                    f"• Monto abonado: <b>{paid_fmt}</b>\n"
+                    f"• Saldo restante adeudado: <b>{rem_fmt}</b>\n"
+                    f"• Estado: <b>{res.get('payment_status', 'parcial').upper()}</b>\n"
+                    f"• Se notificó al cliente por WhatsApp.",
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(f"⚠️ Error: {res.get('error')}", chat_id=chat_id)
+        else:
+            await send_telegram_message("Uso: <code>/pagoparcial &lt;ID_pago_o_cuenta&gt; &lt;monto&gt;</code>\nEjemplo: <code>/pagoparcial 14 3500</code>", chat_id=chat_id)
+
+    elif cmd.startswith(("/revertirpago", "/revertir_pago", "/anularpago")):
+        parts = text.split()
+        if len(parts) >= 2 and parts[1].replace("#", "").isdigit():
+            pay_id = int(parts[1].replace("#", ""))
+            res = database.reverse_customer_payment(pay_id, reason="Revertido vía Telegram Bot")
+            if res.get("success"):
+                rev_amt = database.format_ars(res.get("reversed_amount", 0.0))
+                await send_telegram_message(
+                    f"🔄 <b>COBRO #{pay_id} REVERTIDO EXITOSAMENTE</b>\n\n"
+                    f"• Monto Anulado: <b>{rev_amt}</b>\n"
+                    f"• Cuenta #{res.get('account_id')} restaurada al vencimiento previo: <code>{res.get('restored_expiry') or 'original'}</code>\n"
+                    f"• Descontado del balance financiero.",
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(f"⚠️ Error al revertir cobro #{pay_id}: {res.get('error')}", chat_id=chat_id)
+        else:
+            await send_telegram_message("Uso: <code>/revertirpago &lt;ID_cobro&gt;</code> (ej: <code>/revertirpago 120</code>)", chat_id=chat_id)
+
+    elif cmd.startswith(("/deshacercambio", "/deshacer_cambio", "/revertircambio")):
+        parts = text.split()
+        if len(parts) >= 2 and parts[1].replace("#", "").replace("C", "").replace("c", "").isdigit():
+            rid = int(parts[1].replace("#", "").replace("C", "").replace("c", ""))
+            res = database.rollback_fallen_report_replacement(rid)
+            if res.get("success"):
+                await send_telegram_message(
+                    f"🔄 <b>REEMPLAZO #C{rid} DESHECHO / REVERTIDO</b>\n\n"
+                    f"• Cuenta anterior reactivada: #{res.get('old_account_id')}\n"
+                    f"• Cuenta nueva devuelta a stock libre: #{res.get('reassigned_account_id')}\n"
+                    f"• Estado del reporte restaurado a 'waiting'.",
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(f"⚠️ Error al deshacer reemplazo #C{rid}: {res.get('error')}", chat_id=chat_id)
+        else:
+            await send_telegram_message("Uso: <code>/deshacercambio &lt;ID_reporte&gt;</code> (ej: <code>/deshacercambio 5</code>)", chat_id=chat_id)
+
+    elif cmd.startswith(("/baja", "/cortar")):
+        parts = text.split(maxsplit=1)
+        if len(parts) > 1 and parts[1].strip():
+            acc_target = parts[1].replace("#", "").strip()
+            res = database.mark_account_for_password_change(acc_target)
+            if res.get("success"):
+                await send_telegram_message(
+                    f"🛑 <b>CUENTA #{res.get('account_id')} MARCADA PARA BAJA</b>\n\n"
+                    f"• Servicio: <b>{res.get('platform')}</b> (<code>{res.get('email')}</code>)\n"
+                    f"• Cliente: <b>{res.get('client_name') or 'Sin asignar'}</b>\n"
+                    f"• Estado: <code>por_cambiar_clave</code>\n"
+                    f"• Se cancelaron los recordatorios diarios automáticos al cliente.",
+                    chat_id=chat_id
+                )
+            else:
+                await send_telegram_message(f"⚠️ Error: {res.get('error')}", chat_id=chat_id)
+        else:
+            await send_telegram_message("Uso: <code>/baja &lt;ID_o_correo&gt;</code>", chat_id=chat_id)
+
     elif cmd.startswith("/cliente") or cmd.startswith("/ficha") or cmd.startswith("/buscar"):
         parts = text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():
@@ -1132,9 +1256,14 @@ async def handle_telegram_callback(query: Dict[str, Any]):
         await send_full_backup_to_telegram(chat_id=chat_id)
 
     # 2. Acciones de Comprobantes Pendientes (Esperando Pago)
-    elif data.startswith(("payapp_", "payrej_")):
+    elif data.startswith(("payapp_all_", "payapp_", "payrej_")):
+        is_all = data.startswith("payapp_all_")
         is_approve = data.startswith("payapp_")
-        pid_str = data.split("_")[1]
+        if is_all:
+            pid_str = data.split("_")[2]
+        else:
+            pid_str = data.split("_")[1]
+
         try:
             pid = int(pid_str)
         except ValueError:
@@ -1145,11 +1274,13 @@ async def handle_telegram_callback(query: Dict[str, Any]):
         msg_id = msg_obj.get("message_id")
 
         if is_approve:
-            res = database.approve_pending_payment(pid, admin_user="Telegram Bot")
+            res = database.approve_pending_payment(pid, admin_user="Telegram Bot", renew_all=is_all)
             if res.get("success"):
                 p = res.get("payment", {})
+                renewed = res.get("renewed_accounts", [])
                 amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
-                await answer_callback_query(query_id, f"✅ ¡Pago #P{pid} aprobado con éxito!", show_alert=True)
+                pop_msg = f"✅ ¡Pago #P{pid} aprobado! ({len(renewed)} cuentas renovadas)" if renewed else f"✅ ¡Pago #P{pid} aprobado con éxito!"
+                await answer_callback_query(query_id, pop_msg, show_alert=True)
 
                 phone = p.get("sender_phone") or p.get("client_whatsapp")
                 if phone:
@@ -1157,17 +1288,26 @@ async def handle_telegram_callback(query: Dict[str, Any]):
                         import whatsapp_client
                         clean_phone = database.clean_whatsapp_phone(phone)
                         if clean_phone:
-                            wa_reply = (
-                                f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
-                                + (f" de *{amt_fmt}*" if amt_fmt else "") + f" para tu servicio *{p.get('platform') or 'activo'}*.\n\n"
-                                f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu pago y preferencia! 🙌✨"
-                            )
+                            if renewed:
+                                lines_ren = "\n".join([f"• *{r['platform']}*: `{r['email']}`" for r in renewed])
+                                wa_reply = (
+                                    f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
+                                    + (f" de *{amt_fmt}*" if amt_fmt else "") + f" y la renovación de todos tus servicios activos:\n\n{lines_ren}\n\n"
+                                    f"¡Tus suscripciones quedaron al día! Muchas gracias por tu pago y preferencia! 🙌✨"
+                                )
+                            else:
+                                wa_reply = (
+                                    f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
+                                    + (f" de *{amt_fmt}*" if amt_fmt else "") + f" para tu servicio *{p.get('platform') or 'activo'}*.\n\n"
+                                    f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                                )
                             await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
                     except Exception as e:
                         logger.debug(f"Fallo al enviar WhatsApp tras aprobar pago en Telegram: {e}")
 
                 if msg_id and chat_id:
                     try:
+                        multi_lbl = f"\n• Cuentas Renovadas: <b>{len(renewed)} servicios</b>" if renewed else ""
                         await edit_telegram_message(
                             chat_id=chat_id,
                             message_id=msg_id,
@@ -1176,7 +1316,7 @@ async def handle_telegram_callback(query: Dict[str, Any]):
                                 f"• Cliente: <b>{p.get('client_name')}</b> (<code>+{p.get('sender_phone')}</code>)\n"
                                 f"• Servicio: <b>{p.get('platform') or 'Streaming'}</b> (<code>{p.get('account_email') or '-'}</code>)\n"
                                 f"• Monto: <b>{amt_fmt}</b> ({p.get('bank') or 'Transferencia'})\n"
-                                f"• Op: <code>#{p.get('operation_id') or '-'}</code>\n"
+                                f"• Op: <code>#{p.get('operation_id') or '-'}</code>{multi_lbl}\n"
                                 f"• Estado: <b>Acreditado en Finanzas y Renovado</b>\n"
                                 f"• Se envió confirmación al WhatsApp del cliente."
                             )

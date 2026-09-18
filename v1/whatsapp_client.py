@@ -133,13 +133,40 @@ async def get_qr_code() -> Dict[str, Any]:
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+async def send_presence(
+    phone: str,
+    presence: str = "composing",
+    delay_ms: int = 3500
+) -> Dict[str, Any]:
+    """Envía el estado de presencia ('composing' / 'escribiendo...') a través de Evolution API para apariencia 100% humana."""
+    clean_phone = re.sub(r'[^0-9]', '', str(phone or ""))
+    if not clean_phone or len(clean_phone) < 8:
+        return {"success": False, "error": "Número inválido"}
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/chat/sendPresence/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+    payload = {
+        "number": clean_phone,
+        "presence": presence,
+        "delay": delay_ms
+    }
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            return {"success": resp.status_code in (200, 201)}
+    except Exception as e:
+        logger.debug(f"Aviso de presencia a {clean_phone} omitido: {e}")
+        return {"success": False, "error": str(e)}
+
 async def send_text_message(
     phone: str,
     text: str,
-    delay_seconds: float = 2.0
+    delay_seconds: float = 2.0,
+    simulate_typing: bool = True
 ) -> Dict[str, Any]:
     """Envía un mensaje de texto por WhatsApp a través de Evolution API.
-    Aplica limpieza estricta de teléfono y simulación de delay para protección anti-baneo.
+    Aplica limpieza estricta de teléfono, simulación previa de 'Escribiendo...' y delay para protección anti-baneo.
     """
     clean_phone = re.sub(r'[^0-9]', '', str(phone or ""))
     if not clean_phone or len(clean_phone) < 8:
@@ -150,6 +177,16 @@ async def send_text_message(
     headers = get_headers(config["api_key"])
 
     delay_ms = int(max(delay_seconds, 1.0) * 1000)
+
+    # Activar estado de presencia 'escribiendo...' antes del despacho
+    if simulate_typing:
+        try:
+            await send_presence(clean_phone, presence="composing", delay_ms=delay_ms)
+            # Pequeña pausa para permitir que WhatsApp propague el estado 'escribiendo...'
+            await asyncio.sleep(min(delay_seconds, 3.0))
+        except Exception:
+            pass
+
     payload = {
         "number": clean_phone,
         "text": text,

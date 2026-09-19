@@ -850,6 +850,7 @@ async def sell_account_api(
     client_id: Optional[str] = Form(None),
     new_client_name: Optional[str] = Form(None),
     client_whatsapp: Optional[str] = Form(""),
+    client_type: Optional[str] = Form("consumidor_final"),
     price: Optional[str] = Form(""),
     profile_name: Optional[str] = Form(""),
     profile_pin: Optional[str] = Form("")
@@ -860,7 +861,7 @@ async def sell_account_api(
 
     client_name = ""
     client_phone = client_whatsapp.strip() if client_whatsapp else ""
-    client_type = "consumidor_final"
+    final_client_type = (client_type or "consumidor_final").strip().lower()
 
     if client_id and client_id.strip():
         try:
@@ -870,7 +871,8 @@ async def sell_account_api(
                 client_name = c_info["client"].get("name", "")
                 if not client_phone:
                     client_phone = c_info["client"].get("whatsapp", "")
-                client_type = c_info["client"].get("client_type", "consumidor_final")
+                if final_client_type == "consumidor_final" and c_info["client"].get("client_type"):
+                    final_client_type = c_info["client"]["client_type"]
         except Exception:
             pass
 
@@ -884,7 +886,7 @@ async def sell_account_api(
         password=password,
         expiry_date=expiry_date,
         whatsapp=client_phone,
-        client_type=client_type,
+        client_type=final_client_type,
         profile_name=profile_name or "",
         profile_pin=profile_pin or "",
         price=price or ""

@@ -209,9 +209,16 @@ async def whatsapp_webhook(request: Request):
     # Verificar si es un comando administrativo o comando de caída/autorización
     is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|pagoparcial|parcial|revertir_pago|revertirpago|anularpago|deshacer_cambio|deshacercambio|baja|cortar|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer)', text_lower))
 
-    # Si es from_me (mensaje saliente propio) y NO es un comando administrativo, ignorar para evitar bucles
-    if from_me and not is_admin_cmd:
-        return JSONResponse({"status": "ignored", "reason": "outgoing_non_command"})
+    # Si es from_me (mensaje saliente propio):
+    if from_me:
+        # Detectar si el administrador le está enviando alta o renovación de servidor HTTP Custom (HWID)
+        custom_res = await database.process_http_custom_outgoing_message(sender_phone, text, source="WhatsApp")
+        if custom_res.get("status") == "success":
+            logger.info(f"HTTP Custom {custom_res.get('action')} procesado automáticamente vía WhatsApp para {sender_phone}")
+            return JSONResponse({"status": "processed_http_custom", "data": custom_res})
+
+        if not is_admin_cmd:
+            return JSONResponse({"status": "ignored", "reason": "outgoing_non_command"})
 
     # 4. Extraer contexto de reenvío (Forwarded)
     context_info = (

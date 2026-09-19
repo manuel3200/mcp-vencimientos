@@ -170,11 +170,17 @@ def init_db():
                     cost_price REAL DEFAULT 0.0,
                     price_final REAL DEFAULT 0.0,
                     price_reseller REAL DEFAULT 0.0,
+                    price_reseller_vip REAL DEFAULT 0.0,
                     notes TEXT DEFAULT '',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(platform, service_type)
                 )
             """)
+
+            try:
+                conn.execute("ALTER TABLE price_catalog ADD COLUMN price_reseller_vip REAL DEFAULT 0.0")
+            except Exception:
+                pass
 
             # 7. Tabla de Combos / Packs Promocionales
             conn.execute("""
@@ -209,7 +215,8 @@ def init_db():
                 ("Paramount+", "pantalla", 1400.0, 3000.0, 2200.0, "Perfil individual"),
                 ("Spotify Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta completa individual"),
                 ("YouTube Premium", "cuenta_completa", 2500.0, 5000.0, 3800.0, "Cuenta sin anuncios"),
-                ("Crunchyroll Mega Fan", "pantalla", 1500.0, 3200.0, 2400.0, "Perfil anime HD")
+                ("Crunchyroll Mega Fan", "pantalla", 1500.0, 3200.0, 2400.0, "Perfil anime HD"),
+                ("HTTP Custom", "hwid", 0.0, 8000.0, 4500.0, "Servidor VPN/SSH por HWID")
             ]
             for p, stype, c_price, p_fin, p_res, notes in netflix_defaults:
                 conn.execute("""
@@ -222,6 +229,13 @@ def init_db():
                         notes = CASE WHEN excluded.platform LIKE 'Netflix%' THEN excluded.notes ELSE notes END,
                         updated_at = CURRENT_TIMESTAMP
                 """, (p, stype, c_price, p_fin, p_res, notes))
+
+            # Asegurar precio VIP para HTTP Custom
+            conn.execute("""
+                UPDATE price_catalog
+                SET price_reseller_vip = 3500.0, price_final = 8000.0, price_reseller = 4500.0
+                WHERE platform = 'HTTP Custom' AND (price_reseller_vip IS NULL OR price_reseller_vip = 0.0)
+            """)
 
 
             # Sembrado de combos modelo si está vacío

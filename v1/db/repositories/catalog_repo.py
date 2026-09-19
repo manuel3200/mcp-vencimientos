@@ -19,11 +19,16 @@ def get_price_catalog() -> List[Dict[str, Any]]:
             d = dict(r)
             profit_final = d["price_final"] - d["cost_price"]
             profit_reseller = d["price_reseller"] - d["cost_price"]
+            price_vip = float(d.get("price_reseller_vip") or 0.0)
+            profit_reseller_vip = (price_vip - d["cost_price"]) if price_vip > 0 else 0.0
             d["profit_final"] = profit_final
             d["profit_reseller"] = profit_reseller
+            d["price_reseller_vip"] = price_vip
+            d["profit_reseller_vip"] = profit_reseller_vip
             d["cost_price_formatted"] = format_ars(d["cost_price"])
             d["price_final_formatted"] = format_ars(d["price_final"])
             d["price_reseller_formatted"] = format_ars(d["price_reseller"])
+            d["price_reseller_vip_formatted"] = format_ars(price_vip) if price_vip > 0 else "-"
             result.append(d)
         return result
     finally:
@@ -35,31 +40,34 @@ def upsert_catalog_price(
     cost_price: Union[float, str] = 0.0,
     price_final: Union[float, str] = 0.0,
     price_reseller: Union[float, str] = 0.0,
+    price_reseller_vip: Union[float, str] = 0.0,
     notes: str = ""
 ) -> Dict[str, Any]:
     """Crea o actualiza un precio sugerido en el catálogo para una plataforma y tipo de servicio."""
     conn = get_connection()
     clean_platform = platform.strip().title()
     clean_stype = service_type.strip().lower()
-    if clean_stype not in ("pantalla", "cuenta_completa"):
+    if clean_stype not in ("pantalla", "cuenta_completa", "hwid"):
         clean_stype = "pantalla"
     
     cost_val = parse_money(cost_price)
     final_val = parse_money(price_final)
     reseller_val = parse_money(price_reseller)
+    reseller_vip_val = parse_money(price_reseller_vip)
     
     try:
         with conn:
             conn.execute("""
-                INSERT INTO price_catalog (platform, service_type, cost_price, price_final, price_reseller, notes, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO price_catalog (platform, service_type, cost_price, price_final, price_reseller, price_reseller_vip, notes, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(platform, service_type) DO UPDATE SET
                     cost_price = excluded.cost_price,
                     price_final = excluded.price_final,
                     price_reseller = excluded.price_reseller,
+                    price_reseller_vip = excluded.price_reseller_vip,
                     notes = excluded.notes,
                     updated_at = CURRENT_TIMESTAMP
-            """, (clean_platform, clean_stype, cost_val, final_val, reseller_val, notes.strip()))
+            """, (clean_platform, clean_stype, cost_val, final_val, reseller_val, reseller_vip_val, notes.strip()))
             
             row = conn.execute("""
                 SELECT * FROM price_catalog
@@ -89,10 +97,13 @@ def get_suggested_price(
     conn = get_connection()
     clean_plat = platform.strip().lower()
     clean_stype = service_type.strip().lower()
-    is_reseller = "revend" in client_type.lower()
+    is_vip = "vip" in client_type.lower()
+    is_reseller = "revend" in client_type.lower() or is_vip
     
     # Detección inteligente de tipo de servicio si viene en el texto de la plataforma
-    if any(k in clean_plat for k in ["casa extra", "pantalla", "perfil", "miembro extra"]):
+    if any(k in clean_plat for k in ["custom", "hwid", "vpn", "ssh"]):
+        clean_stype = "hwid"
+    elif any(k in clean_plat for k in ["casa extra", "pantalla", "perfil", "miembro extra"]):
         clean_stype = "pantalla"
     elif any(k in clean_plat for k in ["completa", "full hd", "4k", "cuenta entera", "4 pantallas"]):
         clean_stype = "cuenta_completa"
@@ -100,7 +111,7 @@ def get_suggested_price(
     try:
         # 1. Búsqueda exacta por plataforma y service_type
         row = conn.execute("""
-            SELECT cost_price, price_final, price_reseller
+            SELECT cost_price, price_final, price_reseller, price_reseller_vip
             FROM price_catalog
             WHERE lower(platform) = ? AND service_type = ?
             LIMIT 1
@@ -110,7 +121,7 @@ def get_suggested_price(
         if not row and "netflix" in clean_plat:
             target_plat = "%casa extra%" if clean_stype == "pantalla" else "%completa%"
             row = conn.execute("""
-                SELECT cost_price, price_final, price_reseller
+                SELECT cost_price, price_final, price_reseller, price_reseller_vip
                 FROM price_catalog
                 WHERE lower(platform) LIKE ? AND service_type = ?
                 LIMIT 1
@@ -119,7 +130,7 @@ def get_suggested_price(
         # 3. Búsqueda parcial por plataforma
         if not row:
             row = conn.execute("""
-                SELECT cost_price, price_final, price_reseller
+                SELECT cost_price, price_final, price_reseller, price_reseller_vip
                 FROM price_catalog
                 WHERE (lower(platform) LIKE ? OR ? LIKE '%' || lower(platform) || '%')
                   AND service_type = ?
@@ -129,7 +140,7 @@ def get_suggested_price(
         # 4. Fallback a cualquier registro de la plataforma
         if not row:
             row = conn.execute("""
-                SELECT cost_price, price_final, price_reseller
+                SELECT cost_price, price_final, price_reseller, price_reseller_vip
                 FROM price_catalog
                 WHERE lower(platform) LIKE ? OR ? LIKE '%' || lower(platform) || '%'
                 ORDER BY CASE WHEN service_type = ? THEN 0 ELSE 1 END
@@ -137,7 +148,13 @@ def get_suggested_price(
             """, (f"%{clean_plat}%", clean_plat, clean_stype)).fetchone()
             
         if row:
-            sale_price = row["price_reseller"] if is_reseller else row["price_final"]
+            p_vip = float(row.get("price_reseller_vip") or 0.0)
+            if is_vip and p_vip > 0:
+                sale_price = p_vip
+            elif is_reseller:
+                sale_price = row["price_reseller"]
+            else:
+                sale_price = row["price_final"]
             cost = row["cost_price"]
             return float(sale_price), float(cost)
         return 0.0, 0.0

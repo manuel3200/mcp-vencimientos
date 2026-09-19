@@ -17,7 +17,13 @@ def find_or_create_client(
     clean_tg = telegram.strip()
     if clean_tg and not clean_tg.startswith("@"):
         clean_tg = "@" + clean_tg
-    c_type = "revendedor" if "revend" in client_type.lower() else "consumidor_final"
+    clean_ctype = client_type.lower()
+    if "vip" in clean_ctype:
+        c_type = "revendedor_vip"
+    elif "revend" in clean_ctype:
+        c_type = "revendedor"
+    else:
+        c_type = "consumidor_final"
 
     try:
         with conn:
@@ -33,8 +39,10 @@ def find_or_create_client(
             if existing:
                 client_id = existing["id"]
                 existing_type = (existing["client_type"] or "consumidor_final").lower()
-                # Si el cliente ya estaba registrado como revendedor, NUNCA degradarlo a consumidor_final por omisión
-                if "revend" in existing_type and "revend" not in client_type.lower():
+                # Preservar categorías de revendedor si no se especifica explícitamente una nueva
+                if "vip" in existing_type and "vip" not in clean_ctype and "revend" not in clean_ctype and "final" not in clean_ctype:
+                    final_type = "revendedor_vip"
+                elif "revend" in existing_type and "revend" not in clean_ctype and "vip" not in clean_ctype and "final" not in clean_ctype:
                     final_type = "revendedor"
                 else:
                     final_type = c_type
@@ -165,7 +173,13 @@ def get_client_360_profile(query_or_id: Union[str, int]) -> Optional[Dict[str, A
             client = dict(client_row)
             client_id = client["id"]
             client["clean_whatsapp"] = clean_whatsapp_phone(client.get("whatsapp", ""))
-            client["client_type_label"] = "👔 Revendedor" if "revend" in (client.get("client_type") or "").lower() else "👤 Consumidor Final"
+            ctype_raw = (client.get("client_type") or "").lower()
+            if "vip" in ctype_raw:
+                client["client_type_label"] = "👑 Revendedor VIP"
+            elif "revend" in ctype_raw:
+                client["client_type_label"] = "💼 Revendedor"
+            else:
+                client["client_type_label"] = "👤 Consumidor Final"
 
             # 2. Cuentas asociadas
             acc_rows = conn.execute("""

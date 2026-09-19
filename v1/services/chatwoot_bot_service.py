@@ -72,18 +72,28 @@ async def process_chatwoot_command(body: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "ignored", "reason": "unhandled_event"}
 
     content = (body.get("content") or "").strip()
-    if not content.startswith("/"):
-        return {"status": "ignored", "reason": "not_a_command"}
 
-    logger.info(f"Comando de Chatwoot recibido: '{content}'")
-
-    # Seguridad: Sólo procesar comandos emitidos por un agente o notas privadas internas
+    # Seguridad: Sólo procesar comandos o mensajes emitidos por un agente o notas privadas internas
     is_private = bool(body.get("private", False))
     message_type = (body.get("message_type") or "").lower()
     sender = body.get("sender") or {}
     sender_type = (sender.get("type") or "").lower()
 
     is_agent = is_private or sender_type in ("user", "agent") or message_type == "outgoing"
+
+    if not content.startswith("/"):
+        if is_agent:
+            conversation = body.get("conversation") or {}
+            sender_meta = (conversation.get("meta") or {}).get("sender") or conversation.get("contact") or {}
+            contact_phone_raw = (sender_meta.get("phone_number") or sender_meta.get("identifier") or "").strip()
+            clean_phone = database.clean_whatsapp_phone(contact_phone_raw) if contact_phone_raw else ""
+            res = await database.process_http_custom_outgoing_message(clean_phone, content, source="Chatwoot")
+            if res.get("status") == "success":
+                return {"status": "processed_http_custom", "data": res}
+        return {"status": "ignored", "reason": "not_a_command"}
+
+    logger.info(f"Comando de Chatwoot recibido: '{content}'")
+
     if not is_agent:
         logger.info(f"Comando Chatwoot omitido: no es de agente (sender_type={sender_type}, is_private={is_private})")
         return {"status": "ignored", "reason": "not_from_agent"}

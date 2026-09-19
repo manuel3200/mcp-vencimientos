@@ -25,7 +25,16 @@ async def dashboard(request: Request):
     catalog_items = database.get_price_catalog()
     combos_list = database.get_combos()
     all_clients_list = database.list_all_clients()
-    client_select_options = "".join([f'<option value="{c["id"]}">{c["name"]} ({c.get("client_code") or ""})</option>' for c in all_clients_list])
+    client_select_options = ""
+    for c in all_clients_list:
+        ctype = (c.get("client_type") or "").lower()
+        if "vip" in ctype:
+            badge_icon = "👑 VIP"
+        elif "revend" in ctype:
+            badge_icon = "💼 Revendedor"
+        else:
+            badge_icon = "👤 Final"
+        client_select_options += f'<option value="{c["id"]}">{c["name"]} ({c.get("client_code") or ""}) - {badge_icon}</option>'
     payment_settings = database.get_payment_settings()
     whatsapp_templates = database.get_whatsapp_templates()
     formatted_payment_preview = database.get_formatted_payment_methods()
@@ -161,13 +170,29 @@ async def dashboard(request: Request):
         wa_link = f'<a href="https://wa.me/{wa_clean}" target="_blank" style="color: #22c55e;">{a.get("whatsapp")}</a>' if wa_clean else '-'
         tg_clean = a.get("telegram", "").lstrip("@")
         tg_link = f'<a href="https://t.me/{tg_clean}" target="_blank" style="color: #38bdf8;">@{tg_clean}</a>' if tg_clean else '-'
-        client_tag = f"👔 {a.get('client_name')}" if "revend" in (a.get("client_type") or "").lower() else f"👤 {a.get('client_name')}"
+        c_type_val = (a.get("client_type") or "").lower()
+        if "vip" in c_type_val:
+            client_tag = f"👑 {a.get('client_name')} <small style='color:#f59e0b;font-weight:700;'>(VIP)</small>"
+        elif "revend" in c_type_val:
+            client_tag = f"💼 {a.get('client_name')}"
+        else:
+            client_tag = f"👤 {a.get('client_name')}"
         client_id_val = a.get("client_id")
         client_click = f'onclick="openClient360Modal({client_id_val})" style="cursor:pointer;color:#38bdf8;text-decoration:underline;" title="Ver Ficha 360° del Cliente"' if client_id_val else ''
         btn_360 = f'<button type="button" onclick="openClient360Modal({client_id_val})" class="btn-action" style="background:#1e293b;border:1px solid #38bdf8;color:#38bdf8;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Ver Ficha 360°">👤 360°</button>' if client_id_val else ''
 
         perf = f"<br><small style='color:#94a3b8;'>Perf: {a['profile_name']}</small>" if a.get("profile_name") else ""
         pin = f"<small style='color:#94a3b8;'>PIN: {a['profile_pin']}</small>" if a.get("profile_pin") else ""
+
+        is_http_custom = (a.get("platform") == "HTTP Custom")
+        if is_http_custom:
+            hwid_val = a.get('password') or ''
+            hwid_display = (hwid_val[:8] + '...' + hwid_val[-6:]) if len(hwid_val) > 16 else hwid_val
+            cred_html = f"<span style='color:#a78bfa;font-size:0.75rem;font-weight:600;'>👤 User:</span> <code>{a['email']}</code><br><span style='color:#38bdf8;font-size:0.75rem;font-weight:600;'>🔑 HWID:</span> <code title='{hwid_val}'>{hwid_display}</code>"
+            plat_badge = '<span class="badge" style="background:#312e81;color:#c7d2fe;">⚡ HTTP Custom</span>'
+        else:
+            cred_html = f"<code>{a['email']}</code><br><code>{a['password']}</code> {pin}"
+            plat_badge = f'<span class="badge" style="background:#1e3a8a;color:#93c5fd;">{a["platform"]}</span>'
 
         wa_cobro = database.generate_whatsapp_message(a, message_type="cobro")
         wa_link_cobro = wa_cobro.get("wa_link", "#")
@@ -202,8 +227,8 @@ async def dashboard(request: Request):
         <tr>
             <td><strong {client_click}>{client_tag}</strong><br><small style="color:#64748b;">{a.get('client_code') or ''}</small></td>
             <td>{wa_link}<br>{tg_link}</td>
-            <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{a['platform']}</span>{perf}</td>
-            <td><code>{a['email']}</code><br><code>{a['password']}</code> {pin}</td>
+            <td>{plat_badge}{perf}</td>
+            <td>{cred_html}</td>
             <td><code>{a['expiry_date']}</code></td>
             <td><span class="badge {badge}">{badge_txt}</span>{debt_badge}</td>
             <td><strong>{a.get('price') or '-'}</strong></td>
@@ -322,7 +347,13 @@ async def dashboard(request: Request):
     for t in transactions:
         c_name = t.get("client_name") or "Venta General"
         plat = t.get("platform") or "Streaming"
-        c_type = "👔 Revendedor" if "revend" in (t.get("client_type") or "").lower() else "👤 Final"
+        t_ctype = (t.get("client_type") or "").lower()
+        if "vip" in t_ctype:
+            c_type = "👑 VIP"
+        elif "revend" in t_ctype:
+            c_type = "💼 Revendedor"
+        else:
+            c_type = "👤 Final"
         is_rev = t.get("status") == "reversed"
         amt_html = f"<s style='color:#ef4444;'>{database.format_ars(t['amount'])}</s>" if is_rev else f"<strong style='color:#10b981;'>+{database.format_ars(t['amount'])}</strong>"
         profit_html = "<small style='color:#64748b;'>Anulado</small>" if is_rev else f"<strong style='color:#38bdf8;'>+{database.format_ars(t['profit'])}</strong>"
@@ -417,14 +448,20 @@ async def dashboard(request: Request):
     # 6. Catálogo de Precios ARS
     catalog_rows = ""
     for c in catalog_items:
-        stype_badge = "📱 Pantalla" if c["service_type"] == "pantalla" else "👑 Completa"
+        if c["service_type"] == "hwid":
+            stype_badge = "⚡ HWID / VPN"
+        elif c["service_type"] == "pantalla":
+            stype_badge = "📱 Pantalla"
+        else:
+            stype_badge = "👑 Completa"
+        vip_info = f"<br><small style='color:#f59e0b;'>👑 VIP: {c.get('price_reseller_vip_formatted')}</small>" if c.get('price_reseller_vip') and c['price_reseller_vip'] > 0 else ""
         catalog_rows += f"""
         <tr>
             <td><strong>{c['platform']}</strong></td>
             <td><span class="badge" style="background:#1e293b;color:#94a3b8;">{stype_badge}</span></td>
             <td style="color:#f59e0b;">{c['cost_price_formatted']}</td>
             <td><strong style="color:#10b981;">{c['price_final_formatted']}</strong></td>
-            <td><strong style="color:#38bdf8;">{c['price_reseller_formatted']}</strong></td>
+            <td><strong style="color:#38bdf8;">{c['price_reseller_formatted']}</strong>{vip_info}</td>
             <td>
                 <small style="color:#10b981;">+{database.format_ars(c['profit_final'])} (Final)</small><br>
                 <small style="color:#38bdf8;">+{database.format_ars(c['profit_reseller'])} (Rev.)</small>

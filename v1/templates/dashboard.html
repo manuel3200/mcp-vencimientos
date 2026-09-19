@@ -1442,7 +1442,7 @@
             {{CLIENT_SELECT_OPTIONS}}
           </select>
         </div>
-        <div class="grid grid-cols-2 gap-2">
+        <div class="grid grid-cols-3 gap-2">
           <div>
             <label class="font-label-code text-xs text-on-surface-variant">Nombre Nuevo Cliente:</label>
             <input type="text" name="new_client_name" placeholder="Ej: Juan Pérez" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
@@ -1451,12 +1451,21 @@
             <label class="font-label-code text-xs text-on-surface-variant">WhatsApp:</label>
             <input type="text" name="client_whatsapp" placeholder="Ej: +54 9 11 1234 5678" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
           </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Tipo de Cliente:</label>
+            <select name="client_type" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+              <option value="consumidor_final">👤 Consumidor Final ($8.000)</option>
+              <option value="revendedor">💼 Revendedor ($4.500)</option>
+              <option value="revendedor_vip">👑 Revendedor VIP ($3.500)</option>
+            </select>
+          </div>
         </div>
         <div class="grid grid-cols-2 gap-2">
           <div>
             <label class="font-label-code text-xs text-on-surface-variant">Plataforma / Servicio:</label>
             <input type="text" name="platform" list="streaming-platforms-list" required placeholder="Seleccionar o escribir..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
             <datalist id="streaming-platforms-list">
+              <option value="HTTP Custom">⚡ HTTP Custom (Servidor VPN/SSH HWID)</option>
               <option value="Netflix (Casa Extra)">📱 Netflix (Casa Extra - 1 Pantalla)</option>
               <option value="Netflix (Cuenta Completa)">👑 Netflix (Cuenta Completa - 4 Pantallas)</option>
               <option value="Disney+ Premium">Disney+ Premium</option>
@@ -2064,7 +2073,7 @@
 
         const typeBadge = document.getElementById('m360-type-badge');
         typeBadge.innerText = c.client_type_label || 'Cliente';
-        typeBadge.style.background = c.client_type === 'revendedor' ? '#7c3aed' : '#0284c7';
+        typeBadge.style.background = c.client_type === 'revendedor_vip' ? '#d97706' : (c.client_type === 'revendedor' ? '#7c3aed' : '#0284c7');
 
         const healthBadge = document.getElementById('m360-health-badge');
         healthBadge.innerText = health.label;

@@ -1,7 +1,7 @@
 import urllib.parse
 import logging
 import base64
-from typing import Optional
+from typing import Optional, Any
 
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import RedirectResponse, JSONResponse, Response
@@ -13,6 +13,13 @@ from scheduler import check_and_send_alerts, check_and_send_stock_alerts
 
 logger = logging.getLogger("routers.accounts")
 router = APIRouter()
+
+def _get_username(user: Any) -> str:
+    if isinstance(user, str):
+        return user
+    if isinstance(user, dict):
+        return user.get("username") or user.get("user") or "admin"
+    return "admin"
 
 @router.post("/api/collect-payment/{account_id}")
 async def collect_payment_api(account_id: int, request: Request):
@@ -50,7 +57,7 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
     custom_amt = None
     try:
         if request.headers.get("content-type", "").startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
@@ -100,7 +107,7 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
     form = await request.form()
     reason = str(form.get("reason", "")).strip() if form else ""
     res = database.reject_pending_payment(payment_id, reason=reason, admin_user=f"Web ({username})")
@@ -147,12 +154,18 @@ async def get_pending_payment_receipt_api(payment_id: int, request: Request):
     if "," in b64_raw:
         b64_raw = b64_raw.split(",", 1)[1]
     b64_clean = b64_raw.strip().replace("\n", "").replace("\r", "").replace(" ", "")
+    pad_needed = len(b64_clean) % 4
+    if pad_needed:
+        b64_clean += "=" * (4 - pad_needed)
 
     try:
         data_bytes = base64.b64decode(b64_clean)
-    except Exception as e:
-        logger.error(f"Error decodificando comprobante base64 para #P{payment_id}: {e}")
-        raise HTTPException(status_code=500, detail="Error al decodificar comprobante")
+    except Exception:
+        try:
+            data_bytes = base64.urlsafe_b64decode(b64_clean)
+        except Exception as e:
+            logger.error(f"Error decodificando comprobante base64 para #P{payment_id}: {e}")
+            raise HTTPException(status_code=500, detail="Error al decodificar comprobante")
 
     mime = p.get("receipt_mimetype") or "image/jpeg"
     filename = (p.get("receipt_filename") or f"comprobante_P{payment_id}.jpg").replace("\r", "").replace("\n", "").replace('"', '')
@@ -173,7 +186,7 @@ async def authorize_fallen_report_api(report_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
     res = database.authorize_fallen_report(report_id, admin_user=f"Web ({username})")
     if res.get("success"):
         if res.get("replaced"):
@@ -207,7 +220,7 @@ async def wait_fallen_report_api(report_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
     res = database.put_fallen_report_on_wait(report_id, admin_user=f"Web ({username})")
     if res.get("success"):
         c_phone = res.get("clean_phone")
@@ -232,7 +245,7 @@ async def dismiss_fallen_report_api(report_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
     database.dismiss_fallen_report(report_id, reason="Descartado desde panel web", admin_user=f"Web ({username})")
     return RedirectResponse(url="/?msg=fallen_dismissed#fallen-reports", status_code=303)
 
@@ -242,7 +255,7 @@ async def rollback_fallen_report_api(report_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
 
     res = database.rollback_fallen_report_replacement(report_id)
     if res.get("success"):
@@ -267,7 +280,7 @@ async def rotate_password_api(
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
 
     unpaid_id = int(unpaid_account_id.strip()) if (unpaid_account_id and unpaid_account_id.strip().isdigit()) else None
     res = database.rotate_master_password_and_broadcast(
@@ -314,7 +327,7 @@ async def partial_payment_api(
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
 
     acc_target = account_id.strip() if account_id else ""
     pending_item = None
@@ -405,7 +418,7 @@ async def mark_baja_api(account_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
 
     res = database.mark_account_for_password_change(str(account_id))
     if res.get("success"):
@@ -425,7 +438,7 @@ async def reverse_payment_api(payment_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    username = user.get("username", "admin")
+    username = _get_username(user)
 
     res = database.reverse_customer_payment(payment_id, reason=f"Revertido desde Panel Web ({username})")
     if res.get("success"):

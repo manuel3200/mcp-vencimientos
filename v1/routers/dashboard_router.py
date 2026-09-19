@@ -189,9 +189,9 @@ async def dashboard(request: Request):
             </form>
             """
 
-        safe_cname = (a.get('client_name') or 'Cliente').replace("'", " ").replace('"', " ").replace("\r", "").replace("\n", " ").strip()
-        safe_email = (a.get('email') or '').replace("'", " ").replace('"', " ").replace("\r", "").replace("\n", " ").strip()
-        safe_plat = (a.get('platform') or '').replace("'", " ").replace('"', " ").replace("\r", "").replace("\n", " ").strip()
+        safe_cname = re.sub(r"['\"\\\r\n]", " ", str(a.get('client_name') or 'Cliente')).strip()
+        safe_email = re.sub(r"['\"\\\r\n]", " ", str(a.get('email') or '')).strip()
+        safe_plat = re.sub(r"['\"\\\r\n]", " ", str(a.get('platform') or '')).strip()
         acc_id = a.get('id', '')
 
         btn_rotate = f'<button type="button" onclick="openRotatePasswordModal(\'{safe_email}\', \'{safe_plat}\', {acc_id})" class="btn-action" style="background:#be185d;color:white;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Rotar Contraseña y Notificar Co-Usuarios">🔐 Rotar Clave</button>'
@@ -585,9 +585,8 @@ async def dashboard(request: Request):
         date_str = p.get("created_at", "")[:16]
 
         has_receipt = bool(p.get("receipt_base64"))
-        mime_type = (p.get("receipt_mimetype") or "").lower()
-        clean_filename = (p.get("receipt_filename") or "comprobante").replace("'", "").replace('"', '').replace("\r", "").replace("\n", "").strip()
-        is_pdf = "pdf" in mime_type or clean_filename.endswith(".pdf")
+        clean_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', p.get("receipt_filename") or "comprobante")
+        is_pdf = "pdf" in mime_type or clean_filename.lower().endswith(".pdf")
 
         if has_receipt:
             is_pdf_js = "true" if is_pdf else "false"
@@ -601,8 +600,8 @@ async def dashboard(request: Request):
         else:
             receipt_html = '<span style="color:#64748b;font-size:0.75rem;">Sin archivo</span>'
 
-        js_client_name = c_name.replace("'", " ").replace('"', " ").replace("\\", " ").strip()
-        js_plat = plat.replace("'", " ").replace('"', " ").replace("\\", " ").strip()
+        js_client_name = re.sub(r"['\"\\\r\n]", " ", str(c_name)).strip()
+        js_plat = re.sub(r"['\"\\\r\n]", " ", str(plat)).strip()
         acc_id_arg = p.get("account_id") or 0
 
         pending_payments_rows += f"""

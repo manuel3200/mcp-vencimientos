@@ -1598,7 +1598,7 @@
   </div>
 
   <!-- Modal: Importar CSV -->
-  <div id="modal-csv-import" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+  <div id="modal-csv-import" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;">
     <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-lg p-5 flex flex-col gap-4 shadow-2xl">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <h3 class="text-base font-bold text-on-surface">Carga Masiva de Archivo CSV</h3>
@@ -1626,9 +1626,11 @@
           <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Procesar CSV</button>
         </div>
       </form>
-  <!-- Modal: Visualizador de Comprobante (Imagen o PDF) -->
+    </div>
+  </div>
+
   <!-- Modal: Visor de Comprobante Centralizado -->
-  <div id="modal-receipt-viewer" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closeReceiptModal()">
+  <div id="modal-receipt-viewer" class="fixed inset-0 bg-black/85 backdrop-blur-md hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeReceiptModal()">
     <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-2xl max-h-[90vh] p-4 flex flex-col gap-3 shadow-2xl overflow-hidden">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <div class="flex items-center gap-2">
@@ -1650,7 +1652,7 @@
   </div>
 
   <!-- Modal: Denegar / Rechazar Pago -->
-  <div id="modal-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closeRejectPaymentModal()">
+  <div id="modal-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeRejectPaymentModal()">
     <div class="bg-surface-container-low border border-error/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <h3 id="reject-modal-title" class="text-base font-bold text-error flex items-center gap-1.5">
@@ -1673,7 +1675,7 @@
   </div>
 
   <!-- Modal: Rotar Contraseña y Notificar Co-Usuarios -->
-  <div id="modal-rotate-password" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closeRotatePasswordModal()">
+  <div id="modal-rotate-password" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeRotatePasswordModal()">
     <div class="bg-surface-container-low border border-pink-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <h3 id="rotate-modal-title" class="text-base font-bold text-pink-400 flex items-center gap-1.5">
@@ -1706,7 +1708,7 @@
   </div>
 
   <!-- Modal: Registrar Pago Parcial / Seña -->
-  <div id="modal-partial-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closePartialPaymentModal()">
+  <div id="modal-partial-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closePartialPaymentModal()">
     <div class="bg-surface-container-low border border-amber-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <h3 id="partial-modal-title" class="text-base font-bold text-amber-400 flex items-center gap-1.5">
@@ -2081,16 +2083,46 @@
     }
 
     // 6. Modales simples
-    function openSellAccountModal() { document.getElementById('modal-sell-account').style.display = 'flex'; }
-    function closeSellAccountModal() { document.getElementById('modal-sell-account').style.display = 'none'; }
-    function openAddStockModal() { document.getElementById('modal-add-stock').style.display = 'flex'; }
-    function closeAddStockModal() { document.getElementById('modal-add-stock').style.display = 'none'; }
-    function openSellComboModal() { document.getElementById('modal-sell-combo').style.display = 'flex'; }
-    function closeSellComboModal() { document.getElementById('modal-sell-combo').style.display = 'none'; }
-    function openCreateComboModal() { document.getElementById('modal-create-combo').style.display = 'flex'; }
-    function closeCreateComboModal() { document.getElementById('modal-create-combo').style.display = 'none'; }
-    function openCsvModal() { document.getElementById('modal-csv-import').style.display = 'flex'; }
-    function closeCsvModal() { document.getElementById('modal-csv-import').style.display = 'none'; }
+    function openSellAccountModal() {
+      const m = document.getElementById('modal-sell-account');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeSellAccountModal() {
+      const m = document.getElementById('modal-sell-account');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openAddStockModal() {
+      const m = document.getElementById('modal-add-stock');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeAddStockModal() {
+      const m = document.getElementById('modal-add-stock');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openSellComboModal() {
+      const m = document.getElementById('modal-sell-combo');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeSellComboModal() {
+      const m = document.getElementById('modal-sell-combo');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openCreateComboModal() {
+      const m = document.getElementById('modal-create-combo');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeCreateComboModal() {
+      const m = document.getElementById('modal-create-combo');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openCsvModal() {
+      const m = document.getElementById('modal-csv-import');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeCsvModal() {
+      const m = document.getElementById('modal-csv-import');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
 
     // 7. Modales de Comprobantes y Rechazo de Pagos
     function viewReceipt(paymentId, isPdf, fileName) {

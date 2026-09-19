@@ -65,9 +65,10 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
         if request.headers.get("content-type", "").startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
             form_data = await request.form()
             custom_amt_str = form_data.get("amount")
-            notify_val = form_data.get("notify_client")
-            if notify_val is not None:
-                notify_client = str(notify_val).lower() in ("1", "true", "on", "yes")
+            if "notify_toggle_present" in form_data:
+                notify_client = str(form_data.get("notify_client", "")).lower() in ("1", "true", "on", "yes")
+            elif form_data.get("notify_client") is not None:
+                notify_client = str(form_data.get("notify_client")).lower() in ("1", "true", "on", "yes")
         else:
             custom_amt_str = request.query_params.get("amount")
             notify_val = request.query_params.get("notify_client")
@@ -80,6 +81,8 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
                 custom_amt = parsed_a
     except Exception as e:
         logger.warning(f"Error parseando amount en approve_pending_payment_api #{payment_id}: {e}")
+
+    logger.info(f"[PAGOS] Aprobando #{payment_id} | Operador: {username} | Notificar cliente: {notify_client}")
 
     try:
         res = database.approve_pending_payment(payment_id, admin_user=f"Web ({username})", custom_amount=custom_amt)
@@ -104,6 +107,8 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
                     await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
             except Exception as e:
                 logger.warning(f"Error enviando WhatsApp de pago #{payment_id}: {e}")
+        elif phone and not notify_client:
+            logger.info(f"[PAGOS] Notificación WhatsApp omitida para #{payment_id} por configuración del admin.")
 
         try:
             wa_status_str = "Enviada" if notify_client else "Desactivada por admin"
@@ -133,8 +138,15 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
     form = await request.form()
     reason = str(form.get("reason", "")).strip() if form else ""
     notify_client = True
-    if form and form.get("notify_client") is not None:
-        notify_client = str(form.get("notify_client")).lower() in ("1", "true", "on", "yes")
+    if form:
+        if "notify_toggle_present" in form:
+            notify_client = str(form.get("notify_client", "")).lower() in ("1", "true", "on", "yes")
+        elif form.get("notify_client") is not None:
+            notify_client = str(form.get("notify_client")).lower() in ("1", "true", "on", "yes")
+    elif request.query_params.get("notify_client") is not None:
+        notify_client = str(request.query_params.get("notify_client")).lower() in ("1", "true", "on", "yes")
+
+    logger.info(f"[PAGOS] Denegando #{payment_id} | Operador: {username} | Notificar cliente: {notify_client}")
 
     try:
         res = database.reject_pending_payment(payment_id, reason=reason, admin_user=f"Web ({username})")
@@ -202,12 +214,15 @@ async def bulk_approve_pending_payments_api(request: Request):
                 part = part.strip()
                 if part.isdigit():
                     payment_ids.append(int(part))
-        notify_val = form.get("notify_client")
-        if notify_val is not None:
-            notify_client = str(notify_val).lower() in ("1", "true", "on", "yes")
+        if "notify_toggle_present" in form:
+            notify_client = str(form.get("notify_client", "")).lower() in ("1", "true", "on", "yes")
+        elif form.get("notify_client") is not None:
+            notify_client = str(form.get("notify_client")).lower() in ("1", "true", "on", "yes")
 
     if not payment_ids:
         return RedirectResponse(url="/?err=no_hay_pagos_seleccionados#pending-payments", status_code=303)
+
+    logger.info(f"[PAGOS] Bulk Approve de {len(payment_ids)} pagos | Notificar cliente: {notify_client}")
 
     success_count = 0
     fail_count = 0
@@ -301,12 +316,15 @@ async def bulk_reject_pending_payments_api(request: Request):
                     payment_ids.append(int(part))
         if form.get("reason"):
             reason = str(form.get("reason")).strip()
-        notify_val = form.get("notify_client")
-        if notify_val is not None:
-            notify_client = str(notify_val).lower() in ("1", "true", "on", "yes")
+        if "notify_toggle_present" in form:
+            notify_client = str(form.get("notify_client", "")).lower() in ("1", "true", "on", "yes")
+        elif form.get("notify_client") is not None:
+            notify_client = str(form.get("notify_client")).lower() in ("1", "true", "on", "yes")
 
     if not payment_ids:
         return RedirectResponse(url="/?err=no_hay_pagos_seleccionados#pending-payments", status_code=303)
+
+    logger.info(f"[PAGOS] Bulk Reject de {len(payment_ids)} pagos | Motivo: {reason} | Notificar cliente: {notify_client}")
 
     rejected_count = 0
     fail_count = 0
@@ -552,13 +570,19 @@ async def partial_payment_api(
     amount: float = Form(...),
     payment_method: Optional[str] = Form("Transferencia"),
     notes: Optional[str] = Form(""),
-    notify_client: Optional[str] = Form("1")
+    notify_client: Optional[str] = Form(None),
+    notify_toggle_present: Optional[str] = Form(None)
 ):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
     username = _get_username(user)
-    do_notify = str(notify_client).lower() in ("1", "true", "on", "yes") if notify_client is not None else True
+    if notify_toggle_present is not None:
+        do_notify = str(notify_client or "").lower() in ("1", "true", "on", "yes")
+    elif notify_client is not None:
+        do_notify = str(notify_client).lower() in ("1", "true", "on", "yes")
+    else:
+        do_notify = True
 
     acc_target = account_id.strip() if account_id else ""
     pending_item = None

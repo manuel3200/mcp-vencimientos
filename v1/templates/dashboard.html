@@ -1690,6 +1690,7 @@
         <button type="button" onclick="closeRejectPaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
       </div>
       <form id="reject-payment-form" action="" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" name="notify_toggle_present" value="1">
         <p class="text-xs text-on-surface-variant">El pago será marcado como <b>rechazado</b> en el sistema.</p>
         <div>
           <label class="font-label-code text-xs text-on-surface-variant">Motivo del rechazo (opcional):</label>
@@ -1717,6 +1718,7 @@
         <button type="button" onclick="closeApprovePaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
       </div>
       <form id="approve-payment-form" action="" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" name="notify_toggle_present" value="1">
         <p class="text-xs text-on-surface-variant">
           Se renovará la suscripción del cliente y se registrará el ingreso en las finanzas del sistema.
         </p>
@@ -1751,6 +1753,7 @@
       </div>
       <form id="bulk-approve-payment-form" action="/api/pending-payments/bulk-approve" method="POST" class="flex flex-col gap-3">
         <input type="hidden" id="bulk-approve-ids-input" name="payment_ids" value="">
+        <input type="hidden" name="notify_toggle_present" value="1">
         <p class="text-xs text-on-surface-variant">
           Vas a aprobar y procesar <b id="bulk-approve-count" class="text-emerald-400 font-bold">0</b> comprobantes en lote. Se renovarán las suscripciones correspondientes y se registrarán en finanzas.
         </p>
@@ -1777,6 +1780,7 @@
       </div>
       <form id="bulk-reject-payment-form" action="/api/pending-payments/bulk-reject" method="POST" class="flex flex-col gap-3">
         <input type="hidden" id="bulk-reject-ids-input" name="payment_ids" value="">
+        <input type="hidden" name="notify_toggle_present" value="1">
         <p class="text-xs text-on-surface-variant">
           Vas a denegar <b id="bulk-reject-count" class="text-error font-bold">0</b> comprobantes seleccionados.
         </p>
@@ -1839,6 +1843,7 @@
         <button type="button" onclick="closePartialPaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
       </div>
       <form id="partial-payment-form" action="/api/accounts/partial-payment" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" name="notify_toggle_present" value="1">
         <input type="hidden" id="partial-account-id-input" name="account_id" value="">
         <input type="hidden" id="partial-pending-payment-id-input" name="pending_payment_id" value="">
         

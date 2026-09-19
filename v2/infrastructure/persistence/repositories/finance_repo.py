@@ -17,13 +17,38 @@ def register_customer_payment(
     q = email_or_id.strip()
     try:
         with conn:
-            row = conn.execute("""
-                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
-                FROM streaming_accounts a
-                LEFT JOIN clients c ON a.client_id = c.id
-                WHERE lower(a.email) LIKE lower(?) OR a.id = ?
-                LIMIT 1
-            """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
+            if q.isdigit():
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.id = ?
+                    LIMIT 1
+                """, (int(q),)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) = lower(?)
+                        LIMIT 1
+                    """, (q,)).fetchone()
+            else:
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) = lower(?)
+                    LIMIT 1
+                """, (q,)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) LIKE lower(?)
+                        ORDER BY a.id DESC LIMIT 1
+                    """, (f"%{q}%",)).fetchone()
 
             if not row:
                 return {"success": False, "error": f"No se encontró la cuenta '{email_or_id}'"}
@@ -115,13 +140,38 @@ def register_partial_payment(
     paid_amt = float(amount)
     try:
         with conn:
-            row = conn.execute("""
-                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
-                FROM streaming_accounts a
-                LEFT JOIN clients c ON a.client_id = c.id
-                WHERE lower(a.email) LIKE lower(?) OR a.id = ?
-                LIMIT 1
-            """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
+            if q.isdigit():
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.id = ?
+                    LIMIT 1
+                """, (int(q),)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) = lower(?)
+                        LIMIT 1
+                    """, (q,)).fetchone()
+            else:
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) = lower(?)
+                    LIMIT 1
+                """, (q,)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) LIKE lower(?)
+                        ORDER BY a.id DESC LIMIT 1
+                    """, (f"%{q}%",)).fetchone()
 
             if not row:
                 return {"success": False, "error": f"No se encontró la cuenta '{email_or_id}'"}
@@ -150,11 +200,18 @@ def register_partial_payment(
 
             # Actualizar cuenta con el saldo pendiente
             new_payment_st = "pagado" if new_remaining_debt == 0 else "parcial"
-            conn.execute("""
-                UPDATE streaming_accounts
-                SET debt_balance = ?, payment_status = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            """, (new_remaining_debt, new_payment_st, acc_id))
+            if new_remaining_debt == 0:
+                conn.execute("""
+                    UPDATE streaming_accounts
+                    SET debt_balance = 0.0, payment_status = 'pagado', status = 'ocupada', updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (acc_id,))
+            else:
+                conn.execute("""
+                    UPDATE streaming_accounts
+                    SET debt_balance = ?, payment_status = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                """, (new_remaining_debt, new_payment_st, acc_id))
 
             c_name = acc.get("client_name") or "Cliente"
             plat = acc.get("platform") or "Streaming"

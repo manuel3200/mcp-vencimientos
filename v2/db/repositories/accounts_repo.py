@@ -145,13 +145,38 @@ def mark_account_fallen(email_or_query: str, reason: str = "Suscripción caída"
     q = email_or_query.strip()
     try:
         with conn:
-            row = conn.execute("""
-                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram 
-                FROM streaming_accounts a
-                LEFT JOIN clients c ON a.client_id = c.id
-                WHERE lower(a.email) LIKE lower(?) OR a.id = ?
-                ORDER BY a.id DESC LIMIT 1
-            """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
+            if q.isdigit():
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram 
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.id = ?
+                    LIMIT 1
+                """, (int(q),)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp, c.telegram 
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) = lower(?)
+                        LIMIT 1
+                    """, (q,)).fetchone()
+            else:
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram 
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) = lower(?)
+                    LIMIT 1
+                """, (q,)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp, c.telegram 
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) LIKE lower(?)
+                        ORDER BY a.id DESC LIMIT 1
+                    """, (f"%{q}%",)).fetchone()
             
             if not row:
                 return None
@@ -758,13 +783,38 @@ def get_account_detail(email_or_id: Union[str, int]) -> Optional[Dict[str, Any]]
     conn = get_connection()
     q = str(email_or_id).strip()
     try:
-        row = conn.execute("""
-            SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
-            FROM streaming_accounts a
-            LEFT JOIN clients c ON a.client_id = c.id
-            WHERE lower(a.email) LIKE lower(?) OR a.id = ?
-            ORDER BY a.id DESC LIMIT 1
-        """, (f"%{q}%", int(q) if q.isdigit() else -1)).fetchone()
+        if q.isdigit():
+            row = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE a.id = ?
+                LIMIT 1
+            """, (int(q),)).fetchone()
+            if not row:
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) = lower(?)
+                    LIMIT 1
+                """, (q,)).fetchone()
+        else:
+            row = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) = lower(?)
+                LIMIT 1
+            """, (q,)).fetchone()
+            if not row:
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp, c.telegram, c.client_type, c.client_code
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) LIKE lower(?)
+                    ORDER BY a.id DESC LIMIT 1
+                """, (f"%{q}%",)).fetchone()
         if not row:
             return None
         d = dict(row)

@@ -726,13 +726,22 @@ def buscar_cuenta(query: str = "", correo: str = "", email: str = "") -> str:
     conn = get_connection()
     try:
         with conn:
-            rows = conn.execute("""
-                SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.client_type, c.client_code
-                FROM streaming_accounts a
-                LEFT JOIN clients c ON a.client_id = c.id
-                WHERE lower(a.email) LIKE lower(?) OR a.id = ?
-                ORDER BY a.id DESC LIMIT 5
-            """, (f"%{target}%", int(target) if target.isdigit() else -1)).fetchall()
+            if target.isdigit():
+                rows = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.client_type, c.client_code
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.id = ? OR lower(a.email) LIKE lower(?)
+                    ORDER BY CASE WHEN a.id = ? THEN 1 ELSE 2 END, a.id DESC LIMIT 5
+                """, (int(target), f"%{target}%", int(target))).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.client_type, c.client_code
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) LIKE lower(?) OR lower(c.name) LIKE lower(?)
+                    ORDER BY CASE WHEN lower(a.email) = lower(?) THEN 1 ELSE 2 END, a.id DESC LIMIT 5
+                """, (f"%{target}%", f"%{target}%", target)).fetchall()
 
             if not rows:
                 return f"❌ No se encontró ninguna cuenta que coincida con '{target}'."
@@ -778,15 +787,38 @@ def renovar_servicio_cliente(
     try:
         with conn:
             # 1. Buscar la cuenta
-            row = conn.execute("""
-                SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.id as c_id
-                FROM streaming_accounts a
-                LEFT JOIN clients c ON a.client_id = c.id
-                WHERE lower(a.email) LIKE lower(?)
-                   OR lower(c.name) LIKE lower(?)
-                   OR a.id = ?
-                ORDER BY a.id DESC LIMIT 1
-            """, (f"%{target}%", f"%{target}%", int(target) if target.isdigit() else -1)).fetchone()
+            if target.isdigit():
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.id as c_id
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE a.id = ?
+                    LIMIT 1
+                """, (int(target),)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.id as c_id
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) = lower(?)
+                        LIMIT 1
+                    """, (target,)).fetchone()
+            else:
+                row = conn.execute("""
+                    SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.id as c_id
+                    FROM streaming_accounts a
+                    LEFT JOIN clients c ON a.client_id = c.id
+                    WHERE lower(a.email) = lower(?)
+                    LIMIT 1
+                """, (target,)).fetchone()
+                if not row:
+                    row = conn.execute("""
+                        SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.id as c_id
+                        FROM streaming_accounts a
+                        LEFT JOIN clients c ON a.client_id = c.id
+                        WHERE lower(a.email) LIKE lower(?) OR lower(c.name) LIKE lower(?)
+                        ORDER BY a.id DESC LIMIT 1
+                    """, (f"%{target}%", f"%{target}%")).fetchone()
 
             if not row:
                 return f"❌ No se encontró ninguna cuenta asociada a '{target}' para renovar."

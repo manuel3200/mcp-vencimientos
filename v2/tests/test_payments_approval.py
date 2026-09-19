@@ -63,7 +63,32 @@ def run_tests():
     assert evaluate_notify_flag(None, "1") is False
     assert evaluate_notify_flag("", "1") is False
 
-    print("    ✅ Aprobación y Pagos: 6/6 casos de prueba superados exitosamente.")
+    # 5. Prueba de Purga de Comprobantes Base64 Antiguos
+    pen_old = database.create_pending_payment(
+        sender_phone="5491100001111",
+        client_name="Cliente Antiguo",
+        amount=5000.0,
+        receipt_base64="data:image/jpeg;base64,dGVzdA=="
+    )
+    database.approve_pending_payment(pen_old["id"])
+    
+    # Simular que se resolvió hace 90 días
+    from db.connection import get_connection
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("UPDATE pending_payments SET resolved_at = datetime('now', '-90 days') WHERE id = ?", (pen_old["id"],))
+    finally:
+        conn.close()
+
+    pruned = database.prune_old_approved_receipts_base64(days_threshold=60)
+    assert pruned >= 1, f"Se esperaba al menos 1 comprobante purgado, obtenido: {pruned}"
+
+    pen_checked = database.get_pending_payment(pen_old["id"])
+    assert pen_checked["receipt_base64"] == "", "El Base64 debía haber sido purgado"
+    assert pen_checked["amount"] == 5000.0, "Los metadatos contables deben preservarse"
+
+    print("    ✅ Aprobación y Pagos: 7/7 casos de prueba superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()

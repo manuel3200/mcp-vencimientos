@@ -1,17 +1,23 @@
 import asyncio
-from domain.client_rules import classify_client_type, preserve_client_type, get_client_type_label
+from domain.client_rules import classify_client_type, preserve_client_type, get_client_type_label, should_promote_to_vip
 import database
 
 def run_tests():
     print("  [Suite] Tarifas Comerciales y Jerarquía de Clientes...")
 
-    # 1. Reglas puras de clasificación
+    # 1. Reglas puras de clasificación y promoción
     assert classify_client_type("consumidor_final") == "consumidor_final"
     assert classify_client_type("revendedor") == "revendedor"
     assert classify_client_type("revendedor_vip") == "revendedor_vip"
     assert classify_client_type("VIP") == "revendedor_vip"
     assert classify_client_type("revendedor mayorista") == "revendedor"
     assert classify_client_type(None) == "consumidor_final"
+
+    # 1.1 Regla de promoción sugerida a VIP (>= 10 servicios)
+    assert should_promote_to_vip(10, "revendedor") is True
+    assert should_promote_to_vip(12, "consumidor_final") is True
+    assert should_promote_to_vip(5, "revendedor") is False
+    assert should_promote_to_vip(15, "revendedor_vip") is False, "Ya es VIP, no requiere promoción"
 
     # 2. Preservación de jerarquías (no degradar VIP a final por omisión)
     assert preserve_client_type("revendedor_vip", "") == "revendedor_vip"

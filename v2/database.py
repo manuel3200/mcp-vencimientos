@@ -56,8 +56,10 @@ from db.repositories.accounts_repo import (
     mark_overdue_accounts_for_password_change,
     get_accounts_pending_password_change,
     mark_account_for_password_change,
-    rotate_master_password_and_broadcast
+    rotate_master_password_and_broadcast,
+    get_http_custom_accounts
 )
+
 
 from db.repositories.finance_repo import (
     register_customer_payment,
@@ -140,7 +142,8 @@ from db.repositories.payments_approval_repo import (
     list_pending_payments,
     count_pending_payments,
     approve_pending_payment,
-    reject_pending_payment
+    reject_pending_payment,
+    prune_old_approved_receipts_base64
 )
 
 from db.repositories.fallen_reports_repo import (

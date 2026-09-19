@@ -116,11 +116,23 @@ async def process_http_custom_outgoing_message(recipient_phone: str, text: str, 
                     ))
                     acc_id = cursor.lastrowid
 
-                # Registrar en pagos / finanzas
-                conn.execute("""
-                    INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
-                    VALUES (?, ?, ?, ?, ?, 'WhatsApp Auto', ?)
-                """, (acc_id, client_id, price, cost, profit, f"Venta HTTP Custom - Usuario: {username}"))
+                # 2.1 Verificación de idempotencia (evitar doble cobro si el mensaje se reenvía en 5 min)
+                recent_p = conn.execute("""
+                    SELECT id FROM payments
+                    WHERE client_id = ? AND amount = ?
+                      AND created_at >= datetime('now', '-5 minutes')
+                      AND notes LIKE ?
+                    LIMIT 1
+                """, (client_id, price, f"%{username}%")).fetchone()
+
+                is_duplicate_payment = bool(recent_p)
+                if not is_duplicate_payment:
+                    conn.execute("""
+                        INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                        VALUES (?, ?, ?, ?, ?, 'WhatsApp Auto', ?)
+                    """, (acc_id, client_id, price, cost, profit, f"Venta HTTP Custom - Usuario: {username}"))
+                else:
+                    logger.info(f"Cobro omitido por idempotencia para {username} (ya registrado en últimos 5 min)")
 
             else:
                 # Renovación: Buscar la cuenta del cliente
@@ -164,11 +176,23 @@ async def process_http_custom_outgoing_message(recipient_phone: str, text: str, 
                     ))
                     acc_id = cursor.lastrowid
 
-                # Registrar pago de renovación
-                conn.execute("""
-                    INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
-                    VALUES (?, ?, ?, ?, ?, 'WhatsApp Auto', ?)
-                """, (acc_id, client_id, price, cost, profit, f"Renovación HTTP Custom - Usuario: {username}"))
+                # 2.2 Verificación de idempotencia para renovación
+                recent_renov_p = conn.execute("""
+                    SELECT id FROM payments
+                    WHERE client_id = ? AND amount = ?
+                      AND created_at >= datetime('now', '-5 minutes')
+                      AND notes LIKE ?
+                    LIMIT 1
+                """, (client_id, price, f"%{username}%")).fetchone()
+
+                is_duplicate_payment = bool(recent_renov_p)
+                if not is_duplicate_payment:
+                    conn.execute("""
+                        INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                        VALUES (?, ?, ?, ?, ?, 'WhatsApp Auto', ?)
+                    """, (acc_id, client_id, price, cost, profit, f"Renovación HTTP Custom - Usuario: {username}"))
+                else:
+                    logger.info(f"Cobro omitido por idempotencia para renovación de {username} (ya registrado en últimos 5 min)")
 
             # 3. Auto-aprobar comprobantes pendientes de este cliente si existieran
             cursor_pen = conn.execute("""

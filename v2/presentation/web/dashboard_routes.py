@@ -22,6 +22,7 @@ from presentation.web.view_models import (
     render_pending_payments_rows,
     render_fallen_reports_rows,
     render_client_select_options,
+    render_http_custom_rows,
 )
 
 router = APIRouter()
@@ -34,6 +35,7 @@ async def dashboard(request: Request):
 
     # 1. Obtener datos de repositorios
     active_accounts = database.get_active_accounts()
+    http_custom_accounts = database.get_http_custom_accounts()
     free_stock = database.get_free_stock()
     fallen_accounts = database.get_fallen_accounts()
     finance = database.get_financial_balance()
@@ -78,6 +80,8 @@ async def dashboard(request: Request):
         "FINANCE_PENDING_COUNT": finance['pending_accounts_count'],
         "OAUTH_HEADER_BADGE": '<span style="color:#10b981;">(OAuth 2.0 Protegido 🔒)</span>' if oauth_enabled else '<span style="color:#eab308;">(Público)</span>',
         "ACTIVE_ACCOUNTS_COUNT": len(active_accounts),
+        "HTTP_CUSTOM_COUNT": len(http_custom_accounts),
+        "HTTP_CUSTOM_ROWS": render_http_custom_rows(http_custom_accounts),
         "SCREENS_OVERVIEW_COUNT": len(screens_overview),
         "SUPPLIERS_COUNT": len(suppliers_list),
         "MASTER_ACCOUNTS_COUNT": len(master_accounts_list),

@@ -204,6 +204,15 @@
           <span class="font-data-tabular text-xs bg-surface-container-high px-1.5 py-0.5 rounded text-on-surface">{{ACTIVE_ACCOUNTS_COUNT}}</span>
         </a>
 
+        <!-- HTTP Custom Servers Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="http-custom" href="#http-custom">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg text-sky-400">router</span>
+            <span class="text-sm font-medium">HTTP Custom</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-sky-500/20 text-sky-300 font-bold px-2 py-0.5 rounded">{{HTTP_CUSTOM_COUNT}}</span>
+        </a>
+
         <!-- Pantallas Compartidas Tab -->
         <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="screens" href="#screens">
           <div class="flex items-center gap-2.5">
@@ -678,6 +687,78 @@
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {{SCREENS_HTML}}
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW: SERVIDORES HTTP CUSTOM (#view-http-custom) -->
+      <!-- ========================================================================= -->
+      <div id="view-http-custom" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-sky-400 flex items-center gap-2">
+              <span class="material-symbols-outlined text-2xl">router</span> Servidores HTTP Custom (VPN / HWID)
+            </h2>
+            <p class="text-xs text-on-surface-variant">Monitoreo de servidores por HWID, tarifas automáticas ($3.500 VIP / $4.500 Revendedor / $8.000 Final) y renovación rápida con 1 clic.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="openSellAccountModal()" class="h-8 px-3 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded flex items-center gap-1 shadow cursor-pointer">
+              <span class="material-symbols-outlined text-sm">add</span> + Nueva Venta
+            </button>
+          </div>
+        </div>
+
+        <!-- Tarjetas Resumen HTTP Custom -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-3.5 flex items-center justify-between shadow-sm">
+            <div>
+              <span class="text-xs text-on-surface-variant font-medium">Servidores Totales</span>
+              <div class="text-xl font-bold text-sky-400 font-data-tabular">{{HTTP_CUSTOM_COUNT}}</div>
+            </div>
+            <span class="material-symbols-outlined text-3xl text-sky-400/30">cell_tower</span>
+          </div>
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-3.5 flex items-center justify-between shadow-sm">
+            <div>
+              <span class="text-xs text-on-surface-variant font-medium">Tarifas del Negocio</span>
+              <div class="text-xs text-emerald-400 font-mono font-semibold mt-1">👑 VIP $3.500 | 💼 Rev $4.500 | 👤 Fin $8.000</div>
+            </div>
+            <span class="material-symbols-outlined text-3xl text-emerald-400/30">price_check</span>
+          </div>
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-3.5 flex items-center justify-between shadow-sm">
+            <div>
+              <span class="text-xs text-on-surface-variant font-medium">Auto-Detección WhatsApp</span>
+              <div class="text-xs text-emerald-400 font-semibold flex items-center gap-1 mt-1">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Ventas y Renovaciones Activas
+              </div>
+            </div>
+            <span class="material-symbols-outlined text-3xl text-emerald-400/30">smart_toy</span>
+          </div>
+        </div>
+
+        <!-- Tabla Servidores HTTP Custom -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-3 sm:p-4 shadow-sm flex flex-col gap-3">
+          <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <input id="http-custom-search-box" oninput="searchTableRows('http-custom-table', this.value)" class="w-full sm:w-80 h-8 px-3 bg-surface-container border border-surface-container-highest text-on-surface text-xs rounded" placeholder="Buscar por usuario, HWID o cliente..." type="text">
+            <span class="font-label-code text-xs text-on-surface-variant">Total: {{HTTP_CUSTOM_COUNT}} servidores</span>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table id="http-custom-table">
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>HWID (Hardware ID)</th>
+                  <th>Cliente Asignado</th>
+                  <th>Categoría / Tarifa</th>
+                  <th>Vencimiento</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{HTTP_CUSTOM_ROWS}}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -1178,9 +1259,53 @@
           <p class="text-xs text-on-surface-variant">Importación masiva, exportación de respaldos completos y configuración de cobro.</p>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Backup Físico SQLite -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3 shadow-sm">
+            <div>
+              <h3 class="text-sm font-semibold text-emerald-400 flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-base">database</span> Copia de Seguridad SQLite
+              </h3>
+              <p class="text-xs text-on-surface-variant mt-1">Descarga el archivo físico binario <code>services.db</code> intacto para respaldo local o migración de servidor.</p>
+            </div>
+            <a href="/api/system/backup-download" class="h-8 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded flex items-center justify-center gap-1 shadow cursor-pointer">
+              <span class="material-symbols-outlined text-sm">download</span> Descargar services.db
+            </a>
+          </div>
+
+          <!-- Backup a Telegram -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3 shadow-sm">
+            <div>
+              <h3 class="text-sm font-semibold text-sky-400 flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-base">send</span> Respaldo Inmediato a Telegram
+              </h3>
+              <p class="text-xs text-on-surface-variant mt-1">Envía una copia comprimida de <code>services.db</code> y reportes CSV directo a tu Telegram.</p>
+            </div>
+            <form action="/api/trigger-backup" method="POST">
+              <button type="submit" class="w-full h-8 px-3 bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold rounded flex items-center justify-center gap-1 shadow cursor-pointer">
+                <span class="material-symbols-outlined text-sm">telegram</span> Enviar a Telegram Ahora
+              </button>
+            </form>
+          </div>
+
+          <!-- Purga de Almacenamiento Base64 -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3 shadow-sm">
+            <div>
+              <h3 class="text-sm font-semibold text-amber-400 flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-base">cleaning_services</span> Limpieza de Almacenamiento
+              </h3>
+              <p class="text-xs text-on-surface-variant mt-1">Libera espacio en disco purgando imágenes Base64 de comprobantes aprobados de más de 60 días.</p>
+            </div>
+            <form action="/api/system/prune-receipts" method="POST" onsubmit="return confirm('¿Purgar imágenes Base64 de comprobantes aprobados con más de 60 días? Los balances y registros se preservan intactos.');">
+              <input type="hidden" name="days" value="60">
+              <button type="submit" class="w-full h-8 px-3 bg-surface-container hover:bg-surface-container-high text-amber-300 border border-amber-500/30 text-xs font-semibold rounded flex items-center justify-center gap-1 cursor-pointer">
+                <span class="material-symbols-outlined text-sm">delete_sweep</span> Purgar Base64 (+60d)
+              </button>
+            </form>
+          </div>
+
           <!-- Backup JSON -->
-          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3">
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3 shadow-sm">
             <div>
               <h3 class="text-sm font-semibold text-on-surface">Respaldo Completo JSON</h3>
               <p class="text-xs text-on-surface-variant mt-1">Descarga toda la base de datos (clientes, cuentas, transacciones y configuración).</p>
@@ -1191,7 +1316,7 @@
           </div>
 
           <!-- Exportar Cuentas Activas CSV -->
-          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3">
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3 shadow-sm">
             <div>
               <h3 class="text-sm font-semibold text-on-surface">Cuentas Activas CSV</h3>
               <p class="text-xs text-on-surface-variant mt-1">Exporta todas las cuentas en servicio con datos de clientes y fechas.</p>
@@ -1202,12 +1327,12 @@
           </div>
 
           <!-- Importar CSV -->
-          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3">
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3 shadow-sm">
             <div>
               <h3 class="text-sm font-semibold text-on-surface">Carga Masiva CSV</h3>
               <p class="text-xs text-on-surface-variant mt-1">Importa listas de stock libre o ventas desde archivos Excel o CSV.</p>
             </div>
-            <button onclick="openCsvModal()" class="h-8 px-3 bg-tertiary text-on-tertiary text-xs font-semibold rounded flex items-center justify-center gap-1">
+            <button onclick="openCsvModal()" class="h-8 px-3 bg-tertiary text-on-tertiary text-xs font-semibold rounded flex items-center justify-center gap-1 cursor-pointer">
               <span class="material-symbols-outlined text-sm">upload_file</span> Cargar Archivo
             </button>
           </div>
@@ -1917,6 +2042,10 @@
         'fallen': 'fallen-reports',
         'tab-active': 'accounts',
         'tab-accounts': 'accounts',
+        'tab-http-custom': 'http-custom',
+        'http-custom': 'http-custom',
+        'http_custom': 'http-custom',
+        'custom': 'http-custom',
         'tab-screens': 'screens',
         'tab-stock': 'stock',
         'tab-catalog': 'catalog',
@@ -2202,6 +2331,14 @@
     function searchAccountsTable(term) {
       const q = term.toLowerCase();
       const rows = document.querySelectorAll('#active-accounts-table tbody tr');
+      rows.forEach(row => {
+        row.style.display = row.innerText.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+
+    function searchTableRows(tableId, term) {
+      const q = term.toLowerCase();
+      const rows = document.querySelectorAll('#' + tableId + ' tbody tr');
       rows.forEach(row => {
         row.style.display = row.innerText.toLowerCase().includes(q) ? '' : 'none';
       });

@@ -1284,3 +1284,19 @@ def update_account_price(
             return res
     finally:
         conn.close()
+
+def get_http_custom_accounts() -> List[Dict[str, Any]]:
+    """Obtiene todas las cuentas y servidores HTTP Custom registrados con sus clientes y días restantes."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT a.*, c.name as client_name, c.client_type, c.whatsapp as client_phone
+            FROM streaming_accounts a
+            LEFT JOIN clients c ON a.client_id = c.id
+            WHERE a.platform = 'HTTP Custom'
+            ORDER BY a.expiry_date ASC, a.id DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+

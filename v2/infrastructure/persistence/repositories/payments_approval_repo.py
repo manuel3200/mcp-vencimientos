@@ -352,3 +352,26 @@ def reject_pending_payment(payment_id: int, reason: str = "", admin_user: str = 
         }
     finally:
         conn.close()
+
+def prune_old_approved_receipts_base64(days_threshold: int = 60) -> int:
+    """Purga las cadenas Base64 de comprobantes aprobados o rechazados con más de N días de antigüedad,
+    liberando espacio crítico en SQLite pero manteniendo los metadatos contables intactos."""
+    conn = get_connection()
+    try:
+        with conn:
+            cursor = conn.execute("""
+                UPDATE pending_payments
+                SET receipt_base64 = ''
+                WHERE status IN ('approved', 'rejected')
+                  AND receipt_base64 IS NOT NULL AND receipt_base64 != ''
+                  AND (
+                      resolved_at <= datetime('now', ? || ' days')
+                      OR (resolved_at IS NULL AND created_at <= datetime('now', ? || ' days'))
+                  )
+            """, (f"-{days_threshold}", f"-{days_threshold}"))
+            pruned_count = cursor.rowcount
+        logger.info(f"Purga de almacenamiento: {pruned_count} comprobantes Base64 antiguos liberados.")
+        return pruned_count
+    finally:
+        conn.close()
+

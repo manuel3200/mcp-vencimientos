@@ -627,3 +627,67 @@ def render_client_select_options(clients_list: List[Dict[str, Any]]) -> str:
             badge_icon = "👤 Final"
         opts += f'<option value="{c["id"]}">{c["name"]} ({c.get("client_code") or ""}) - {badge_icon}</option>'
     return opts
+
+def render_http_custom_rows(custom_accounts: List[Dict[str, Any]]) -> str:
+    """Renderiza las filas HTML dedicadas para la tabla de servidores HTTP Custom."""
+    rows = ""
+    today = date.today()
+    for a in custom_accounts:
+        aid = a["id"]
+        user = a.get("email") or "Usuario"
+        hwid = a.get("password") or ""
+        c_name = a.get("client_name") or "Sin asignar"
+        c_phone = a.get("client_phone") or ""
+        wa_link = f'<a href="https://wa.me/{c_phone}" target="_blank" style="color:#22c55e;font-weight:600;">+{c_phone}</a>' if c_phone else '-'
+        
+        c_type = (a.get("client_type") or "consumidor_final").lower()
+        if "vip" in c_type:
+            t_badge = '<span class="badge" style="background:#4a1d96;color:#e9d5ff;font-size:0.75rem;">👑 VIP ($3.500)</span>'
+        elif "revend" in c_type:
+            t_badge = '<span class="badge" style="background:#1e3a8a;color:#93c5fd;font-size:0.75rem;">💼 Revendedor ($4.500)</span>'
+        else:
+            t_badge = '<span class="badge" style="background:#334155;color:#cbd5e1;font-size:0.75rem;">👤 Final ($8.000)</span>'
+
+        exp_str = a.get("expiry_date") or "-"
+        days_badge = '<span class="badge badge-neutral">-</span>'
+        if exp_str and exp_str != "-":
+            try:
+                d_exp = datetime.strptime(exp_str, "%Y-%m-%d").date()
+                days_left = (d_exp - today).days
+                if days_left > 5:
+                    days_badge = f'<span class="badge badge-ok" style="font-size:0.75rem;">Quedan {days_left}d</span>'
+                elif 0 <= days_left <= 5:
+                    days_badge = f'<span class="badge badge-warn" style="font-size:0.75rem;">⚠️ {days_left}d restantes</span>'
+                else:
+                    days_badge = f'<span class="badge badge-danger" style="font-size:0.75rem;">🚨 Vencido hace {abs(days_left)}d</span>'
+            except Exception:
+                pass
+
+        short_hwid = f"{hwid[:10]}...{hwid[-8:]}" if len(hwid) > 20 else (hwid or "Sin HWID")
+        safe_hwid = hwid.replace("'", "\\'").replace('"', '&quot;')
+        safe_user = user.replace("'", "\\'").replace('"', '&quot;')
+
+        copy_hwid_btn = f"""
+        <button type="button" onclick="navigator.clipboard.writeText('{safe_hwid}'); alert('HWID copiado al portapapeles: {safe_hwid}');" 
+                class="btn-action" style="padding:2px 6px;font-size:0.7rem;background:#1e293b;color:#38bdf8;border:1px solid #334155;cursor:pointer;" title="Copiar HWID completo">
+            📋 Copiar
+        </button>
+        """ if hwid else ""
+
+        rows += f"""
+        <tr>
+            <td><strong style="color:#38bdf8;font-size:0.95rem;"><code>{user}</code></strong></td>
+            <td><code style="font-size:0.75rem;color:#cbd5e1;" title="{safe_hwid}">{short_hwid}</code> {copy_hwid_btn}</td>
+            <td><strong>{c_name}</strong><br><small>{wa_link}</small></td>
+            <td>{t_badge}</td>
+            <td><strong>{exp_str}</strong><br>{days_badge}</td>
+            <td style="white-space:nowrap;">
+                <form action="/api/http-custom/renew/{aid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Renovar servidor HTTP Custom de {safe_user} por 30 días?');">
+                    <input type="hidden" name="days" value="30">
+                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" title="Extender 30 días">🔄 Renovar 30d</button>
+                </form>
+            </td>
+        </tr>
+        """
+    return rows or "<tr><td colspan='6' style='text-align:center;color:#94a3b8;padding:24px;'>No hay servidores HTTP Custom registrados aún. Registra ventas por WhatsApp o envía el formato estándar.</td></tr>"
+

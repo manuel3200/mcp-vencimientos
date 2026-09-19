@@ -1058,22 +1058,35 @@ async def whatsapp_webhook(request: Request):
         "olvide mi clave", "olvidé mi clave", "olvide la contrasena", "olvidé la contraseña",
         "datos de mi cuenta", "datos de la cuenta", "mis accesos", "mis credenciales",
         # Comandos cortos
-        "/vencimiento", "/clave", "/cuenta", "mi cuenta", "mis cuentas", "mi clave"
+        "/vencimiento", "/vencimientos", "/clave", "/cuenta", "/servicios", "/miservicio", "/miservicios", "/estado", "mi cuenta", "mis cuentas", "mi clave", "mis servicios", "mi servicio"
     ]
     if any(k in text_lower for k in expiry_intents):
         if client_profile and client_profile.get("active_accounts"):
             accs = client_profile["active_accounts"]
             lines = [f"¡Hola {client_name}! 🍿 Aquí tienes el estado de tus servicios activos:\n"]
             for a in accs:
+                plat = a.get("platform") or "Servicio"
                 perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
                 pin = f" | PIN: {a['profile_pin']}" if a.get("profile_pin") else ""
-                lines.append(
-                    f"📺 *{a['platform']}*{perf}\n"
-                    f"📧 Usuario: `{a['email']}`\n"
-                    f"🔑 Clave: `{a['password']}`{pin}\n"
-                    f"📅 Vence: *{a.get('expiry_date')}* ({a.get('days_label')})\n"
-                )
-            lines.append("¡Cualquier consulta o renovación estamos a tu disposición!")
+                days_txt = f" ({a.get('days_label')})" if a.get("days_label") else ""
+
+                if plat.lower() == "http custom":
+                    hwid_raw = a.get("password") or ""
+                    hwid_disp = f"{hwid_raw[:10]}...{hwid_raw[-6:]}" if len(hwid_raw) > 16 else hwid_raw
+                    lines.append(
+                        f"🌐 *HTTP Custom (VPN / Servidor)*\n"
+                        f"👤 Usuario: `{a.get('email')}`\n"
+                        f"🔑 HWID: `{hwid_disp}`\n"
+                        f"📅 Vence: *{a.get('expiry_date')}*{days_txt}\n"
+                    )
+                else:
+                    lines.append(
+                        f"📺 *{plat}*{perf}\n"
+                        f"📧 Usuario: `{a.get('email')}`\n"
+                        f"🔑 Clave: `{a.get('password')}`{pin}\n"
+                        f"📅 Vence: *{a.get('expiry_date')}*{days_txt}\n"
+                    )
+            lines.append("¡Cualquier consulta o renovación estamos a tu disposición! 🙌✨")
             reply = "\n".join(lines)
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
@@ -1081,7 +1094,7 @@ async def whatsapp_webhook(request: Request):
         else:
             reply = (
                 f"¡Hola {client_name}! En este momento no registramos suscripciones activas a tu nombre en el sistema. "
-                f"Si deseas contratar Netflix, Disney+, Max u otra plataforma, avísanos y te enviamos los planes disponibles."
+                f"Si deseas contratar Netflix, Disney+, Max o servidores HTTP Custom, avísanos y te enviamos las tarifas disponibles."
             )
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now

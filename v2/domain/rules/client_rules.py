@@ -56,3 +56,11 @@ def clean_phone_number(raw_phone: Optional[str]) -> str:
         return ""
     clean = re.sub(r"[^0-9]", "", str(raw_phone))
     return clean
+
+def should_promote_to_vip(active_services_count: int, current_type: Optional[str]) -> bool:
+    """Determina si un cliente o revendedor califica para promoción a Revendedor VIP (>= 10 servicios activos)."""
+    curr = classify_client_type(current_type)
+    if curr == "revendedor_vip":
+        return False
+    return active_services_count >= 10
+

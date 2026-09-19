@@ -107,9 +107,10 @@ async def send_telegram_document(
     filename: str,
     content: bytes,
     caption: str = "",
-    chat_id: str = ""
+    chat_id: str = "",
+    mimetype: str = "text/csv"
 ) -> bool:
-    """Envía un archivo adjunto descargable (CSV, Excel, etc.) al chat administrativo de Telegram."""
+    """Envía un archivo adjunto descargable (CSV, Excel, gz, etc.) al chat administrativo de Telegram."""
     token, default_chat = get_telegram_config()
     target_chat = chat_id if chat_id else default_chat
     if not token or not target_chat:
@@ -122,16 +123,54 @@ async def send_telegram_document(
         "parse_mode": "HTML"
     }
     files = {
-        "document": (filename, content, "text/csv")
+        "document": (filename, content, mimetype)
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
             res = await client.post(url, data=data, files=files)
             data_resp = res.json()
             return bool(res.status_code == 200 and data_resp.get("ok"))
     except Exception as e:
         logger.error(f"Error al enviar documento por Telegram: {e}")
+        return False
+
+async def send_database_backup_file(chat_id: str = "") -> bool:
+    """Comprime la base de datos SQLite (services.db) con gzip y la envía como respaldo directo a Telegram."""
+    import gzip
+    from core.config import settings
+    db_file = settings.DB_PATH
+    if not os.path.exists(db_file):
+        logger.error(f"No se encontró el archivo de base de datos en {db_file}")
+        return False
+
+    date_str = datetime.now().strftime("%Y%m%d_%H%M")
+    backup_filename = f"streamvault_db_{date_str}.db.gz"
+
+    try:
+        with open(db_file, "rb") as f_in:
+            data = f_in.read()
+        compressed = gzip.compress(data, compresslevel=6)
+        orig_size_mb = len(data) / (1024 * 1024)
+        comp_size_mb = len(compressed) / (1024 * 1024)
+
+        caption = (
+            f"📦 <b>COPIA DE SEGURIDAD SQLITE (services.db)</b>\n\n"
+            f"• <b>Fecha:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+            f"• <b>Tamaño original:</b> {orig_size_mb:.2f} MB\n"
+            f"• <b>Comprimido (.gz):</b> {comp_size_mb:.2f} MB\n\n"
+            f"💡 Guarda este archivo en un lugar seguro. En caso de migración o falla del servidor, puedes descomprimirlo y restaurar todo el sistema."
+        )
+
+        return await send_telegram_document(
+            filename=backup_filename,
+            content=compressed,
+            caption=caption,
+            chat_id=chat_id,
+            mimetype="application/gzip"
+        )
+    except Exception as e:
+        logger.error(f"Error generando backup comprimido de SQLite para Telegram: {e}")
         return False
 
 async def send_full_backup_to_telegram(chat_id: str = "") -> bool:

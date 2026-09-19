@@ -7,21 +7,23 @@ import database
 def run_tests():
     print("  [Suite] HTTP Custom & HWID Rules...")
 
-    # 1. Validación de fechas ISO
+    # 1. Validación de fechas ISO (soporte para /, - y .)
     assert parse_date_to_iso("18/09/2026") == "2026-09-18", "Fallo al convertir fecha DD/MM/YYYY"
     assert parse_date_to_iso("05-11-2026") == "2026-11-05", "Fallo al convertir fecha DD-MM-YYYY"
+    assert parse_date_to_iso("19.10.2026") == "2026-10-19", "Fallo al convertir fecha con puntos DD.MM.YYYY"
     assert parse_date_to_iso("invalid") is None, "Fecha inválida debe retornar None"
 
-    # 2. Validación sintáctica de HWID
+    # 2. Validación sintáctica de HWID (tolerancia a espacios)
     assert is_valid_hwid("00d12f8f5e92c189d8005ddb60614cf9") is True
+    assert is_valid_hwid("00d1 2f8f 5e92 c189 d800 5ddb 6061 4cf9") is True, "Debe tolerar espacios accidentales"
     assert is_valid_hwid("hwid") is False, "La palabra literal 'hwid' no es un hash válido"
     assert is_valid_hwid("short") is False, "HWID muy corto debe ser inválido"
 
-    # 3. Parser de Venta Nueva
+    # 3. Parser de Venta Nueva (con fecha con puntos y HWID con espacios)
     msg_sale = """
     USUARIO : kevintj
-    HWID    : 00d12f8f5e92c189d8005ddb60614cf9
-    VALIDEZ : 18/09/2026
+    HWID    : 00d1 2f8f 5e92 c189 d800 5ddb 6061 4cf9
+    VALIDEZ : 18.09.2026
     """
     res_sale = parse_http_custom_message(msg_sale)
     assert res_sale is not None, "El parser no detectó el mensaje de venta nueva"
@@ -47,7 +49,7 @@ def run_tests():
     msg_renew_50 = """
     ID/CLIENTE   : 50 / juan_pro 
      📱 PERMITIDOS : HWID 
-     VALIDO HASTA : 15/11/2026
+     VALIDO HASTA : 15.11.2026
      RENUEVA EN 30 DIAS, DISFRUTE SU ESTANCIA!.
     """
     res_renew_50 = parse_http_custom_message(msg_renew_50)
@@ -59,7 +61,7 @@ def run_tests():
     assert parse_http_custom_message("Hola, tenés stock de netflix?") is None
     assert parse_http_custom_message("Ya te transferí") is None
 
-    # 7. Flujo End-to-End en Base de Datos (Alta y Renovación)
+    # 7. Flujo End-to-End en Base de Datos (Alta, Idempotencia y Renovación)
     async def test_db_flow():
         test_phone = "5491199887766"
 
@@ -82,14 +84,37 @@ def run_tests():
         pen_updated = database.get_pending_payment(pen["id"])
         assert pen_updated["status"] == "approved", "El comprobante previo debía ser aprobado automáticamente"
 
-        # Ejecutar renovación
+        # 7.1 Prueba de Idempotencia: re-envío inmediato no debe duplicar pago
+        from db.connection import get_connection
+        conn = get_connection()
+        try:
+            count_p_before = conn.execute("SELECT COUNT(*) FROM payments WHERE client_id = ?", (out_sale["client_id"],)).fetchone()[0]
+        finally:
+            conn.close()
+
+        out_sale_dup = await process_http_custom_outgoing_message(test_phone, msg_sale, source="TestHarness")
+        assert out_sale_dup["status"] == "success"
+
+        conn = get_connection()
+        try:
+            count_p_after = conn.execute("SELECT COUNT(*) FROM payments WHERE client_id = ?", (out_sale["client_id"],)).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert count_p_after == count_p_before, f"Idempotencia violada: count_p_before={count_p_before}, count_p_after={count_p_after}"
+
+        # 7.2 Comprobar que get_http_custom_accounts() devuelve el servidor
+        custom_accs = database.get_http_custom_accounts()
+        assert any(ca["id"] == out_sale["account_id"] for ca in custom_accs), "El servidor HTTP Custom no aparece en get_http_custom_accounts"
+
+        # 7.3 Ejecutar renovación
         out_renew = await process_http_custom_outgoing_message(test_phone, msg_renew_17, source="TestHarness")
         assert out_renew["status"] == "success"
         assert out_renew["action"] == "renewal"
         assert out_renew["expiry_date"] == "2026-10-19"
 
     asyncio.run(test_db_flow())
-    print("    ✅ HTTP Custom & HWID: 7/7 casos de prueba superados exitosamente.")
+    print("    ✅ HTTP Custom & HWID: 10/10 casos de prueba superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()

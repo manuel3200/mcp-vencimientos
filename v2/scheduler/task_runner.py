@@ -287,6 +287,28 @@ async def check_and_send_supplier_expiry_alerts(days_window: int = 3, force: boo
 
     return sent_count
 
+async def run_weekly_database_backup():
+    """Genera una copia de seguridad comprimida de services.db y la envía a Telegram."""
+    from telegram_bot import send_database_backup_file
+    logger.info("Iniciando backup semanal programado de base de datos SQLite...")
+    success = await send_database_backup_file()
+    if success:
+        logger.info("Backup semanal enviado con éxito a Telegram.")
+    else:
+        logger.warning("Fallo al enviar backup semanal a Telegram.")
+
+async def run_monthly_receipts_purge():
+    """Purga cadenas Base64 de comprobantes aprobados/rechazados de más de 60 días para optimizar disco."""
+    import database
+    from telegram_bot import send_telegram_message
+    logger.info("Iniciando purga mensual de comprobantes Base64 antiguos (+60 días)...")
+    pruned = database.prune_old_approved_receipts_base64(days_threshold=60)
+    if pruned > 0:
+        await send_telegram_message(
+            f"🧹 <b>Mantenimiento de Almacenamiento:</b> Se liberaron <b>{pruned}</b> imágenes Base64 de comprobantes antiguos resueltos.\n"
+            f"Los metadatos contables y balances permanecen 100% intactos."
+        )
+
 def start_scheduler():
     """Inicia el programador de tareas en segundo plano."""
     from apscheduler.triggers.interval import IntervalTrigger
@@ -349,9 +371,27 @@ def start_scheduler():
         id="stale_fallen_reports_check",
         replace_existing=True
     )
+
+    # 6. Backup Semanal de services.db a Telegram (Domingos a las 04:00 AM)
+    trigger_weekly_backup = CronTrigger(day_of_week='sun', hour=4, minute=0, timezone=tz)
+    scheduler.add_job(
+        run_weekly_database_backup,
+        trigger=trigger_weekly_backup,
+        id="weekly_database_backup",
+        replace_existing=True
+    )
+
+    # 7. Purga Mensual de Comprobantes Base64 (+60 días) (Día 1 de cada mes a las 03:00 AM)
+    trigger_monthly_purge = CronTrigger(day=1, hour=3, minute=0, timezone=tz)
+    scheduler.add_job(
+        run_monthly_receipts_purge,
+        trigger=trigger_monthly_purge,
+        id="monthly_receipts_base64_purge",
+        replace_existing=True
+    )
     
     scheduler.start()
-    logger.info(f"Scheduler iniciado. Mañana: {check_hour:02d}:{check_minute:02d}, Corte vespertino: {cutoff_hour:02d}:00, Heartbeat: cada 15m ({tz_str})")
+    logger.info(f"Scheduler iniciado. Mañana: {check_hour:02d}:{check_minute:02d}, Corte: {cutoff_hour:02d}:00, Backup Semanal: Dom 04:00, Heartbeat: cada 15m ({tz_str})")
 
 def stop_scheduler():
     """Detiene el programador de tareas."""

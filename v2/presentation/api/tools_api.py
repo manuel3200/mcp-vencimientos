@@ -240,5 +240,50 @@ async def api_clear_logs(request: Request):
     system_logger.clear_memory_logs()
     return RedirectResponse(url="/?msg=logs_cleared#logs", status_code=303)
 
+from fastapi.responses import FileResponse
+from core.config import settings
+from application.http_custom.renew_custom import execute_renew_http_custom
+
+@router.get("/api/system/backup-download")
+async def api_download_database_backup(request: Request):
+    """Descarga el archivo físico SQLite services.db directamente en el navegador."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    db_file = settings.DB_PATH
+    if not os.path.exists(db_file):
+        raise HTTPException(status_code=404, detail="Archivo de base de datos no encontrado")
+    today_str = datetime.now().strftime("%Y%m%d_%H%M")
+    return FileResponse(
+        path=db_file,
+        filename=f"services_backup_{today_str}.db",
+        media_type="application/x-sqlite3"
+    )
+
+@router.post("/api/system/prune-receipts")
+async def api_prune_receipts(request: Request, days: int = Form(60)):
+    """Ejecuta la purga manual de comprobantes Base64 antiguos resueltos."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    pruned = database.prune_old_approved_receipts_base64(days_threshold=days)
+    msg = urllib.parse.quote(f"Se liberaron {pruned} imágenes Base64 antiguas de la base de datos.")
+    return RedirectResponse(url=f"/?msg={msg}#tools", status_code=303)
+
+@router.post("/api/http-custom/renew/{account_id}")
+async def api_renew_http_custom(account_id: int, request: Request, days: int = Form(30)):
+    """Renueva un servidor HTTP Custom por N días (default 30) desde el panel."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = user if isinstance(user, str) else user.get("username", "admin")
+    res = execute_renew_http_custom(account_id, extend_days=days, admin_user=username)
+    if res.get("success"):
+        msg = urllib.parse.quote(f"Servidor HTTP Custom ({res.get('username')}) renovado hasta {res.get('new_expiry_date')}")
+        return RedirectResponse(url=f"/?msg={msg}#http-custom", status_code=303)
+    else:
+        err = urllib.parse.quote(res.get("error", "Error al renovar servidor"))
+        return RedirectResponse(url=f"/?err={err}#http-custom", status_code=303)
+
 # ==========================================
 # 12. Endpoints Evolution API WhatsApp & Webhooks

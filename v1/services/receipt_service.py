@@ -2,6 +2,7 @@ import re
 import io
 import os
 import base64
+import json
 import logging
 from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime
@@ -277,52 +278,86 @@ def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
     return res
 
 
+def _parse_gemini_json(text_out: str) -> Optional[Dict[str, Any]]:
+    """Extrae y parsea el objeto JSON retornado por Gemini, tolerando bloques markdown o texto circundante."""
+    if not text_out:
+        return None
+    cleaned = text_out.strip()
+    if "```" in cleaned:
+        match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', cleaned, re.DOTALL)
+        if match:
+            cleaned = match.group(1).strip()
+    if not (cleaned.startswith("{") and cleaned.endswith("}")):
+        match = re.search(r'(\{.*\})', cleaned, re.DOTALL)
+        if match:
+            cleaned = match.group(1).strip()
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, dict):
+            return data
+    except Exception as je:
+        logger.warning(f"Error parseando JSON de Gemini Vision: {je}. Raw: {text_out[:300]}")
+    return None
+
+
 async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg") -> Optional[Dict[str, Any]]:
-    """Analiza una imagen de comprobante bancario usando Google Gemini Vision API."""
+    """Analiza una imagen usando Google Gemini Vision API para clasificar con precisión estricta
+    si es un comprobante de pago/transferencia o si es una foto casual, producto, juguete, mascota, meme, etc.
+    """
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         try:
             import database
             wa_sett = database.get_whatsapp_api_settings()
-            api_key = wa_sett.get("gemini_api_key", "").strip()
+            api_key = (wa_sett.get("gemini_api_key") or "").strip()
         except Exception as e:
             logger.debug(f"No se pudo consultar gemini_api_key desde BD: {e}")
 
     if not api_key:
         return None
 
-    clean_b64 = image_b64
+    clean_b64 = image_b64.replace("\n", "").replace("\r", "").strip()
     if "," in clean_b64:
-        clean_b64 = clean_b64.split(",")[1]
+        clean_b64 = clean_b64.split(",")[1].strip()
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    if not clean_b64:
+        return None
+
+    prompt_text = (
+        "Eres un auditor y clasificador experto de comprobantes de pago y transferencias bancarias en Argentina.\n"
+        "Analiza la imagen adjunta para determinar con total precisión si es un COMPROBANTE DE PAGO BANCARIO o TRANSFERENCIA REAL.\n\n"
+        "CRITERIO ESTRICTO DE APROBACIÓN (is_receipt = true):\n"
+        "La imagen DEBE ser una captura de pantalla, ticket digital o comprobante formal de una transferencia, "
+        "pago o depósito bancario emitido por un banco o billetera virtual de Argentina (ej: Mercado Pago, Personal Pay, "
+        "Naranja X, Brubank, Onda Siempre / Banco Formosa, NBCH 24, Banco Galicia, Santander, BBVA, Banco Nación, "
+        "Banco Macro, Ualá, Cuenta DNI, MODO, Lemon Cash, Prex, Rapipago, Pago Fácil, etc.).\n"
+        "El destinatario suele ser Juan Manuel Ortiz (CVU: 0000003100098090274687, CUIL: 20-42185991-5).\n\n"
+        "CRITERIO ESTRICTO DE RECHAZO (is_receipt = false):\n"
+        "Debes clasificar OBLIGATORIAMENTE como is_receipt: false en CUALQUIERA de los siguientes casos:\n"
+        "- Fotos de productos, juguetes, mercadería, artículos de bazar, packaging, cajas de juguetes, burbujeros, vasos, slime, ropa, comida o paquetes.\n"
+        "- Fotos de mascotas, perros, gatos, animales, personas, selfies o niños.\n"
+        "- Fotos de la vida cotidiana, objetos del hogar, tiendas, estantes de comercios, vidrieras, paisajes o fotos artísticas.\n"
+        "- Capturas de chats de WhatsApp, mensajes de voz / audios, estados o memes.\n"
+        "- Capturas o fotos de pantallas de televisores (Smart TV) o apps de streaming (Netflix, Disney+, Max, etc.) mostrando errores, límites de dispositivos o códigos de inicio de sesión.\n"
+        "- Documentos académicos, libros, manuales, apuntes, fotocopias o tareas escolares.\n"
+        "- Cualquier imagen donde NO se aprecie de forma evidente un pago de dinero bancario efectuado.\n\n"
+        "Responde ÚNICAMENTE un objeto JSON válido con esta estructura exacta:\n"
+        "{\n"
+        '  "is_receipt": false,\n'
+        '  "bank": null,\n'
+        '  "amount": null,\n'
+        '  "operation_id": null,\n'
+        '  "date": null,\n'
+        '  "recipient": null\n'
+        "}\n"
+        "Si y solo si es un comprobante bancario real, cambia is_receipt a true y extrae los datos numéricos y de texto correspondientes."
+    )
+
     payload = {
         "contents": [{
             "parts": [
-                {
-                    "text": (
-                        "Eres un clasificador y extractor experto de comprobantes de pago y transferencias bancarias en Argentina.\n"
-                        "Analiza la imagen adjunta con atención y precisión.\n"
-                        "Bancos y billeteras frecuentes: Mercado Pago, Personal Pay, Naranja X, Brubank, Onda Siempre (Banco Formosa), "
-                        "NBCH 24 (Nuevo Banco del Chaco), Banco Galicia, Santander, BBVA, Banco Nación, Macro, Ualá, Cuenta DNI, MODO, Lemon, etc.\n"
-                        "El titular destinatario habitual de esta cuenta es Juan Manuel Ortiz (CVU: 0000003100098090274687, CUIL: 20-42185991-5).\n\n"
-                        "REGLAS CRÍTICAS:\n"
-                        "1. Si la imagen es una captura de pantalla, foto de pantalla de celular (incluso con reflejos, polvo o en modo oscuro), "
-                        "o ticket de transferencia de dinero, pon is_receipt: true y extrae amount, bank, operation_id y date.\n"
-                        "2. Si es una foto de una persona, selfie, paisaje, meme, apuntes de estudio, libros o documento académico, "
-                        "debes responder con is_receipt: false.\n"
-                        "3. Responde ÚNICAMENTE en formato JSON con la siguiente estructura exacta:\n"
-                        "{\n"
-                        '  "is_receipt": true,\n'
-                        '  "bank": "Nombre del banco o billetera (ej: Personal Pay, Naranja X, NBCH 24, Brubank, Onda Siempre, Mercado Pago)",\n'
-                        '  "amount": 15500.0,\n'
-                        '  "operation_id": "código o número de operación",\n'
-                        '  "date": "fecha del pago",\n'
-                        '  "recipient": "nombre o datos del destinatario"\n'
-                        "}"
-                    )
-                },
-                {"inline_data": {"mime_type": mime_type, "data": clean_b64}}
+                {"text": prompt_text},
+                {"inline_data": {"mime_type": mime_type or "image/jpeg", "data": clean_b64}}
             ]
         }],
         "generationConfig": {
@@ -330,31 +365,63 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
         }
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=18.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                text_out = data["candidates"][0]["content"]["parts"][0]["text"]
-                import json
-                parsed = json.loads(text_out)
-                if parsed.get("amount"):
-                    try:
-                        parsed["amount_formatted"] = f"${int(float(parsed['amount'])):,}".replace(",", ".")
-                    except Exception:
-                        parsed["amount_formatted"] = f"${parsed['amount']}"
-                parts = []
-                if parsed.get("bank"):
-                    parts.append(f"Banco: {parsed['bank']}")
-                if parsed.get("amount_formatted"):
-                    parts.append(f"Monto: {parsed['amount_formatted']}")
-                if parsed.get("operation_id"):
-                    parts.append(f"Op: #{parsed['operation_id']}")
-                parsed["summary"] = " | ".join(parts) if parts else ""
-                return parsed
-            else:
-                logger.warning(f"Gemini API retornó código HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        logger.debug(f"Gemini Vision falló al analizar comprobante: {e}")
+    # Intentar con gemini-2.0-flash y fallback a gemini-1.5-flash
+    models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    for model_name in models:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=18.0) as client:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidates = data.get("candidates") or []
+                    if not candidates:
+                        logger.warning(f"Gemini ({model_name}) retornó 0 candidatos.")
+                        continue
+                    parts = candidates[0].get("content", {}).get("parts", [])
+                    if not parts or "text" not in parts[0]:
+                        logger.warning(f"Gemini ({model_name}) retornó respuesta sin texto.")
+                        continue
+
+                    parsed = _parse_gemini_json(parts[0]["text"])
+                    if not parsed:
+                        continue
+
+                    # Si Gemini determinó que NO es un comprobante
+                    if not parsed.get("is_receipt"):
+                        return {
+                            "is_receipt": False,
+                            "bank": None,
+                            "amount": None,
+                            "amount_formatted": None,
+                            "operation_id": None,
+                            "date": None,
+                            "recipient": None,
+                            "summary": "No es un comprobante de pago"
+                        }
+
+                    # Si ES un comprobante legítimo
+                    if parsed.get("amount"):
+                        try:
+                            parsed["amount_formatted"] = f"${int(float(parsed['amount'])):,}".replace(",", ".")
+                        except Exception:
+                            parsed["amount_formatted"] = f"${parsed['amount']}"
+
+                    res_parts = []
+                    if parsed.get("bank"):
+                        res_parts.append(f"Banco: {parsed['bank']}")
+                    if parsed.get("amount_formatted"):
+                        res_parts.append(f"Monto: {parsed['amount_formatted']}")
+                    if parsed.get("operation_id"):
+                        res_parts.append(f"Op: #{parsed['operation_id']}")
+                    parsed["summary"] = " | ".join(res_parts) if res_parts else "Comprobante verificado"
+                    return parsed
+                elif resp.status_code in (404, 400):
+                    logger.warning(f"Gemini ({model_name}) HTTP {resp.status_code}, probando modelo alternativo...")
+                    continue
+                else:
+                    logger.warning(f"Gemini API ({model_name}) retornó código HTTP {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.debug(f"Gemini Vision ({model_name}) falló al analizar comprobante: {e}")
 
     return None

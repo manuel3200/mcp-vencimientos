@@ -529,5 +529,20 @@ def init_db():
                 """)
             except Exception:
                 pass
+
+            try:
+                conn.execute("""
+                    UPDATE pending_payments
+                    SET status = 'rejected', notes = 'Auto-descartado: clon duplicado de webhook'
+                    WHERE status = 'pending'
+                      AND id NOT IN (
+                          SELECT MAX(id)
+                          FROM pending_payments
+                          WHERE status = 'pending'
+                          GROUP BY sender_phone
+                      )
+                """)
+            except Exception:
+                pass
     finally:
         conn.close()

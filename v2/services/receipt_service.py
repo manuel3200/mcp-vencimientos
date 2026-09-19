@@ -289,11 +289,14 @@ def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
                 res["operation_id"] = cand
                 break
 
-    # D. Fallback COELSA puramente numérico (12 a 22 dígitos)
+    # D. Fallback número de operación puramente numérico (8 a 18 dígitos, excluyendo CBU/CVU de 22 dígitos y CUIT de 11 dígitos)
     if not res["operation_id"]:
-        coelsa_match = re.search(r'\b([0-9]{12,22})\b', t)
-        if coelsa_match:
-            res["operation_id"] = coelsa_match.group(1)
+        for num_m in re.finditer(r'\b([0-9]{8,18})\b', t):
+            cand_num = num_m.group(1)
+            if len(cand_num) in (11, 22) or cand_num in ("0000003100098090274687", "20421859915"):
+                continue
+            res["operation_id"] = cand_num
+            break
 
     # 7. Detectar Datos Bancarios (CVU, CBU, Alias, Titular, Coelsa)
     banking_fields = ["cvu", "cbu", "alias", "coelsa", "cuit", "cuil", "titular", "destinatario", "motivo", "cuenta", "billetera"]

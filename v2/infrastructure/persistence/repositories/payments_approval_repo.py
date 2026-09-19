@@ -41,7 +41,7 @@ def create_pending_payment(
                 if existing_op:
                     return dict(existing_op)
 
-            # 2. Idempotencia por sender_phone en ventana de 10 minutos
+            # 2. Idempotencia estricta por sender_phone en ventana de 10 minutos
             if clean_phone:
                 existing_recent = conn.execute("""
                     SELECT * FROM pending_payments
@@ -52,21 +52,28 @@ def create_pending_payment(
                 """, (clean_phone,)).fetchone()
                 if existing_recent:
                     ex_dict = dict(existing_recent)
-                    ex_amount = float(ex_dict.get("amount") or 0.0)
-                    # Si el nuevo pago aporta un monto válido o más información, actualizar sin duplicar ID
-                    if clean_amount > 0 and (ex_amount == 0.0 or abs(ex_amount - clean_amount) < 1.0):
-                        conn.execute("""
-                            UPDATE pending_payments
-                            SET amount = ?, amount_formatted = ?,
-                                bank = CASE WHEN bank IS NULL OR bank = '' THEN ? ELSE bank END,
-                                operation_id = CASE WHEN operation_id IS NULL OR operation_id = '' THEN ? ELSE operation_id END,
-                                receipt_base64 = CASE WHEN receipt_base64 IS NULL OR receipt_base64 = '' THEN ? ELSE receipt_base64 END
-                            WHERE id = ?
-                        """, (clean_amount, amount_formatted.strip(), bank.strip(), clean_op, receipt_base64.strip(), ex_dict["id"]))
+                    # Siempre reutilizar el ID pendiente existente para este cliente en la ventana de 10 min
+                    update_fields = []
+                    params = []
+                    if clean_amount > 0:
+                        update_fields.extend(["amount = ?", "amount_formatted = ?"])
+                        params.extend([clean_amount, amount_formatted.strip()])
+                    if bank.strip():
+                        update_fields.append("bank = ?")
+                        params.append(bank.strip())
+                    if clean_op:
+                        update_fields.append("operation_id = ?")
+                        params.append(clean_op)
+                    if receipt_base64.strip():
+                        update_fields.append("receipt_base64 = ?")
+                        params.append(receipt_base64.strip())
+
+                    if update_fields:
+                        params.append(ex_dict["id"])
+                        conn.execute(f"UPDATE pending_payments SET {', '.join(update_fields)} WHERE id = ?", params)
                         updated_row = conn.execute("SELECT * FROM pending_payments WHERE id = ?", (ex_dict["id"],)).fetchone()
                         return dict(updated_row) if updated_row else ex_dict
-                    elif clean_amount == 0.0 or abs(ex_amount - clean_amount) < 1.0:
-                        return ex_dict
+                    return ex_dict
 
             cursor = conn.execute("""
                 INSERT INTO pending_payments (
@@ -104,35 +111,19 @@ def cleanup_duplicate_pending_payments() -> int:
                 WHERE amount = 58000.0 AND status = 'pending'
             """)
 
-            # 2. Buscar grupos duplicados pendientes del mismo número
-            rows = conn.execute("""
-                SELECT id, sender_phone, amount, created_at, operation_id
-                FROM pending_payments
+            # 2. Descartar automáticamente todos los clones pendientes que no sean el MAX(id) por cliente
+            cursor = conn.execute("""
+                UPDATE pending_payments
+                SET status = 'rejected', notes = 'Auto-descartado: clon duplicado de webhook'
                 WHERE status = 'pending'
-                ORDER BY sender_phone, id ASC
-            """).fetchall()
-
-            seen_by_phone: Dict[str, List[Dict[str, Any]]] = {}
-            for r in rows:
-                p = r["sender_phone"]
-                seen_by_phone.setdefault(p, []).append(dict(r))
-
-            rejected_ids = []
-            for phone, items in seen_by_phone.items():
-                if len(items) > 1:
-                    # Dejar el último elemento, rechazar los anteriores como clones
-                    for clone in items[:-1]:
-                        rejected_ids.append(clone["id"])
-
-            if rejected_ids:
-                placeholders = ",".join("?" for _ in rejected_ids)
-                conn.execute(f"""
-                    UPDATE pending_payments
-                    SET status = 'rejected', notes = 'Auto-descartado: clon duplicado de webhook'
-                    WHERE id IN ({placeholders})
-                """, rejected_ids)
-
-            return len(rejected_ids)
+                  AND id NOT IN (
+                      SELECT MAX(id)
+                      FROM pending_payments
+                      WHERE status = 'pending'
+                      GROUP BY sender_phone
+                  )
+            """)
+            return cursor.rowcount
     except Exception as e:
         logger.warning(f"Error saneando duplicados de comprobantes: {e}")
         return 0

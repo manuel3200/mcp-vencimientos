@@ -143,11 +143,44 @@ def run_tests():
     parsed_corrupt = receipt_service.parse_transfer_receipt_text(ocr_corrupt_text)
     assert parsed_corrupt["amount"] == 8000.0, f"Falló corrección de artefacto OCR: {parsed_corrupt['amount']}"
 
-    # 9. Limpieza y saneamiento de registros duplicados
-    cleaned_count = database.cleanup_duplicate_pending_payments()
-    assert isinstance(cleaned_count, int)
+    # 9. Exclusión estricta de CBU/CVU (22 dígitos) y CUIT (11 dígitos) de operation_id
+    receipt_cvu_only = """
+    Transferencia exitosa
+    Monto: $ 8.000
+    CVU destino: 0000003100098090274687
+    CUIT: 20421859915
+    """
+    parsed_cvu = receipt_service.parse_transfer_receipt_text(receipt_cvu_only)
+    assert parsed_cvu["operation_id"] != "0000003100098090274687", "CVU de 22 dígitos nunca debe ser tomado como operation_id"
+    assert parsed_cvu["operation_id"] != "20421859915", "CUIT de 11 dígitos nunca debe ser tomado como operation_id"
 
-    print("    ✅ Aprobación y Pagos: 10/10 casos de prueba superados exitosamente.")
+    # 10. Limpieza y saneamiento automático de registros duplicados
+    # Simular registros duplicados en pending_payments
+    from db.connection import get_connection
+    conn = get_connection()
+    try:
+        with conn:
+            conn.execute("""
+                INSERT INTO pending_payments (sender_phone, client_name, amount, status)
+                VALUES ('5493704998877', 'Sergio Test', 58000.0, 'pending'),
+                       ('5493704998877', 'Sergio Test', 8000.0, 'pending')
+            """)
+    finally:
+        conn.close()
+
+    cleaned_count = database.cleanup_duplicate_pending_payments()
+    assert cleaned_count >= 1, f"Debió sanear al menos 1 clon duplicado, saneó: {cleaned_count}"
+
+    conn = get_connection()
+    try:
+        remaining_pending = conn.execute(
+            "SELECT id, amount, bank FROM pending_payments WHERE sender_phone = '5493704998877' AND status = 'pending'"
+        ).fetchall()
+        assert len(remaining_pending) == 1, f"Debe quedar exactamente 1 pendiente por cliente, quedaron: {len(remaining_pending)}"
+    finally:
+        conn.close()
+
+    print("    ✅ Aprobación y Pagos: 12/12 casos de prueba superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()

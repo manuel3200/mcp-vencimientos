@@ -12,7 +12,7 @@ def render_msg_banner(msg_raw: str, wa_param: str = "", err_param: str = "") -> 
         """
     if msg_raw == "combo_sold" and wa_param:
         return f"""
-        <div style="background:#065f46; border:1px solid #10b981; color:#d1fae5; padding:12px 18px; border-radius:8px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div style="background:#065f46; border:1px solid #10b981; color:#d1fae5; padding:12px 18px; border-radius:8px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:gap:10px;">
             <span>🎉 <strong>¡Combo vendido y asignado con éxito!</strong> Los perfiles quedaron asignados y las cuentas sincronizadas.</span>
             <a href="{wa_param}" target="_blank" class="btn" style="background:#25d366; color:#fff; text-decoration:none; font-weight:bold; padding:8px 16px; border-radius:6px;">📲 Enviar Accesos por WhatsApp (1 Clic)</a>
         </div>
@@ -492,6 +492,128 @@ def render_logs_html(recent_logs: List[Dict[str, Any]]) -> str:
         </div>
         """
     return html or "<div style='color:#64748b;padding:20px;text-align:center;'>No hay logs registrados en memoria.</div>"
+
+def render_pending_payments_rows(pending_payments: List[Dict[str, Any]]) -> str:
+    rows = ""
+    for p in pending_payments:
+        pid = p["id"]
+        c_name = (p.get("client_name") or "Cliente").replace("\r", "").replace("\n", " ").strip()
+        c_phone = p.get("sender_phone") or p.get("client_whatsapp") or ""
+        wa_link = f'<a href="https://wa.me/{c_phone}" target="_blank" style="color: #22c55e; font-weight: 600;">+{c_phone}</a>' if c_phone else '-'
+        plat = (p.get("platform") or "Suscripción").replace("\r", "").replace("\n", " ").strip()
+        acc_email = p.get("account_email") or "-"
+        amt_val = float(p.get("amount") or 0.0)
+        amt_str = p.get("amount_formatted") or (database.format_ars(amt_val))
+        bank_info = p.get("bank") or "Transferencia"
+        op_info = f"<br><small style='color:#94a3b8;'>Op: #{p.get('operation_id')}</small>" if p.get("operation_id") else ""
+        date_str = p.get("created_at", "")[:16]
+
+        has_receipt = bool(p.get("receipt_base64"))
+        mime_type = (p.get("receipt_mimetype") or "").lower()
+        clean_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', p.get("receipt_filename") or "comprobante")
+        is_pdf = "pdf" in mime_type or clean_filename.lower().endswith(".pdf")
+
+        if has_receipt:
+            is_pdf_js = "true" if is_pdf else "false"
+            if is_pdf:
+                receipt_html = f'<button type="button" onclick="viewReceipt({pid}, {is_pdf_js}, \'{clean_filename}\')" class="btn-action" style="background:#1e293b;border:1px solid #f43f5e;color:#f43f5e;padding:3px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;">📄 Ver PDF</button>'
+            else:
+                receipt_html = f'<button type="button" onclick="viewReceipt({pid}, {is_pdf_js}, \'{clean_filename}\')" class="btn-action" style="background:#1e293b;border:1px solid #38bdf8;color:#38bdf8;padding:3px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;">🖼️ Ver Imagen</button>'
+        elif p.get("raw_text"):
+            safe_raw = p.get("raw_text")[:50].replace('"', '&quot;').replace("'", "&#39;").replace("\n", " ")
+            receipt_html = f'<span title="{safe_raw}" style="color:#94a3b8;font-size:0.75rem;cursor:help;">📝 Texto</span>'
+        else:
+            receipt_html = '<span style="color:#64748b;font-size:0.75rem;">Sin archivo</span>'
+
+        js_client_name = re.sub(r"['\"\\\r\n]", " ", str(c_name)).strip()
+        js_plat = re.sub(r"['\"\\\r\n]", " ", str(plat)).strip()
+        acc_id_arg = p.get("account_id") or 0
+
+        rows += f"""
+        <tr>
+            <td style="width:36px;text-align:center;">
+                <input type="checkbox" class="pending-checkbox cursor-pointer" value="{pid}" onchange="updatePendingSelection()" style="width:16px;height:16px;accent-color:#10b981;">
+            </td>
+            <td><strong style="color:#38bdf8;font-size:0.95rem;">#P{pid}</strong></td>
+            <td><strong>{c_name}</strong><br><small>{wa_link}</small></td>
+            <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span><br><code style="font-size:0.75rem;">{acc_email}</code></td>
+            <td><strong style="color:#10b981;font-size:0.95rem;">{amt_str}</strong><br><small style="color:#cbd5e1;">{bank_info}</small>{op_info}</td>
+            <td><small style="color:#94a3b8;">{date_str}</small></td>
+            <td>{receipt_html}</td>
+            <td style="white-space:nowrap;">
+                <button type="button" onclick="openApprovePaymentModal({pid}, '{js_client_name}', '{js_plat}', '{amt_str}')" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" title="Aprobar Pago">✅ Aprobar</button>
+                <button type="button" onclick="openPartialPaymentModal('{acc_id_arg}', '{js_client_name}', '{js_plat}', 0, {pid}, {amt_val})" class="btn-action" style="background:#78350f;color:#fde68a;border:none;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;cursor:pointer;" title="Registrar Pago Parcial">💵 Parcial</button>
+                <button type="button" onclick="openRejectPaymentModal({pid}, '{js_client_name}')" class="btn-action" style="background:#dc2626;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;cursor:pointer;" title="Denegar Pago">❌ Denegar</button>
+            </td>
+        </tr>
+        """
+    return rows or "<tr><td colspan='8' style='text-align:center;color:#10b981;padding:24px;'>🎉 ¡No hay pagos pendientes de aprobación! Todos los cobros están al día.</td></tr>"
+
+def render_fallen_reports_rows(fallen_reports: List[Dict[str, Any]]) -> str:
+    rows = ""
+    for r in fallen_reports:
+        rid = r["id"]
+        c_name = r.get("client_name") or "Cliente"
+        c_phone = r.get("sender_phone") or r.get("client_whatsapp") or ""
+        wa_link = f'<a href="https://wa.me/{c_phone}" target="_blank" style="color: #22c55e; font-weight: 600;">+{c_phone}</a>' if c_phone else '-'
+        plat = r.get("platform") or "Streaming"
+        acc_email = r.get("account_email") or "-"
+        prof = f" ({r.get('profile_name')})" if r.get('profile_name') else ""
+        raw_msg = r.get("raw_message") or ""
+        safe_raw = raw_msg[:80].replace('"', '&quot;').replace("'", "&#39;")
+        st = r.get("status") or "pending"
+        date_str = (r.get("created_at") or "")[:16]
+
+        if st == "pending":
+            st_badge = '<span class="badge badge-danger" style="font-size:0.75rem;">🚨 Pendiente</span>'
+        elif st == "waiting":
+            st_badge = '<span class="badge" style="background:#b45309;color:#fef3c7;font-size:0.75rem;">⏳ En Espera</span>'
+        elif st == "resolved":
+            st_badge = '<span class="badge badge-ok" style="font-size:0.75rem;">✓ Resuelto</span>'
+        else:
+            st_badge = f'<span class="badge" style="background:#334155;color:#94a3b8;font-size:0.75rem;">{st}</span>'
+
+        safe_client_name = c_name.replace("'", "\\'")
+        actions_html = ""
+        if st in ("pending", "waiting"):
+            actions_html += f"""
+            <form action="/api/fallen-reports/authorize/{rid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Autorizar y asignar nueva cuenta libre a {safe_client_name}?');">
+                <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Autorizar Reemplazo">🔄 Cambiar</button>
+            </form>
+            """
+            if st == "pending":
+                actions_html += f"""
+                <form action="/api/fallen-reports/wait/{rid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Poner en espera a {safe_client_name}? Se le avisará que aguarde.');">
+                    <button type="submit" class="btn-action" style="background:#d97706;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Poner en Espera">⏳ Esperar</button>
+                </form>
+                """
+            actions_html += f"""
+            <form action="/api/fallen-reports/dismiss/{rid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Descartar este reporte?');">
+                <button type="submit" class="btn-action" style="background:#475569;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Descartar">✕</button>
+            </form>
+            """
+        else:
+            notes_str = (r.get("admin_notes") or "Completado").replace('"', '&quot;')
+            actions_html = f'<small style="color:#94a3b8;" title="{notes_str}">Finalizado</small>'
+            if r.get("reassigned_account_id"):
+                actions_html += f"""
+                <form action="/api/fallen-reports/rollback/{rid}" method="POST" style="display:inline;margin-left:6px;" onsubmit="return confirm('¿Deshacer reemplazo del reporte #C{rid}? Se devolverá la cuenta asignada a stock y se reactivará la anterior.');">
+                    <button type="submit" class="btn-action" style="color:#f59e0b;font-size:0.7rem;padding:2px 6px;" title="Deshacer reemplazo y restaurar inventario">🔄 Deshacer</button>
+                </form>
+                """
+
+        rows += f"""
+        <tr>
+            <td><strong style="color:#f43f5e;font-size:0.95rem;">#C{rid}</strong></td>
+            <td><strong>{c_name}</strong><br><small>{wa_link}</small></td>
+            <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span><br><code style="font-size:0.75rem;">{acc_email}{prof}</code></td>
+            <td><small style="color:#cbd5e1;" title="{safe_raw}">{safe_raw or 'Reporte de caída'}</small></td>
+            <td>{st_badge}</td>
+            <td><small style="color:#94a3b8;">{date_str}</small></td>
+            <td style="white-space:nowrap;">{actions_html}</td>
+        </tr>
+        """
+    return rows or "<tr><td colspan='7' style='text-align:center;color:#10b981;padding:24px;'>🎉 ¡No hay incidentes ni reportes de cuentas caídas pendientes!</td></tr>"
 
 def render_client_select_options(clients_list: List[Dict[str, Any]]) -> str:
     opts = ""

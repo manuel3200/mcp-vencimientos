@@ -70,12 +70,17 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
             parsed_a = parse_money(custom_amt_str)
             if parsed_a > 0:
                 custom_amt = parsed_a
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Error parseando amount en approve_pending_payment_api #{payment_id}: {e}")
 
-    res = database.approve_pending_payment(payment_id, admin_user=f"Web ({username})", custom_amount=custom_amt)
+    try:
+        res = database.approve_pending_payment(payment_id, admin_user=f"Web ({username})", custom_amount=custom_amt)
+    except Exception as e:
+        logger.error(f"Error crítico aprobando pago #{payment_id}: {e}", exc_info=True)
+        return RedirectResponse(url="/?msg=error_al_aprobar#pending-payments", status_code=303)
+
     if res.get("success"):
-        p = res.get("payment", {})
+        p = res.get("payment") or {}
         amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
         phone = p.get("sender_phone") or p.get("client_whatsapp")
         if phone:
@@ -89,17 +94,24 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
                         f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu pago y preferencia! 🙌✨"
                     )
                     await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Error enviando WhatsApp de pago #{payment_id}: {e}")
 
-        await send_telegram_message(
-            f"✅ <b>PAGO #P{payment_id} APROBADO DESDE PANEL WEB</b>\n\n"
-            f"• Cliente: <b>{p.get('client_name')}</b>\n"
-            f"• Servicio: <b>{p.get('platform')}</b> (<code>{p.get('account_email') or '-'}</code>)\n"
-            f"• Monto: <b>{amt_fmt}</b>\n"
-            f"• Aprobado por: <b>{username}</b>"
-        )
-    return RedirectResponse(url="/#pending-payments", status_code=303)
+        try:
+            await send_telegram_message(
+                f"✅ <b>PAGO #P{payment_id} APROBADO DESDE PANEL WEB</b>\n\n"
+                f"• Cliente: <b>{p.get('client_name') or 'Cliente'}</b>\n"
+                f"• Servicio: <b>{p.get('platform') or '-'}</b> (<code>{p.get('account_email') or '-'}</code>)\n"
+                f"• Monto: <b>{amt_fmt}</b>\n"
+                f"• Aprobado por: <b>{username}</b>"
+            )
+        except Exception as e:
+            logger.warning(f"Error enviando Telegram de pago #{payment_id}: {e}")
+        return RedirectResponse(url="/?msg=pago_aprobado#pending-payments", status_code=303)
+    else:
+        err_msg = res.get("error", "No se pudo aprobar el pago")
+        logger.warning(f"approve_pending_payment no exitoso para #{payment_id}: {err_msg}")
+        return RedirectResponse(url="/#pending-payments", status_code=303)
 
 
 @router.post("/api/pending-payments/reject/{payment_id}")
@@ -110,9 +122,15 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
     username = _get_username(user)
     form = await request.form()
     reason = str(form.get("reason", "")).strip() if form else ""
-    res = database.reject_pending_payment(payment_id, reason=reason, admin_user=f"Web ({username})")
+
+    try:
+        res = database.reject_pending_payment(payment_id, reason=reason, admin_user=f"Web ({username})")
+    except Exception as e:
+        logger.error(f"Error rechazando pago #{payment_id}: {e}", exc_info=True)
+        return RedirectResponse(url="/?msg=error_al_rechazar#pending-payments", status_code=303)
+
     if res.get("success"):
-        p = res.get("payment", {})
+        p = res.get("payment") or {}
         phone = p.get("sender_phone") or p.get("client_whatsapp")
         if phone:
             try:
@@ -125,16 +143,20 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
                         f"Por favor revisa la operación o comunícate con nosotros para verificarlo."
                     )
                     await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Error enviando WhatsApp de rechazo #{payment_id}: {e}")
 
-        await send_telegram_message(
-            f"❌ <b>COMPROBANTE #P{payment_id} DENEGADO DESDE PANEL WEB</b>\n\n"
-            f"• Cliente: <b>{p.get('client_name')}</b>\n"
-            f"• Motivo: {reason or 'Sin especificar'}\n"
-            f"• Denegado por: <b>{username}</b>"
-        )
-    return RedirectResponse(url="/#pending-payments", status_code=303)
+        try:
+            await send_telegram_message(
+                f"❌ <b>COMPROBANTE #P{payment_id} DENEGADO DESDE PANEL WEB</b>\n\n"
+                f"• Cliente: <b>{p.get('client_name') or 'Cliente'}</b>\n"
+                f"• Motivo: {reason or 'Sin especificar'}\n"
+                f"• Denegado por: <b>{username}</b>"
+            )
+        except Exception as e:
+            logger.warning(f"Error enviando Telegram de rechazo #{payment_id}: {e}")
+
+    return RedirectResponse(url="/?msg=pago_rechazado#pending-payments", status_code=303)
 
 
 @router.get("/api/pending-payments/{payment_id}/receipt")

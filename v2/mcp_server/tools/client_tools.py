@@ -1,0 +1,220 @@
+import os
+import re
+import json
+import logging
+from typing import Optional, List, Dict, Any, Union
+
+from mcp_server.instance import mcp
+from mcp_server.models import ItemCuentaLote
+import database
+import system_logger
+import whatsapp_client
+from telegram_bot import send_telegram_message, format_and_send_alert, send_full_backup_to_telegram
+from scheduler import check_and_send_alerts, check_and_send_stock_alerts
+
+logger = logging.getLogger("mcp")
+
+
+@mcp.tool()
+async def buscar_cliente(query: str) -> str:
+    """Busca un cliente por nombre/alias ('Carlos', 'Maik'), código (CLI-001), WhatsApp o Telegram."""
+    client = database.search_client(query)
+    if not client:
+        # Fallback inteligente: buscar en la libreta de contactos de Chatwoot (WhatsApp)
+        cw_contacts = await whatsapp_client.search_chatwoot_contacts(query)
+        if cw_contacts:
+            c = cw_contacts[0]
+            loc_attr = c.get("additional_attributes") or {}
+            loc_parts = [loc_attr.get("city"), loc_attr.get("country")]
+            loc = ", ".join([p for p in loc_parts if p]) or "No especificada"
+            return (
+                f"📱 <b>Contacto encontrado en Chatwoot (WhatsApp):</b>\n"
+                f"• Nombre: <b>{c.get('name') or 'Sin nombre'}</b>\n"
+                f"• WhatsApp: <code>{c.get('phone_number') or 'No registrado'}</code>\n"
+                f"• Ubicación: {loc}\n"
+                f"• Chatwoot ID: #{c.get('id')}\n\n"
+                f"ℹ️ <i>Este contacto existe en Chatwoot/WhatsApp pero <b>aún no tiene suscripciones o cuenta comercial activa en el CRM</b>.</i>\n\n"
+                f"👉 <b>Acciones que puedes pedirme:</b>\n"
+                f"• <i>'Registra a {c.get('name')} como cliente'</i> para darlo de alta en el CRM.\n"
+                f"• <i>'Mándale un mensaje a {c.get('name')} por WhatsApp diciéndole...'</i>\n"
+                f"• <i>'Véndele una cuenta a {c.get('name')}...'</i>"
+            )
+        return f"❌ No se encontró ningún cliente ni contacto en Chatwoot que coincida con '{query}'."
+
+    tipo = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
+    lines = [
+        f"👤 <b>Cliente:</b> {client['name']} ({client['client_code']})",
+        f"• Tipo: {tipo}",
+        f"• WhatsApp: {client.get('whatsapp') or 'No registrado'}",
+        f"• Telegram: {client.get('telegram') or 'No registrado'}",
+        f"• Notas: {client.get('notes') or '-'}",
+        "\n📺 <b>Servicios contratados:</b>"
+    ]
+
+    accounts = client.get("accounts", [])
+    if not accounts:
+        lines.append("  (No tiene cuentas asociadas actualmente)")
+    else:
+        for a in accounts:
+            estado_icon = "✅ Activa" if a["status"] == "ocupada" else ("🚨 CAÍDA" if a["status"] == "caida" else a["status"])
+            perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
+            pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
+            lines.append(
+                f"  • {a['platform']}{perf}: {a['email']} | Clave: {a['password']}{pin}\n"
+                f"    Vence: {a['expiry_date']} | Estado: {estado_icon} | Cobro: {a.get('price') or '-'}"
+            )
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def consultar_ficha_cliente(cliente: str) -> str:
+    """Consulta la Ficha 360° integral de un cliente: salud de pagos, LTV en ARS, ganancia neta generada, suscripciones activas y link de cobro consolidado."""
+    profile = database.get_client_360_profile(cliente)
+    if not profile:
+        return f"❌ No se encontró ningún cliente con '{cliente}'."
+
+    c = profile["client"]
+    health = profile["health_status"]
+    kpis = profile["financial_kpis"]
+    act = profile["active_accounts"]
+    billing = profile["consolidated_billing"]
+
+    lines = [
+        f"👤 <b>FICHA 360°: {c['name']}</b> ({c['client_code']})",
+        f"• Tipo: {c['client_type_label']}",
+        f"• Estado: {health['label']} ({health['summary']})",
+        f"• Contacto: WhatsApp: {c.get('whatsapp') or '-'} | Telegram: {c.get('telegram') or '-'}",
+        f"• Notas: {c.get('notes') or '-'}",
+        "",
+        "💰 <b>MÉTRICAS FINANCIERAS (ARS):</b>",
+        f"• LTV (Total Cobrado Histórico): {kpis['ltv_formatted']} ({kpis['payments_count']} cobros)",
+        f"• Ganancia Neta Real Acumulada: {kpis['total_profit_formatted']}",
+        f"• Facturación Mensual Activa: {kpis['monthly_committed_spend_formatted']}",
+    ]
+    if kpis.get("last_payment"):
+        lp = kpis["last_payment"]
+        lines.append(f"• Último Pago: {lp['amount_formatted']} ({str(lp.get('created_at', ''))[:10]}) vía {lp.get('payment_method')}")
+
+    lines.append(f"\n📺 <b>SUSCRIPCIONES ACTIVAS ({len(act)}):</b>")
+    if not act:
+        lines.append("  (No tiene servicios activos actualmente)")
+    else:
+        for a in act:
+            perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
+            pin = f" [PIN: {a['profile_pin']}]" if a.get("profile_pin") else ""
+            lines.append(
+                f"  • {a['platform']}{perf}: {a['email']} | Clave: {a['password']}{pin}\n"
+                f"    Vence: {a.get('expiry_date')} ({a.get('days_label')}) | Cobro: {a.get('price_formatted')}"
+            )
+
+    if billing.get("success") and billing.get("wa_link"):
+        lines.append("\n📲 <b>COBRO CONSOLIDADO WHATSAPP (1 Clic):</b>")
+        lines.append(f"• Total a Cobrar: {billing['total_amount_formatted']}")
+        lines.append(f"• Enlace directo: {billing['wa_link']}")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def generar_cobro_consolidado_whatsapp(cliente: str, metodos_pago: str = "") -> str:
+    """Genera el mensaje y enlace de 1 clic para cobrar todas las suscripciones activas de un cliente vía WhatsApp."""
+    res = database.generate_consolidated_billing_whatsapp(cliente, payment_methods=metodos_pago)
+    if not res.get("success"):
+        return f"❌ {res.get('error', 'Error generando cobro consolidado')}"
+
+    return (
+        f"📲 <b>Cobro Consolidado WhatsApp para {res['client_name']}:</b>\n\n"
+        f"💰 <b>Total Consolidado:</b> {res['total_amount_formatted']} ({res['accounts_count']} cuentas)\n"
+        f"🔗 <b>Enlace de 1 Clic (wa.me):</b> {res['wa_link']}\n\n"
+        f"💬 <b>Texto del Mensaje:</b>\n{res['message_text']}"
+    )
+
+
+@mcp.tool()
+def listar_clientes_activos() -> str:
+    """Muestra el listado completo de clientes registrados con su número de cuentas activas."""
+    clients = database.list_all_clients()
+    if not clients:
+        return "No hay clientes registrados en la base de datos."
+
+    lines = [f"👥 <b>Clientes Registrados ({len(clients)}):</b>\n"]
+    for c in clients:
+        tipo = "👔 Revendedor" if c.get("client_type") == "revendedor" else "👤 Final"
+        lines.append(
+            f"• [{c['client_code']}] {c['name']} ({tipo}) - Cuentas activas: {c.get('active_accounts_count', 0)}\n"
+            f"  WhatsApp: {c.get('whatsapp') or '-'} | Telegram: {c.get('telegram') or '-'}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def registrar_cliente(
+    nombre: str,
+    whatsapp: str = "",
+    telegram: str = "",
+    tipo_cliente: str = "consumidor_final",
+    notas: str = ""
+) -> str:
+    """Registra o da de alta un nuevo cliente en el CRM asignándole automáticamente su código único CLI-XXX:
+    - nombre: Nombre completo o alias del cliente (ej: 'Carlos Gómez').
+    - whatsapp: Número de teléfono con código de país (ej: '+5493704418231').
+    - telegram: (Opcional) Usuario de Telegram (@usuario).
+    - tipo_cliente: 'consumidor_final' o 'revendedor'.
+    - notas: Notas adicionales sobre el cliente o procedencia.
+    """
+    res = database.find_or_create_client(
+        name=nombre,
+        whatsapp=whatsapp,
+        telegram=telegram,
+        client_type=tipo_cliente,
+        notes=notas
+    )
+    tipo = "👔 Revendedor" if res.get("client_type") == "revendedor" else "👤 Consumidor Final"
+    return (
+        f"✅ CLIENTE REGISTRADO CON ÉXITO EN EL CRM:\n"
+        f"• Código: <code>{res['client_code']}</code>\n"
+        f"• Nombre: <b>{res['name']}</b>\n"
+        f"• Tipo: {tipo}\n"
+        f"• WhatsApp: <code>{res.get('whatsapp') or 'No registrado'}</code>\n"
+        f"• Telegram: {res.get('telegram') or 'No registrado'}\n"
+        f"• Notas: {res.get('notes') or '-'}"
+    )
+
+
+@mcp.tool()
+def generar_mensaje_whatsapp(
+    correo_o_id: str,
+    tipo_mensaje: str = "entrega",
+    metodos_pago: str = ""
+) -> str:
+    """Genera plantillas profesionales y enlaces directos de 1 clic para WhatsApp (wa.me):
+    - correo_o_id: Correo o ID de la cuenta/cliente.
+    - tipo_mensaje: 'entrega' (datos de acceso y reglas de uso), 'cobro' (recordatorio de pago y vencimiento) o 'reemplazo' (reposición de cuenta caída).
+    - metodos_pago: (Opcional) Texto con métodos de pago si se desea personalizar.
+    """
+    res = database.generate_whatsapp_message(
+        account_or_id=correo_o_id,
+        message_type=tipo_mensaje,
+        payment_methods=metodos_pago
+    )
+    if not res.get("success"):
+        return f"❌ Error: {res.get('error')}"
+
+    tipo_nombre = {
+        "entrega": "ENTREGA DE SERVICIO",
+        "cobro": "RECORDATORIO DE COBRO Y RENOVACIÓN",
+        "reemplazo": "REPOSICIÓN DE CUENTA CAÍDA"
+    }.get(res['message_type'], res['message_type'].upper())
+
+    return (
+        f"💬 <b>MENSAJE LISTO PARA WHATSAPP ({tipo_nombre}):</b>\n\n"
+        f"{res['message_text']}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📲 <b>ENLACE DIRECTO (1 CLIC):</b>\n"
+        f"{res['wa_link']}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👉 Haz clic en el enlace para abrir WhatsApp con el mensaje ya redactado y listo para enviar."
+    )
+
+# --- Herramientas de Pantallas Compartidas y Perfiles (Paso 3) ---

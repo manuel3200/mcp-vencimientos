@@ -23,11 +23,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -r v1/requirements.txt
+          pip install -r v2/requirements.txt
 
-      - name: 🛡️ Run Test Harness Verification (Quality Gate)
+      - name: 🛡️ Run Test Harness Verification v1 (Baseline Gate)
         run: |
           python v1/harness_verify.py
+
+      - name: 🛡️ Run Test Harness Verification v2 (Clean Architecture Gate)
+        run: |
+          python v2/harness_verify.py
 
       - name: Set up QEMU (for ARM64 support)
         uses: docker/setup-qemu-action@v3
@@ -42,12 +46,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push image
+      - name: Build and push v2 multi-arch image
         uses: docker/build-push-action@v5
         with:
-          context: ./v1
-          file: ./v1/Dockerfile
+          context: ./v2
+          file: ./v2/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:v2

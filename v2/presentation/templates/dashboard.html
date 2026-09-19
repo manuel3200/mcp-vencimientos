@@ -1,0 +1,2584 @@
+<!DOCTYPE html>
+<html class="dark" lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport"/>
+  <title>StreamVault CRM & Ops | Gemini MCP</title>
+  
+  <!-- Fonts & Icons -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@100..900&family=JetBrains+Mono:wght@100..900&display=swap" rel="stylesheet"/>
+  
+  <!-- Tailwind CSS with custom Stitch theme -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-container-high": "#2a2a2c",
+            "primary-container": "#8083ff",
+            "on-background": "#e5e1e4",
+            "surface-container-highest": "#353437",
+            "background": "#131315",
+            "primary-fixed": "#e1e0ff",
+            "primary": "#c0c1ff",
+            "outline-variant": "#464554",
+            "on-error-container": "#ffdad6",
+            "secondary-fixed": "#e9ddff",
+            "on-primary-fixed": "#07006c",
+            "on-primary": "#1000a9",
+            "surface-container-low": "#1c1b1d",
+            "on-primary-container": "#0d0096",
+            "surface-bright": "#39393b",
+            "on-tertiary-container": "#000703",
+            "inverse-surface": "#e5e1e4",
+            "secondary-container": "#571bc1",
+            "on-surface-variant": "#c7c4d7",
+            "surface-container-lowest": "#0e0e10",
+            "on-secondary-fixed": "#23005c",
+            "surface": "#131315",
+            "on-tertiary-fixed": "#002113",
+            "on-tertiary": "#003824",
+            "on-error": "#690005",
+            "tertiary": "#4edea3",
+            "on-surface": "#e5e1e4",
+            "surface-container": "#201f22",
+            "on-tertiary-fixed-variant": "#005236",
+            "primary-fixed-dim": "#c0c1ff",
+            "outline": "#908fa0",
+            "inverse-on-surface": "#313032",
+            "secondary-fixed-dim": "#d0bcff",
+            "tertiary-fixed": "#6ffbbe",
+            "error": "#ffb4ab",
+            "surface-variant": "#353437",
+            "inverse-primary": "#494bd6",
+            "on-secondary-container": "#c4abff",
+            "secondary": "#d0bcff",
+            "error-container": "#93000a",
+            "on-primary-fixed-variant": "#2f2ebe",
+            "on-secondary": "#3c0091",
+            "tertiary-container": "#00885d",
+            "on-secondary-fixed-variant": "#5516be",
+            "surface-tint": "#c0c1ff",
+            "surface-dim": "#131315",
+            "tertiary-fixed-dim": "#4edea3"
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.375rem",
+            "xl": "0.75rem",
+            "2xl": "1rem",
+            "full": "9999px"
+          },
+          spacing: {
+            "space-xs": "0.25rem",
+            "space-sm": "0.5rem",
+            "space-md": "0.75rem",
+            "space-lg": "1rem",
+            "space-xl": "1.5rem",
+            "gutter": "1rem",
+            "gutter-desktop": "1.5rem"
+          },
+          fontFamily: {
+            "display-lg": ["Geist", "sans-serif"],
+            "data-tabular": ["JetBrains Mono", "monospace"],
+            "label-code": ["JetBrains Mono", "monospace"],
+            "body-sm": ["Geist", "sans-serif"],
+            "headline-sm": ["Geist", "sans-serif"],
+            "headline-md": ["Geist", "sans-serif"],
+            "headline-lg": ["Geist", "sans-serif"]
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    @layer base {
+      html, body { margin: 0; padding: 0; }
+      body { overscroll-behavior-y: none; }
+    }
+    /* Scrollbar personalizada discreta */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #131315; }
+    ::-webkit-scrollbar-thumb { background: #2a2a2c; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #353437; }
+
+    /* Estilos para tablas y chips inyectados por el backend */
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 12px; font-size: 0.85rem; border-bottom: 1px solid #201f22; }
+    th { color: #c7c4d7; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    
+    .badge { padding: 3px 8px; border-radius: 6px; font-size: 0.72rem; font-weight: 700; display: inline-block; font-family: 'JetBrains Mono', monospace; }
+    .badge-ok { background: rgba(0, 136, 93, 0.25); color: #4edea3; border: 1px solid rgba(78, 222, 163, 0.3); }
+    .badge-warn { background: rgba(245, 158, 11, 0.2); color: #fde047; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-danger { background: rgba(147, 0, 10, 0.35); color: #ffb4ab; border: 1px solid rgba(255, 180, 171, 0.3); }
+    
+    code { font-family: 'JetBrains Mono', monospace; background: #1c1b1d; padding: 2px 5px; border-radius: 4px; font-size: 0.8rem; border: 1px solid #2a2a2c; }
+    
+    .btn-action { background: #201f22; border: 1px solid #353437; color: #e5e1e4; border-radius: 6px; padding: 4px 8px; font-size: 0.75rem; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .btn-action:hover { background: #2a2a2c; color: #fff; }
+    .btn-warn { color: #f59e0b; border-color: rgba(245, 158, 11, 0.4); }
+    .btn-warn:hover { background: rgba(245, 158, 11, 0.15); }
+    .btn-replace { background: rgba(0, 136, 93, 0.3); color: #4edea3; border: 1px solid rgba(78, 222, 163, 0.4); }
+    .btn-replace:hover { background: #00885d; color: #fff; }
+
+    /* Touch optimizations para celular */
+    @media (max-width: 1024px) {
+      .btn-action, button, select, input { min-height: 38px; }
+      table th, table td { padding: 8px 10px; font-size: 0.8rem; }
+    }
+  </style>
+</head>
+<body class="bg-background font-body-sm text-on-surface antialiased min-h-screen selection:bg-primary-container selection:text-white pb-20 lg:pb-8">
+
+  <!-- Backdrop para navegación móvil -->
+  <div id="mobile-sidebar-backdrop" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-40 hidden lg:hidden transition-opacity" onclick="toggleMobileSidebar()"></div>
+
+  <!-- Left Sidebar Navigation Chrome (Desktop & Mobile Drawer) -->
+  <aside id="main-sidebar" class="fixed left-0 top-0 h-full w-72 bg-surface-container-low border-r border-surface-container flex flex-col justify-between z-50 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
+    <div class="p-space-lg flex flex-col gap-space-md">
+      <!-- Logo Header with Brand Mark -->
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-space-sm">
+          <div class="w-9 h-9 rounded-lg bg-surface-container-highest border border-outline-variant/30 flex items-center justify-center overflow-hidden flex-shrink-0 text-primary">
+            <span class="material-symbols-outlined text-2xl">stream</span>
+          </div>
+          <div class="flex flex-col">
+            <span class="font-headline-sm text-base text-on-surface font-semibold tracking-tight">StreamVault</span>
+            <span class="font-label-code text-[11px] text-on-surface-variant uppercase tracking-wider">CRM & Expiry Bot</span>
+          </div>
+        </div>
+        <!-- Botón cerrar solo móvil -->
+        <button class="lg:hidden p-1 rounded hover:bg-surface-container text-on-surface-variant" onclick="toggleMobileSidebar()">
+          <span class="material-symbols-outlined text-xl">close</span>
+        </button>
+      </div>
+
+      <!-- Status Badge -->
+      <div class="bg-surface-container px-3 py-1.5 rounded flex items-center gap-2 border border-outline-variant/20">
+        <span class="w-2 h-2 rounded-full bg-tertiary shadow-[0_0_8px_#4edea3]"></span>
+        <span class="font-label-code text-[11px] text-tertiary-fixed">WA & TG: <span class="{{HEALTH_BADGE_CLASS}}">{{HEALTH_STATUS}}</span></span>
+      </div>
+    </div>
+
+    <!-- Tabbed Navigation Links with data-nav-target -->
+    <div class="flex-1 px-space-md overflow-y-auto">
+      <nav class="flex flex-col gap-1" id="sidebar-nav">
+        <!-- Overview Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded transition-all bg-surface-container-high text-primary font-semibold border border-primary/20 shadow-sm" data-nav-target="overview" href="#overview">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">dashboard</span>
+            <span class="text-sm font-medium">Overview & Ops</span>
+          </div>
+          <span class="w-1.5 h-1.5 rounded-full bg-primary"></span>
+        </a>
+
+        <!-- Esperando Pago Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="pending-payments" href="#pending-payments">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg text-amber-400">hourglass_top</span>
+            <span class="text-sm font-medium">Esperando Pago</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded">{{PENDING_PAYMENTS_COUNT}}</span>
+        </a>
+
+        <!-- Cuentas Caídas & Incidentes Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="fallen-reports" href="#fallen-reports">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg text-rose-400">report_problem</span>
+            <span class="text-sm font-medium">Cuentas Caídas</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-rose-500/20 text-rose-300 font-bold px-2 py-0.5 rounded">{{FALLEN_REPORTS_COUNT}}</span>
+        </a>
+
+        <!-- Active Accounts Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="accounts" href="#accounts">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">vpn_key</span>
+            <span class="text-sm font-medium">Cuentas Activas</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-surface-container-high px-1.5 py-0.5 rounded text-on-surface">{{ACTIVE_ACCOUNTS_COUNT}}</span>
+        </a>
+
+        <!-- Pantallas Compartidas Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="screens" href="#screens">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">tv</span>
+            <span class="text-sm font-medium">Pantallas / Perfiles</span>
+          </div>
+          <span class="font-label-code text-xs text-secondary-fixed">{{SCREENS_OVERVIEW_COUNT}}</span>
+        </a>
+
+        <!-- Free Stock & Hot-Swap Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="stock" href="#stock">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">inventory_2</span>
+            <span class="text-sm font-medium">Stock & Hot-Swap</span>
+          </div>
+          <span class="font-label-code text-xs bg-tertiary-container/30 text-tertiary px-1.5 py-0.5 rounded">{{FREE_STOCK_COUNT}} lib</span>
+        </a>
+
+        <!-- Catálogo & Combos -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="catalog" href="#catalog">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">loyalty</span>
+            <span class="text-sm font-medium">Catálogo & Combos</span>
+          </div>
+          <span class="font-data-tabular text-xs text-on-surface-variant">{{CATALOG_COUNT}}</span>
+        </a>
+
+        <!-- Suppliers Pool -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="suppliers" href="#suppliers">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">storefront</span>
+            <span class="text-sm font-medium">Mayoristas & Cuentas Madre</span>
+          </div>
+          <span class="font-label-code text-xs text-on-surface-variant">{{SUPPLIERS_COUNT}}</span>
+        </a>
+
+        <!-- Financial Ledger -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="finance" href="#finance">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">receipt_long</span>
+            <span class="text-sm font-medium">Finanzas & Cobros</span>
+          </div>
+          <span class="font-label-code text-xs text-tertiary">{{FINANCE_PROFIT}}</span>
+        </a>
+
+        <!-- Integrations (WA, Chatwoot, OAuth) -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="integrations" href="#integrations">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">hub</span>
+            <span class="text-sm font-medium">WhatsApp & Integraciones</span>
+          </div>
+          <span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span>
+        </a>
+
+        <!-- Tools & Backup -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="tools" href="#tools">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">tune</span>
+            <span class="text-sm font-medium">Herramientas & CSV</span>
+          </div>
+        </a>
+
+        <!-- Logs & Health -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="logs" href="#logs">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg">terminal</span>
+            <span class="text-sm font-medium">Auditoría & Logs</span>
+          </div>
+          <span class="font-label-code text-xs {{HEALTH_ERRORS_COLOR}}">{{HEALTH_ERRORS_COUNT}} err</span>
+        </a>
+      </nav>
+    </div>
+
+    <!-- Bottom Dispatcher Status Card -->
+    <div class="p-3 m-3 bg-surface-container rounded-lg border border-surface-container-highest/60 flex flex-col gap-2">
+      <div class="flex items-center justify-between">
+        <span class="font-label-code text-[10px] text-on-surface-variant uppercase">Sesión Activa</span>
+        <a href="/logout" class="font-label-code text-[10px] text-error hover:underline flex items-center gap-1">
+          <span class="material-symbols-outlined text-xs">logout</span> Salir
+        </a>
+      </div>
+      <div class="flex items-center justify-between text-xs">
+        <span class="text-on-surface font-medium">👤 {{USER}}</span>
+        <span class="font-label-code text-[10px] text-tertiary flex items-center gap-1">
+          <span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span> 2FA Activo
+        </span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Application Wrapper -->
+  <div class="lg:pl-72 flex flex-col min-h-screen">
+    
+    <!-- Top Global Header -->
+    <header class="fixed top-0 left-0 lg:left-72 right-0 h-16 bg-surface-container-lowest/90 backdrop-blur-xl z-30 px-4 lg:px-gutter-desktop border-b border-surface-container flex items-center justify-between gap-2">
+      
+      <!-- Mobile Hamburger & Global Search -->
+      <div class="flex items-center gap-2 flex-1 max-w-xl">
+        <button class="lg:hidden p-2 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface-variant" onclick="toggleMobileSidebar()">
+          <span class="material-symbols-outlined text-xl">menu</span>
+        </button>
+        
+        <div class="relative w-full flex items-center">
+          <span class="material-symbols-outlined absolute left-3 text-on-surface-variant text-base">search</span>
+          <input 
+            id="global-search-input" 
+            class="w-full h-9 pl-9 pr-10 bg-surface-container-low text-on-surface placeholder-on-surface-variant text-xs sm:text-sm rounded border border-outline-variant/30 focus:outline-none focus:ring-1 focus:ring-primary transition-all" 
+            placeholder="Buscar cliente, teléfono, email, perfil..." 
+            type="text"
+          />
+          <kbd class="hidden sm:inline absolute right-3 font-label-code text-[10px] bg-surface-container-high px-1.5 py-0.5 rounded text-on-surface-variant">Enter</kbd>
+        </div>
+      </div>
+
+      <!-- Right Header Actions -->
+      <div class="flex items-center gap-2 sm:gap-3">
+        <!-- Quick Action: Nueva Venta -->
+        <button 
+          onclick="openSellAccountModal()" 
+          class="h-9 px-3 bg-primary text-on-primary text-xs sm:text-sm font-semibold rounded flex items-center gap-1 hover:bg-primary-container transition-colors shadow-sm"
+          type="button"
+        >
+          <span class="material-symbols-outlined text-sm">add</span>
+          <span class="hidden sm:inline">Nueva Venta</span>
+        </button>
+
+        <!-- Dropdown rápido Ficha 360 -->
+        <div class="hidden md:flex items-center">
+          <select onchange="if(this.value) openClient360Modal(this.value); this.value='';" class="h-9 px-2 bg-surface-container-low border border-surface-container-highest text-on-surface text-xs rounded">
+            <option value="">👤 Ficha 360° Rápida...</option>
+            {{CLIENT_SELECT_OPTIONS}}
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Views -->
+    <main class="w-full pt-20 px-3 sm:px-6 lg:px-gutter-desktop min-h-screen bg-background pb-24">
+      
+      <!-- Mensajes flash y alertas del sistema -->
+      <div class="mb-4">
+        {{MSG_BANNER}}
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 1: OVERVIEW & COMMAND CENTER (#view-overview - Default Active) -->
+      <!-- ========================================================================= -->
+      <div id="view-overview" class="view-panel flex flex-col w-full gap-5">
+        <!-- Operations Header & Quick Bar -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h1 class="text-xl sm:text-2xl font-bold text-on-surface tracking-tight">Centro de Control y Finanzas</h1>
+              <div class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/30 text-tertiary font-label-code text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse shadow-[0_0_8px_#4edea3]"></span>
+                <span>En Línea</span>
+              </div>
+            </div>
+            <p class="text-xs sm:text-sm text-on-surface-variant">Gestión de suscripciones, cobros automáticos, reposiciones y salud de stock.</p>
+          </div>
+
+          <!-- Botones de Acción Rápida -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <button onclick="openSellAccountModal()" class="h-9 px-3 bg-primary text-on-primary text-xs font-semibold rounded flex items-center gap-1 hover:bg-primary-container transition-all">
+              <span class="material-symbols-outlined text-sm">add_circle</span>
+              <span>+ Vender Cuenta</span>
+            </button>
+            <button onclick="openSellComboModal()" class="h-9 px-3 bg-surface-container-high hover:bg-surface-bright text-secondary-fixed text-xs font-semibold rounded flex items-center gap-1 border border-secondary/30 transition-all">
+              <span class="material-symbols-outlined text-sm">view_carousel</span>
+              <span>+ Vender Combo</span>
+            </button>
+            <button onclick="switchView('stock')" class="h-9 px-3 bg-surface-container hover:bg-surface-container-high text-on-surface text-xs rounded flex items-center gap-1 border border-outline-variant/20 transition-all">
+              <span class="material-symbols-outlined text-sm text-tertiary">inventory_2</span>
+              <span>Stock ({{FREE_STOCK_COUNT}})</span>
+            </button>
+            <button onclick="switchView('pending-payments')" class="h-9 px-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-semibold rounded flex items-center gap-1 border border-amber-500/30 transition-all">
+              <span class="material-symbols-outlined text-sm text-amber-400">hourglass_top</span>
+              <span>Esperando Pago ({{PENDING_PAYMENTS_COUNT}})</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 Quick KPI Metric Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <!-- Card 1: Ganancia Neta Real -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-tertiary/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-tertiary to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-on-surface-variant">Ganancia Neta Real</span>
+              <span class="font-label-code text-[11px] bg-tertiary-container/20 text-tertiary px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                <span class="material-symbols-outlined text-xs">trending_up</span> Mes Actual
+              </span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-on-surface font-data-tabular">{{FINANCE_PROFIT}}</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Ingresos: {{FINANCE_INCOME}} • Costos: {{FINANCE_COSTS}}</div>
+            </div>
+            <div class="flex items-center justify-between text-on-surface-variant font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              <span>Transacciones: {{FINANCE_TX_COUNT}}</span>
+              <span class="text-tertiary font-semibold">Rentable</span>
+            </div>
+          </div>
+
+          <!-- Card 2: Cuentas Activas -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-primary/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-on-surface-variant">Suscripciones Activas</span>
+              <span class="font-label-code text-[11px] text-primary bg-primary-container/20 px-1.5 py-0.5 rounded">En Servicio</span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-on-surface font-data-tabular">{{ACTIVE_ACCOUNTS_COUNT}}</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Perfiles y cuentas asignadas a clientes</div>
+            </div>
+            <div class="flex items-center justify-between text-on-surface-variant font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              <span onclick="switchView('accounts')" class="text-primary hover:underline cursor-pointer">Ver todas →</span>
+              <span>Pantallas: {{SCREENS_OVERVIEW_COUNT}}</span>
+            </div>
+          </div>
+
+          <!-- Card 3: Por Cobrar Próximamente -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-secondary/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-secondary to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-secondary">Por Cobrar (7 días)</span>
+              <span class="font-label-code text-[11px] text-secondary bg-secondary-container/30 px-1.5 py-0.5 rounded">{{FINANCE_PENDING_COUNT}} cuentas</span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-secondary-fixed font-data-tabular">{{FINANCE_PENDING_7D}}</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Flujo proyectado a cobrar en WhatsApp</div>
+            </div>
+            <div class="flex items-center justify-between text-on-surface-variant font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              <span>Auto-Cobro: {{WA_AUTO_EXPIRY_CHECKED}}</span>
+              <span class="text-secondary font-semibold">Cobranza Activa</span>
+            </div>
+          </div>
+
+          <!-- Card 4: Stock Disponible & Caídas -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-tertiary/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-tertiary to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-on-surface-variant">Stock Libre</span>
+              <span class="font-label-code text-[11px] text-error bg-error-container/30 px-1.5 py-0.5 rounded">{{FALLEN_ACCOUNTS_COUNT}} caídas</span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-tertiary font-data-tabular">{{FREE_STOCK_COUNT}}</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Cuentas libres listas para entrega inmediata</div>
+            </div>
+            <div class="flex items-center justify-between text-on-surface-variant font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              <span onclick="switchView('stock')" class="text-tertiary hover:underline cursor-pointer">Gestionar Stock →</span>
+              <button onclick="openAddStockModal()" class="text-xs text-primary hover:underline">+ Cargar</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Semáforo de Salud de Stock Rápido -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-tertiary text-lg">monitoring</span>
+              <h3 class="text-sm font-semibold text-on-surface">Semáforo de Inventario & Alertas de Stock Mínimo</h3>
+            </div>
+            <span class="font-label-code text-xs text-on-surface-variant">Auto-Notificación Telegram</span>
+          </div>
+          <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {{STOCK_HEALTH_HTML}}
+          </div>
+        </div>
+
+        <!-- Tabla Rápida: Últimas Transacciones Registradas -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-secondary text-lg">history</span>
+              <h3 class="text-sm font-semibold text-on-surface">Últimas Transacciones Registradas</h3>
+            </div>
+            <button onclick="switchView('finance')" class="text-xs text-primary hover:underline">Ver Historial Completo →</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Cliente</th>
+                  <th>Plataforma</th>
+                  <th>Tipo</th>
+                  <th>Monto</th>
+                  <th>Ganancia</th>
+                  <th>Detalle</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{TX_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW: ESPERANDO PAGO (#view-pending-payments) -->
+      <!-- ========================================================================= -->
+      <div id="view-pending-payments" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-amber-400 text-2xl">hourglass_top</span>
+              <h2 class="text-xl font-bold text-on-surface">Comprobantes & Ventas Esperando Pago</h2>
+              <span class="font-label-code text-xs bg-amber-500/20 text-amber-300 font-bold px-2 py-0.5 rounded">{{PENDING_PAYMENTS_COUNT}} pendientes</span>
+            </div>
+            <p class="text-xs text-on-surface-variant mt-1">Comprobantes de transferencia recibidos por WhatsApp. Cada comprobante cuenta con su ID único (#P...) para aprobación o rechazo con un solo toque.</p>
+          </div>
+        </div>
+
+        <!-- Barra de Acciones Masivas (Aparece al seleccionar 1 o más comprobantes) -->
+        <div id="bulk-pending-bar" class="hidden items-center justify-between bg-surface-container-low border border-primary/40 rounded-xl p-3 shadow-md flex-wrap gap-3">
+          <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-primary text-xl">checklist</span>
+              <span class="text-sm font-bold text-on-surface"><span id="bulk-selected-count" class="text-primary font-mono text-base">0</span> seleccionados</span>
+            </div>
+            <div class="h-4 w-[1px] bg-surface-container-highest hidden sm:block"></div>
+            <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer select-none bg-surface-container px-3 py-1.5 rounded-lg border border-surface-container-highest">
+              <input type="checkbox" id="bulk-notify-toggle" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+              <span class="font-medium">Notificar a clientes por WhatsApp</span>
+            </label>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button type="button" onclick="openBulkApproveModal()" class="h-8 px-3.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer transition-all shadow">
+              <span class="material-symbols-outlined text-sm">done_all</span> Aprobar Seleccionados
+            </button>
+            <button type="button" onclick="openBulkRejectModal()" class="h-8 px-3.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer transition-all shadow">
+              <span class="material-symbols-outlined text-sm">remove_done</span> Denegar Seleccionados
+            </button>
+            <button type="button" onclick="clearPendingSelection()" class="h-8 px-3 bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-xs rounded-lg cursor-pointer transition-colors">
+              Desmarcar
+            </button>
+          </div>
+        </div>
+
+        <!-- Tabla de Pagos Pendientes -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-3 sm:p-4 shadow-sm flex flex-col gap-3">
+          <div class="overflow-x-auto">
+            <table id="pending-payments-table">
+              <thead>
+                <tr>
+                  <th style="width:36px;text-align:center;">
+                    <input type="checkbox" id="select-all-pending" title="Seleccionar todos" onchange="toggleSelectAllPending(this)" class="cursor-pointer" style="width:16px;height:16px;accent-color:#10b981;">
+                  </th>
+                  <th>ID</th>
+                  <th>Cliente</th>
+                  <th>Servicio / Cuenta</th>
+                  <th>Monto & Banco</th>
+                  <th>Fecha Detección</th>
+                  <th>Comprobante</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{PENDING_PAYMENTS_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW: REPORTES DE CUENTAS CAÍDAS (#view-fallen-reports) -->
+      <!-- ========================================================================= -->
+      <div id="view-fallen-reports" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-rose-400 text-2xl">report_problem</span>
+              <h2 class="text-xl font-bold text-on-surface">Gestión de Cuentas Caídas & Incidentes</h2>
+              <span class="font-label-code text-xs bg-rose-500/20 text-rose-300 font-bold px-2 py-0.5 rounded">{{FALLEN_REPORTS_COUNT}} pendientes</span>
+            </div>
+            <p class="text-xs text-on-surface-variant mt-1">Incidentes reportados por clientes por WhatsApp. Cada incidente (#C...) permite autorizar reemplazo inmediato por stock libre o poner al cliente en espera con 1 solo toque.</p>
+          </div>
+        </div>
+
+        <!-- Tabla de Reportes de Cuentas Caídas -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-3 sm:p-4 shadow-sm flex flex-col gap-3">
+          <div class="overflow-x-auto">
+            <table id="fallen-reports-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Cliente</th>
+                  <th>Servicio Afectado</th>
+                  <th>Mensaje del Cliente</th>
+                  <th>Estado</th>
+                  <th>Fecha</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{FALLEN_REPORTS_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 2: CUENTAS ACTIVAS & FLEET INVENTORY (#view-accounts) -->
+      <!-- ========================================================================= -->
+      <div id="view-accounts" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-on-surface">Inventario de Cuentas Activas</h2>
+            <p class="text-xs text-on-surface-variant">Monitoreo de vencimientos, recordatorios directos por WhatsApp y cobro rápido.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button onclick="openSellAccountModal()" class="h-8 px-3 bg-primary text-on-primary text-xs font-semibold rounded flex items-center gap-1 hover:bg-primary-container">
+              <span class="material-symbols-outlined text-sm">add</span> + Asignar Venta
+            </button>
+            <button onclick="openSellComboModal()" class="h-8 px-3 bg-secondary-container text-white text-xs font-semibold rounded flex items-center gap-1 hover:bg-secondary">
+              <span class="material-symbols-outlined text-sm">view_carousel</span> Vender Combo
+            </button>
+          </div>
+        </div>
+
+        <!-- Filtro Rápido por Plataforma -->
+        <div class="flex items-center gap-1.5 overflow-x-auto pb-1" id="account-platform-filters">
+          <button class="px-3 py-1 rounded bg-surface-container-highest text-primary text-xs font-medium filter-chip active" onclick="filterAccountsTable('all', this)">Todas ({{ACTIVE_ACCOUNTS_COUNT}})</button>
+          <button class="px-3 py-1 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-medium filter-chip" onclick="filterAccountsTable('netflix', this)">Netflix</button>
+          <button class="px-3 py-1 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-medium filter-chip" onclick="filterAccountsTable('disney', this)">Disney+</button>
+          <button class="px-3 py-1 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-medium filter-chip" onclick="filterAccountsTable('max', this)">Max</button>
+          <button class="px-3 py-1 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-medium filter-chip" onclick="filterAccountsTable('spotify', this)">Spotify</button>
+          <button class="px-3 py-1 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-medium filter-chip" onclick="filterAccountsTable('youtube', this)">YouTube</button>
+        </div>
+
+        <!-- Contenedor Tabla Cuentas -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-3 sm:p-4 shadow-sm flex flex-col gap-3">
+          <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <input id="accounts-search-box" oninput="searchAccountsTable(this.value)" class="w-full sm:w-80 h-8 px-3 bg-surface-container border border-surface-container-highest text-on-surface text-xs rounded" placeholder="Filtrar por cliente, email, PIN, código..." type="text">
+            <span class="font-label-code text-xs text-on-surface-variant">Total: {{ACTIVE_ACCOUNTS_COUNT}} registros</span>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table id="active-accounts-table">
+              <thead>
+                <tr>
+                  <th>Cliente</th>
+                  <th>Contacto</th>
+                  <th>Plataforma</th>
+                  <th>Credenciales & PIN</th>
+                  <th>Vencimiento</th>
+                  <th>Estado</th>
+                  <th>Precio</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ACTIVE_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 3: PANTALLAS COMPARTIDAS (#view-screens) -->
+      <!-- ========================================================================= -->
+      <div id="view-screens" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-xl font-bold text-on-surface">Gestión Visual de Pantallas y Perfiles</h2>
+            <p class="text-xs text-on-surface-variant">Estado de ocupación de perfiles por cuenta madre de streaming.</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {{SCREENS_HTML}}
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 4: STOCK & REEMPLAZOS / HOT-SWAP (#view-stock) -->
+      <!-- ========================================================================= -->
+      <div id="view-stock" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-on-surface">Stock Libre y Reemplazo de Caídas</h2>
+            <p class="text-xs text-on-surface-variant">Cuentas libres disponibles para asignación inmediata y gestión de reportes de caídas.</p>
+          </div>
+          <button onclick="openAddStockModal()" class="h-8 px-3 bg-tertiary text-on-tertiary text-xs font-semibold rounded flex items-center gap-1 hover:bg-tertiary-container">
+            <span class="material-symbols-outlined text-sm">add</span> + Cargar Cuenta a Stock
+          </button>
+        </div>
+
+        <!-- Cuentas Caídas (Si hay) -->
+        <div class="bg-surface-container-low border border-error/30 rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2 text-error">
+              <span class="material-symbols-outlined text-lg">error</span>
+              <h3 class="text-sm font-semibold">Cuentas Caídas Pendientes de Reemplazo ({{FALLEN_ACCOUNTS_COUNT}})</h3>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Plataforma</th>
+                  <th>Cuenta</th>
+                  <th>Cliente Afectado</th>
+                  <th>Notas</th>
+                  <th>Acción de Rescate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{FALLEN_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Tabla de Stock Libre -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-on-surface">Cuentas Libres en Stock ({{FREE_STOCK_COUNT}})</h3>
+          </div>
+          <div class="overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Plataforma</th>
+                  <th>Correo</th>
+                  <th>Contraseña & PIN</th>
+                  <th>Costo Proveedor</th>
+                  <th>Estado</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{STOCK_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 5: CATÁLOGO DE PRECIOS & COMBOS (#view-catalog) -->
+      <!-- ========================================================================= -->
+      <div id="view-catalog" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-on-surface">Catálogo de Precios y Combos</h2>
+            <p class="text-xs text-on-surface-variant">Precios sugeridos, márgenes comerciales y combos multipantalla.</p>
+          </div>
+          <button onclick="openCreateComboModal()" class="h-8 px-3 bg-primary text-on-primary text-xs font-semibold rounded flex items-center gap-1 hover:bg-primary-container">
+            <span class="material-symbols-outlined text-sm">add</span> + Crear Nuevo Combo
+          </button>
+        </div>
+
+        <!-- Formulario Rápido de Nuevo Precio -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4">
+          <h3 class="text-sm font-semibold text-on-surface mb-3">Establecer o Modificar Precio por Plataforma</h3>
+          <form action="/api/catalog/save" method="POST" class="grid grid-cols-1 sm:grid-cols-6 gap-3">
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Plataforma:</label>
+              <input type="text" name="platform" required placeholder="Netflix, Disney+..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Modalidad:</label>
+              <select name="service_type" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+                <option value="pantalla">📱 Casa Extra / Pantalla</option>
+                <option value="cuenta_completa">👑 Cuenta Completa (4 Pantallas)</option>
+              </select>
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Costo Proveedor ($):</label>
+              <input type="number" step="any" name="cost_price" placeholder="5800" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Consumidor Final ($):</label>
+              <input type="number" step="any" name="price_final" required placeholder="8500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Revendedor ($):</label>
+              <input type="number" step="any" name="price_reseller" required placeholder="6500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div class="flex items-end">
+              <button type="submit" class="w-full h-8 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Guardar Precio</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Tabla Precios y Combos -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <!-- Precios -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+            <h3 class="text-sm font-semibold text-on-surface">Lista de Precios del Catálogo ({{CATALOG_COUNT}})</h3>
+            <div class="overflow-x-auto">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Plataforma</th>
+                    <th>Tipo</th>
+                    <th>Costo Base</th>
+                    <th>Final</th>
+                    <th>Revendedor</th>
+                    <th>Márgenes</th>
+                    <th>Acción</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {{CATALOG_ROWS}}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Combos -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+            <h3 class="text-sm font-semibold text-on-surface">Combos Multipantalla Activos ({{COMBOS_COUNT}})</h3>
+            <div class="flex flex-col gap-3">
+              {{COMBOS_HTML}}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 6: PROVEEDORES & CUENTAS MADRE (#view-suppliers) -->
+      <!-- ========================================================================= -->
+      <div id="view-suppliers" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-on-surface">Proveedores Mayoristas y Cuentas Madre</h2>
+            <p class="text-xs text-on-surface-variant">Control de cuentas mayoristas compradas y sus fechas de renovación.</p>
+          </div>
+        </div>
+
+        <!-- Cuentas Madre Overview -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <h3 class="text-sm font-semibold text-on-surface">Cuentas Madre Compradas a Proveedores ({{MASTER_ACCOUNTS_COUNT}})</h3>
+          <div class="overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Plataforma</th>
+                  <th>Cuenta Madre</th>
+                  <th>Proveedor</th>
+                  <th>Vencimiento</th>
+                  <th>Perfiles</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{MASTER_ACCOUNTS_TABLE_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Directorio Proveedores -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <h3 class="text-sm font-semibold text-on-surface">Directorio de Mayoristas ({{SUPPLIERS_COUNT}})</h3>
+          <div class="overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Nombre</th>
+                  <th>Contacto</th>
+                  <th>Calificación</th>
+                  <th>Garantía</th>
+                  <th>Notas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{SUPPLIERS_TABLE_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 7: FINANZAS & TRANSACCIONES (#view-finance) -->
+      <!-- ========================================================================= -->
+      <div id="view-finance" class="view-panel hidden flex flex-col w-full gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-on-surface">Libro Contable y Finanzas</h2>
+          <p class="text-xs text-on-surface-variant">Registro detallado de ingresos cobrados, costos pagados y ganancias netas.</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4">
+            <span class="font-label-code text-xs text-on-surface-variant">TOTAL COBRADO</span>
+            <div class="text-2xl font-bold text-tertiary mt-1">{{FINANCE_INCOME}}</div>
+          </div>
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4">
+            <span class="font-label-code text-xs text-on-surface-variant">COSTO PROVEEDORES</span>
+            <div class="text-2xl font-bold text-error mt-1">{{FINANCE_COSTS}}</div>
+          </div>
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4">
+            <span class="font-label-code text-xs text-on-surface-variant">GANANCIA NETA EN BOLSILLO</span>
+            <div class="text-2xl font-bold text-primary mt-1">{{FINANCE_PROFIT}}</div>
+          </div>
+        </div>
+
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <h3 class="text-sm font-semibold text-on-surface">Historial de Transacciones ({{TRANSACTIONS_COUNT}})</h3>
+          <div class="overflow-x-auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Cliente</th>
+                  <th>Plataforma</th>
+                  <th>Monto</th>
+                  <th>Costo</th>
+                  <th>Ganancia</th>
+                  <th>Método</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{TX_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 8: INTEGRACIONES (WHATSAPP, CHATWOOT, OAUTH) (#view-integrations) -->
+      <!-- ========================================================================= -->
+      <div id="view-integrations" class="view-panel hidden flex flex-col w-full gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-on-surface">Integraciones y Conectividad</h2>
+          <p class="text-xs text-on-surface-variant">Evolution API WhatsApp, Chatwoot CRM Móvil y OAuth 2.0 para Gemini Spark.</p>
+        </div>
+
+        <!-- WhatsApp Evolution API Settings -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-tertiary text-xl">chat</span>
+              <h3 class="text-sm font-semibold text-on-surface">Evolution API (WhatsApp Cloud)</h3>
+            </div>
+            <span class="font-label-code text-xs text-on-surface-variant">Última actualización: {{WA_UPDATED_AT}}</span>
+          </div>
+
+          <form action="/api/settings/whatsapp-api" method="POST" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">URL de Evolution API:</label>
+              <input type="text" name="api_url" value="{{WA_API_URL}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">API Key / Token:</label>
+              <input type="password" name="api_key" value="{{WA_API_KEY}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Nombre de Instancia:</label>
+              <input type="text" name="instance_name" value="{{WA_INSTANCE_NAME}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-amber-300 font-semibold">WhatsApp Privado del Admin:</label>
+              <input type="text" name="admin_whatsapp" value="{{ADMIN_WHATSAPP}}" placeholder="+5491166099952" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-amber-300" title="Número donde recibirás los avisos de comprobantes y comandos /pagoapro">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-amber-300 font-semibold">Hora de Corte Vencimiento (2° Aviso):</label>
+              <div class="flex items-center gap-2">
+                <input type="number" name="expiry_cutoff_hour" min="0" max="23" value="{{WA_EXPIRY_CUTOFF_HOUR}}" class="w-20 h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-center font-bold text-amber-300" title="Hora a la que se envía el 2° recordatorio el mismo día de vencimiento si el cliente aún no pagó">
+                <span class="text-xs text-on-surface-variant font-mono">:00 hs</span>
+              </div>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="font-label-code text-xs text-purple-300 font-semibold">Google Gemini API Key (IA Visión para Comprobantes):</label>
+              <input type="password" name="gemini_api_key" value="{{WA_GEMINI_KEY}}" autocomplete="off" placeholder="Pega tu GEMINI_API_KEY (AIzaSy...)" class="w-full h-8 px-2 bg-surface-container font-mono text-xs rounded border border-surface-container-highest text-purple-300" title="Clave API de Google Gemini para reconocimiento visual de capturas y comprobantes">
+            </div>
+
+            <div class="sm:col-span-2 lg:col-span-3 flex flex-wrap items-center gap-4 pt-2">
+              <label class="flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" name="auto_send_expiry" value="1" {{WA_AUTO_EXPIRY_CHECKED}} class="rounded bg-surface-container border-0 text-primary">
+                <span>Cobro automático diario a las 09:00 AM</span>
+              </label>
+              <label class="flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" name="auto_send_sales" value="1" {{WA_AUTO_SALES_CHECKED}} class="rounded bg-surface-container border-0 text-primary">
+                <span>Envío automático de datos en nuevas ventas</span>
+              </label>
+              <label class="flex items-center gap-2 text-xs cursor-pointer">
+                <input type="checkbox" name="auto_reply_enabled" value="1" {{WA_AUTO_REPLY_CHECKED}} class="rounded bg-surface-container border-0 text-primary">
+                <span>Bot de Auto-Respuesta interactivo activado</span>
+              </label>
+            </div>
+
+            <div class="sm:col-span-2 lg:col-span-3 flex justify-end">
+              <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Guardar Configuración WhatsApp</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- Chatwoot Integration -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-secondary text-xl">support_agent</span>
+              <h3 class="text-sm font-semibold text-on-surface">Chatwoot CRM Omnicanal (App Móvil)</h3>
+            </div>
+            <span class="badge {{CW_STATUS_COLOR}}">{{CW_STATUS_LABEL}}</span>
+          </div>
+          <form action="/api/settings/chatwoot" method="POST" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">URL de Chatwoot:</label>
+              <input type="text" name="url" value="{{CW_URL}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Access Token de Usuario (Personal):</label>
+              <input type="text" name="token" value="{{CW_TOKEN}}" autocomplete="off" placeholder="Pega tu Token de acceso de Chatwoot" class="w-full h-8 px-2 bg-surface-container font-mono text-xs rounded border border-surface-container-highest text-emerald-400">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Account ID:</label>
+              <input type="number" name="account_id" value="{{CW_ACCOUNT_ID}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div class="sm:col-span-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-surface-container/50">
+              <span class="text-[11px] text-amber-300">
+                📌 <b>¿Dónde encontrarlo?</b> Entra a <a href="https://chat.joif.net" target="_blank" class="underline text-sky-400 font-semibold">chat.joif.net</a> ➡️ Clic en tu nombre (abajo a la izquierda) ➡️ <b>Configuración de perfil</b> ➡️ Baja al final de la página, copia tu <b>Token de acceso</b> y pégalo aquí.
+              </span>
+              <button type="submit" class="h-8 px-4 bg-secondary-container text-white text-xs font-semibold rounded hover:bg-secondary shrink-0">Guardar y Probar Chatwoot</button>
+            </div>
+          </form>
+
+          <!-- Chatwoot Quick Actions & Sync Buttons -->
+          <div class="border-t border-surface-container pt-3 flex flex-wrap items-center gap-3">
+            <form action="/api/chatwoot/setup-webhook" method="POST" class="inline">
+              <button type="submit" class="h-8 px-3 bg-surface-container-high border border-outline-variant/30 text-xs font-semibold rounded text-on-surface hover:bg-surface-container-highest flex items-center gap-1.5 transition-colors">
+                <span class="material-symbols-outlined text-sm text-tertiary">webhook</span>
+                <span>Configurar Webhook (1 Clic)</span>
+              </button>
+            </form>
+
+            <form action="/api/chatwoot/setup-canned-responses" method="POST" class="inline">
+              <button type="submit" class="h-8 px-3 bg-surface-container-high border border-outline-variant/30 text-xs font-semibold rounded text-on-surface hover:bg-surface-container-highest flex items-center gap-1.5 transition-colors">
+                <span class="material-symbols-outlined text-sm text-secondary">bolt</span>
+                <span>Sincronizar Atajos /nc en Chatwoot</span>
+              </button>
+            </form>
+
+            <form action="/api/chatwoot/sync" method="POST" class="inline">
+              <button type="submit" class="h-8 px-3 bg-surface-container-high border border-outline-variant/30 text-xs font-semibold rounded text-on-surface hover:bg-surface-container-highest flex items-center gap-1.5 transition-colors">
+                <span class="material-symbols-outlined text-sm text-primary">sync</span>
+                <span>Importar / Sincronizar Contactos</span>
+              </button>
+            </form>
+
+            <form action="/api/chatwoot/sync-names" method="POST" class="inline">
+              <button type="submit" class="h-8 px-3 bg-surface-container-high border border-outline-variant/30 text-xs font-semibold rounded text-on-surface hover:bg-surface-container-highest flex items-center gap-1.5 transition-colors" title="Actualiza los nombres de Chatwoot (ej. 'Samu☠️') con los nombres reales de la agenda de WhatsApp o del CRM ('Samuel Martinez')">
+                <span class="material-symbols-outlined text-sm text-amber-400">badge</span>
+                <span>Sincronizar Nombres Agenda ➡️ Chatwoot</span>
+              </button>
+            </form>
+          </div>
+
+          <!-- Guía de Comandos Rápidos /nc en Chatwoot -->
+          <div class="border-t border-surface-container pt-3 flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <span class="font-headline-sm text-xs font-semibold text-on-surface flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-sm text-primary">terminal</span>
+                Comandos de Venta y Asignación Rápida en Chatwoot
+              </span>
+              <span class="font-label-code text-[11px] text-tertiary bg-tertiary-container/20 px-2 py-0.5 rounded border border-tertiary/30">Webhook Activo</span>
+            </div>
+
+            <p class="text-xs text-on-surface-variant">
+              Escribe estos atajos en el campo de texto de Chatwoot. 
+              <strong class="text-secondary-fixed">💡 Consejo Pro:</strong> Si usas la pestaña <span class="bg-amber-950/40 text-amber-300 px-1.5 py-0.5 rounded border border-amber-500/30">Nota privada</span> (caja amarilla con candado), el cliente nunca verá el comando; el bot asignará el casillero en el CRM y le enviará el mensaje oficial con credenciales directamente a su WhatsApp.
+            </p>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 pt-1 font-label-code text-xs">
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_n_casaextra</span>
+                  <span class="badge badge-ok">Netflix</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna 1 pantalla Casa Extra. (Final: $8.500 | Revendedor: $6.500)</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_n_full</span>
+                  <span class="badge badge-ok">Netflix</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna Cuenta Completa 4 Pantallas. (Final: $25.000 | Revendedor: $23.000)</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_disney</span>
+                  <span class="badge" style="background:rgba(59,130,246,0.2);color:#93c5fd;">Disney+</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna pantalla Disney+ Premium con PIN.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_max</span>
+                  <span class="badge" style="background:rgba(147,51,234,0.2);color:#d8b4fe;">Max</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna pantalla Max HBO Platino.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/nc_prime</span>
+                  <span class="badge" style="background:rgba(14,165,233,0.2);color:#7dd3fc;">Prime</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Asigna pantalla Amazon Prime Video.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/stock</span>
+                  <span class="badge badge-warn">Inventario</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Envía nota privada con stock libre de todas las plataformas.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/info</span>
+                  <span class="badge" style="background:rgba(16,185,129,0.2);color:#6ee7b7;">Cliente</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Muestra las suscripciones activas y días restantes del cliente.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/cbu</span>
+                  <span class="badge badge-ok">Cobro</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Envía CBU, Alias y datos bancarios de cobro directamente al cliente.</span>
+              </div>
+
+              <div class="p-2 bg-surface-container rounded border border-surface-container-highest flex flex-col gap-1">
+                <div class="flex items-center justify-between">
+                  <span class="text-primary font-bold">/ayuda</span>
+                  <span class="badge" style="background:rgba(100,116,139,0.2);color:#cbd5e1;">Guía</span>
+                </div>
+                <span class="text-[11px] text-on-surface-variant">Muestra el acordeón completo de comandos rápidos en el chat.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- OAuth 2.0 Gemini Spark -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-primary text-xl">security</span>
+              <h3 class="text-sm font-semibold text-on-surface">OAuth 2.0 para Gemini Spark</h3> {{OAUTH_HEADER_BADGE}}
+            </div>
+            <span class="badge {{OAUTH_BADGE_CLASS}}">{{OAUTH_STATUS_LABEL}}</span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 font-label-code text-xs">
+            <div>Client ID: <code>{{OAUTH_CLIENT_ID}}</code></div>
+            <div>Client Secret: <code>{{OAUTH_CLIENT_SECRET}}</code></div>
+            <div class="sm:col-span-2">Redirect URIs: <code>{{OAUTH_REDIRECT_URIS}}</code></div><form action="/api/settings/oauth" method="POST" class="sm:col-span-2 flex items-center justify-between pt-2 border-t border-surface-container mt-2">  <label class="flex items-center gap-2 text-xs cursor-pointer">    <input type="checkbox" name="enabled" value="1" {{OAUTH_CHECKED}} class="rounded bg-surface-container border-0 text-primary">     <span>Habilitar autenticación OAuth 2.0 para Gemini Spark</span>  </label>  <input type="hidden" name="redirect_uris" value="{{OAUTH_REDIRECT_URIS}}">  <button type="submit" class="h-7 px-3 bg-primary text-on-primary text-xs rounded">Actualizar Estado</button></form>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 9: HERRAMIENTAS & CSV (#view-tools) -->
+      <!-- ========================================================================= -->
+      <div id="view-tools" class="view-panel hidden flex flex-col w-full gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-on-surface">Herramientas, CSV y Medios de Pago</h2>
+          <p class="text-xs text-on-surface-variant">Importación masiva, exportación de respaldos completos y configuración de cobro.</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <!-- Backup JSON -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-on-surface">Respaldo Completo JSON</h3>
+              <p class="text-xs text-on-surface-variant mt-1">Descarga toda la base de datos (clientes, cuentas, transacciones y configuración).</p>
+            </div>
+            <a href="/api/export/backup.json" class="h-8 px-3 bg-primary text-on-primary text-xs font-semibold rounded flex items-center justify-center gap-1">
+              <span class="material-symbols-outlined text-sm">download</span> Descargar JSON
+            </a>
+          </div>
+
+          <!-- Exportar Cuentas Activas CSV -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-on-surface">Cuentas Activas CSV</h3>
+              <p class="text-xs text-on-surface-variant mt-1">Exporta todas las cuentas en servicio con datos de clientes y fechas.</p>
+            </div>
+            <a href="/api/export/active-accounts.csv" class="h-8 px-3 bg-surface-container hover:bg-surface-container-high text-on-surface text-xs font-semibold rounded flex items-center justify-center gap-1 border border-outline-variant/30">
+              <span class="material-symbols-outlined text-sm">table_view</span> Descargar CSV
+            </a>
+          </div>
+
+          <!-- Importar CSV -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between gap-3">
+            <div>
+              <h3 class="text-sm font-semibold text-on-surface">Carga Masiva CSV</h3>
+              <p class="text-xs text-on-surface-variant mt-1">Importa listas de stock libre o ventas desde archivos Excel o CSV.</p>
+            </div>
+            <button onclick="openCsvModal()" class="h-8 px-3 bg-tertiary text-on-tertiary text-xs font-semibold rounded flex items-center justify-center gap-1">
+              <span class="material-symbols-outlined text-sm">upload_file</span> Cargar Archivo
+            </button>
+          </div>
+        </div>
+
+        <!-- Medios de Pago Configuración -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-semibold text-on-surface">Datos de Cobro Bancario / Mercado Pago / Cripto</h3>
+            <span class="font-label-code text-xs text-on-surface-variant">Actualizado: {{PAYMENT_UPDATED_AT}}</span>
+          </div>
+
+          <form action="/api/settings/payment" method="POST" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Alias Mercado Pago / CVU:</label>
+              <input type="text" name="alias_mp" value="{{PAYMENT_ALIAS_MP}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">CBU / CVU Numérico:</label>
+              <input type="text" name="cvu_cbu" value="{{PAYMENT_CVU_CBU}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Titular de la Cuenta:</label>
+              <input type="text" name="account_holder" value="{{PAYMENT_ACCOUNT_HOLDER}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Banco o Billetera:</label>
+              <input type="text" name="bank_name" value="{{PAYMENT_BANK_NAME}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="font-label-code text-xs text-on-surface-variant">Billetera USDT (TRC20 / BEP20) opcional:</label>
+              <input type="text" name="usdt_address" value="{{PAYMENT_USDT_ADDRESS}}" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            </div>
+            <div class="sm:col-span-2">
+              <label class="font-label-code text-xs text-on-surface-variant">Instrucciones Adicionales:</label>
+              <textarea name="extra_instructions" rows="2" class="w-full p-2 bg-surface-container text-xs rounded border border-surface-container-highest">{{PAYMENT_EXTRA_INSTRUCTIONS}}</textarea>
+            </div>
+            <div class="sm:col-span-2 flex justify-end">
+              <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Guardar Medios de Pago</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ========================================================================= -->
+      <!-- VIEW 10: AUDITORÍA & LOGS (#view-logs) -->
+      <!-- ========================================================================= -->
+      <div id="view-logs" class="view-panel hidden flex flex-col w-full gap-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 class="text-xl font-bold text-on-surface">Auditoría del Sistema y Diagnóstico</h2>
+            <p class="text-xs text-on-surface-variant">Buffer en memoria en tiempo real, estado de Telegram Bot y salud del almacenamiento.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <form action="/api/logs/clear" method="POST" onsubmit="return confirm('¿Limpiar buffer de logs en memoria?');">
+              <button type="submit" class="h-8 px-3 bg-surface-container hover:bg-surface-container-high text-xs text-on-surface rounded border border-outline-variant/30">Limpiar Buffer</button>
+            </form>
+            <button onclick="location.reload()" class="h-8 px-3 bg-primary text-on-primary text-xs font-semibold rounded flex items-center gap-1">
+              <span class="material-symbols-outlined text-sm">refresh</span> Actualizar
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-3">
+            <span class="font-label-code text-[11px] text-on-surface-variant">UPTIME</span>
+            <div class="text-sm font-bold text-on-surface font-data-tabular mt-0.5">{{HEALTH_UPTIME}}</div>
+          </div>
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-3">
+            <span class="font-label-code text-[11px] text-on-surface-variant">BASE DE DATOS</span>
+            <div class="text-sm font-bold text-tertiary font-data-tabular mt-0.5">{{HEALTH_DB_SIZE}}</div><span class="text-[10px] text-on-surface-variant">{{HEALTH_DB_STATUS}} ({{HEALTH_DB_TOTAL}} registros)</span>
+          </div>
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-3">
+            <span class="font-label-code text-[11px] text-on-surface-variant">TELEGRAM BOT</span>
+            <div class="text-sm font-bold text-primary font-data-tabular mt-0.5">{{HEALTH_TG_STATUS}}</div>
+          </div>
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-3">
+            <span class="font-label-code text-[11px] text-on-surface-variant">ERRORES BUFFER</span>
+            <div class="text-sm font-bold {{HEALTH_ERRORS_COLOR}} font-data-tabular mt-0.5">{{HEALTH_ERRORS_COUNT}} <small class="text-xs font-normal">({{HEALTH_WARNINGS_COUNT}} warns)</small></div>
+          </div>
+        </div>
+
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col gap-2">
+          <div class="flex items-center justify-between">
+            <span class="font-label-code text-xs text-on-surface-variant uppercase">Terminal de Eventos y Diagnóstico</span>
+            <span class="font-label-code text-xs text-tertiary">Mostrando últimos {{HEALTH_TOTAL_BUFFERED}} registros</span>
+          </div>
+          <div class="bg-[#020617] border border-surface-container rounded-lg p-3 font-label-code text-xs leading-relaxed max-h-[500px] overflow-y-auto">
+            {{INITIAL_LOGS_HTML}}
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- Mobile Bottom Navigation Bar (Visible only on < lg screens) -->
+    <nav class="lg:hidden fixed bottom-0 left-0 right-0 h-16 bg-surface-container-lowest/95 backdrop-blur-xl border-t border-surface-container z-40 flex items-center justify-around px-2">
+      <button onclick="switchView('overview')" class="flex flex-col items-center gap-1 text-primary mobile-nav-btn" data-target="overview">
+        <span class="material-symbols-outlined text-xl">dashboard</span>
+        <span class="text-[10px] font-medium">Overview</span>
+      </button>
+      <button onclick="switchView('accounts')" class="flex flex-col items-center gap-1 text-on-surface-variant hover:text-on-surface mobile-nav-btn" data-target="accounts">
+        <span class="material-symbols-outlined text-xl">vpn_key</span>
+        <span class="text-[10px] font-medium">Cuentas</span>
+      </button>
+      <button onclick="switchView('stock')" class="flex flex-col items-center gap-1 text-on-surface-variant hover:text-on-surface mobile-nav-btn" data-target="stock">
+        <span class="material-symbols-outlined text-xl">inventory_2</span>
+        <span class="text-[10px] font-medium">Stock</span>
+      </button>
+      <button onclick="openSellAccountModal()" class="flex flex-col items-center gap-1 text-primary hover:text-primary-container">
+        <div class="w-8 h-8 rounded-full bg-primary text-on-primary flex items-center justify-center -mt-4 shadow-lg">
+          <span class="material-symbols-outlined text-lg">add</span>
+        </div>
+        <span class="text-[10px] font-medium">Vender</span>
+      </button>
+      <button onclick="toggleMobileSidebar()" class="flex flex-col items-center gap-1 text-on-surface-variant hover:text-on-surface">
+        <span class="material-symbols-outlined text-xl">menu</span>
+        <span class="text-[10px] font-medium">Menú</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- CLIENT 360° PROFILE SLIDE-OVER DRAWER (Flyout Modal con WhatsApp Preview) -->
+  <!-- ========================================================================= -->
+  <div id="drawer-backdrop" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 transition-opacity opacity-0 pointer-events-none duration-300" onclick="closeClient360Modal()"></div>
+  <aside id="modal-client-360" class="fixed top-0 right-0 h-full w-full max-w-md bg-surface-container-low border-l border-surface-container z-50 transform translate-x-full transition-transform duration-300 ease-in-out flex flex-col justify-between shadow-2xl overflow-y-auto">
+    <div class="p-4 sm:p-6 flex flex-col gap-4">
+      <!-- Drawer Header -->
+      <div class="flex items-start justify-between pb-2 border-b border-surface-container">
+        <div class="flex flex-col">
+          <div class="flex items-center gap-1.5">
+            <h3 class="text-lg font-bold text-on-surface" id="m360-name">Ficha 360° del Cliente</h3>
+            <span class="material-symbols-outlined text-tertiary text-base">verified</span>
+          </div>
+          <span class="font-label-code text-xs text-on-surface-variant" id="m360-code">Cargando...</span>
+        </div>
+        <button onclick="closeClient360Modal()" class="p-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant">
+          <span class="material-symbols-outlined text-base">close</span>
+        </button>
+      </div>
+
+      <!-- Badges de Tipo y Salud -->
+      <div class="flex items-center gap-2">
+        <span id="m360-type-badge" class="badge" style="background:#0284c7; color:#fff;">Cliente</span>
+        <span id="m360-health-badge" class="badge badge-ok">Al Día</span>
+      </div>
+      <p id="m360-health-summary" class="text-xs text-on-surface-variant -mt-2"></p>
+
+      <!-- Canales de Contacto Directo -->
+      <div class="flex flex-wrap gap-2 text-xs">
+        <span id="m360-wa-wrap" class="px-2.5 py-1 bg-tertiary-container/30 text-tertiary rounded flex items-center gap-1">
+          <span class="material-symbols-outlined text-sm">chat</span>
+          <a id="m360-wa-link" href="#" target="_blank" class="hover:underline">WhatsApp</a>
+        </span>
+        <span id="m360-tg-wrap" class="px-2.5 py-1 bg-primary-container/30 text-primary rounded flex items-center gap-1">
+          <span class="material-symbols-outlined text-sm">send</span>
+          <a id="m360-tg-link" href="#" target="_blank" class="hover:underline">Telegram</a>
+        </span>
+      </div>
+
+      <!-- Bento Metrics Summary -->
+      <div class="grid grid-cols-3 gap-2 bg-surface-container rounded-lg p-3 border border-surface-container-highest">
+        <div class="flex flex-col">
+          <span class="font-label-code text-[10px] text-on-surface-variant uppercase">LTV TOTAL</span>
+          <span id="m360-ltv" class="font-data-tabular text-sm font-semibold text-on-surface mt-0.5">$ 0</span>
+        </div>
+        <div class="flex flex-col">
+          <span class="font-label-code text-[10px] text-on-surface-variant uppercase">GANANCIA</span>
+          <span id="m360-profit" class="font-data-tabular text-sm font-semibold text-tertiary mt-0.5">$ 0</span>
+        </div>
+        <div class="flex flex-col">
+          <span class="font-label-code text-[10px] text-on-surface-variant uppercase">COMPROMETIDO</span>
+          <span id="m360-monthly" class="font-data-tabular text-sm font-semibold text-secondary mt-0.5">$ 0/mes</span>
+        </div>
+      </div>
+
+      <!-- Cobro Consolidado Banner (Si aplica) -->
+      <div id="m360-consolidated-box" class="hidden bg-tertiary-container/20 border border-tertiary/40 rounded-lg p-3 flex-col gap-2">
+        <div class="flex items-center justify-between text-xs text-tertiary font-medium">
+          <span>📦 Cobro Unificado Multipantalla:</span>
+        </div>
+        <p id="m360-consolidated-desc" class="text-xs text-on-surface-variant"></p>
+        <a id="m360-consolidated-btn" href="#" target="_blank" class="w-full h-8 bg-tertiary text-on-tertiary text-xs font-semibold rounded flex items-center justify-center gap-1 hover:bg-tertiary-container">
+          <span class="material-symbols-outlined text-sm">send</span> Enviar Cobro Consolidado por WhatsApp
+        </a>
+      </div>
+
+      <!-- Suscripciones Activas del Cliente -->
+      <div class="flex flex-col gap-2">
+        <div class="flex items-center justify-between">
+          <span class="font-label-code text-xs uppercase tracking-wider text-on-surface-variant">Suscripciones Asignadas</span>
+          <span id="m360-accounts-count" class="font-label-code text-xs text-primary font-semibold">0 servicios</span>
+        </div>
+        <div id="m360-active-list" class="flex flex-col gap-2 max-h-48 overflow-y-auto">
+          <!-- Cargado dinámicamente -->
+        </div>
+      </div>
+
+      <!-- Historial Reciente de Pagos -->
+      <div class="flex flex-col gap-2">
+        <span class="font-label-code text-xs uppercase tracking-wider text-on-surface-variant">Últimos Pagos Registrados</span>
+        <div id="m360-payments-list" class="flex flex-col gap-1.5 max-h-36 overflow-y-auto text-xs text-on-surface-variant">
+          <!-- Cargado dinámicamente -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Drawer Footer -->
+    <div class="p-4 border-t border-surface-container bg-surface-container-lowest/80 flex items-center justify-between">
+      <span class="font-label-code text-[11px] text-on-surface-variant">StreamVault 360 Engine</span>
+      <button onclick="closeClient360Modal()" class="px-3 py-1.5 bg-surface-container hover:bg-surface-container-high rounded text-on-surface text-xs font-medium">Cerrar</button>
+    </div>
+  </aside>
+
+  <!-- ========================================================================= -->
+  <!-- MODALES DE OPERACIÓN (NUEVA VENTA, STOCK, COMBOS, CSV) -->
+  <!-- ========================================================================= -->
+
+  <!-- Modal: Nueva Venta / Asignar Cuenta -->
+  <div id="modal-sell-account" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-lg p-5 flex flex-col gap-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-on-surface">Asignar o Vender Suscripción</h3>
+        <button onclick="closeSellAccountModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <form action="/api/sell-account" method="POST" class="flex flex-col gap-3">
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Cliente:</label>
+          <select name="client_id" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <option value="">-- Seleccionar Cliente Existente (o crear nuevo abajo) --</option>
+            {{CLIENT_SELECT_OPTIONS}}
+          </select>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Nombre Nuevo Cliente:</label>
+            <input type="text" name="new_client_name" placeholder="Ej: Juan Pérez" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">WhatsApp:</label>
+            <input type="text" name="client_whatsapp" placeholder="Ej: +54 9 11 1234 5678" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Tipo de Cliente:</label>
+            <select name="client_type" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+              <option value="consumidor_final">👤 Consumidor Final ($8.000)</option>
+              <option value="revendedor">💼 Revendedor ($4.500)</option>
+              <option value="revendedor_vip">👑 Revendedor VIP ($3.500)</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Plataforma / Servicio:</label>
+            <input type="text" name="platform" list="streaming-platforms-list" required placeholder="Seleccionar o escribir..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <datalist id="streaming-platforms-list">
+              <option value="HTTP Custom">⚡ HTTP Custom (Servidor VPN/SSH HWID)</option>
+              <option value="Netflix (Casa Extra)">📱 Netflix (Casa Extra - 1 Pantalla)</option>
+              <option value="Netflix (Cuenta Completa)">👑 Netflix (Cuenta Completa - 4 Pantallas)</option>
+              <option value="Disney+ Premium">Disney+ Premium</option>
+              <option value="Max (HBO)">Max (HBO)</option>
+              <option value="Amazon Prime Video">Amazon Prime Video</option>
+              <option value="Paramount+">Paramount+</option>
+              <option value="Spotify Premium">Spotify Premium</option>
+              <option value="YouTube Premium">YouTube Premium</option>
+              <option value="Crunchyroll Mega Fan">Crunchyroll Mega Fan</option>
+            </datalist>
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Fecha Vencimiento (YYYY-MM-DD):</label>
+            <input type="date" name="expiry_date" required class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Correo / Usuario:</label>
+            <input type="text" name="email" required placeholder="correo@streaming.com" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Contraseña:</label>
+            <input type="text" name="password" required placeholder="clave123" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Precio Cobrado ($):</label>
+            <input type="text" name="price" placeholder="Auto catálogo si vacío" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Perfil (Opcional):</label>
+            <input type="text" name="profile_name" placeholder="Perfil 1" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">PIN (Opcional):</label>
+            <input type="text" name="profile_pin" placeholder="1234" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeSellAccountModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-primary text-on-primary text-xs font-semibold rounded hover:bg-primary-container">Guardar y Asignar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Agregar Cuenta a Stock Libre -->
+  <div id="modal-add-stock" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-lg p-5 flex flex-col gap-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-on-surface">Cargar Cuenta Libre a Stock</h3>
+        <button onclick="closeAddStockModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <form action="/api/free-stock" method="POST" class="flex flex-col gap-3">
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Plataforma:</label>
+            <input type="text" name="platform" list="streaming-platforms-list" required placeholder="Seleccionar o escribir..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Costo Proveedor ($):</label>
+            <input type="text" name="cost" placeholder="Ej: 2200" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Correo:</label>
+            <input type="text" name="email" required placeholder="correo@streaming.com" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Contraseña:</label>
+            <input type="text" name="password" required placeholder="clave123" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Perfil (Si aplica):</label>
+            <input type="text" name="profile_name" placeholder="Perfil 2" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">PIN:</label>
+            <input type="text" name="profile_pin" placeholder="5678" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeAddStockModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Guardar en Stock</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Vender Combo Multipantalla -->
+  <div id="modal-sell-combo" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-lg p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-on-surface">Vender Combo Multipantalla</h3>
+        <button onclick="closeSellComboModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <form action="/api/sell-combo" method="POST" class="flex flex-col gap-3">
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Seleccionar Combo:</label>
+          <input type="text" name="combo_name" required placeholder="Nombre exacto del combo" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Cliente Existente:</label>
+          <select name="client_id" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <option value="">-- O crear nuevo abajo --</option>
+            {{CLIENT_SELECT_OPTIONS}}
+          </select>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Nombre Nuevo:</label>
+            <input type="text" name="new_client_name" placeholder="Nombre" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">WhatsApp:</label>
+            <input type="text" name="client_whatsapp" placeholder="+54 9 11..." class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Vencimiento del Combo:</label>
+          <input type="date" name="expiry_date" required class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeSellComboModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-secondary-container text-white text-xs font-semibold rounded hover:bg-secondary">Asignar Combo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Crear Nuevo Combo -->
+  <div id="modal-create-combo" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+    <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-lg p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-on-surface">Crear Nuevo Combo de Catálogo</h3>
+        <button onclick="closeCreateComboModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <form action="/api/combos" method="POST" class="flex flex-col gap-3">
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Nombre del Combo:</label>
+          <input type="text" name="name" required placeholder="Ej: Dúo Netflix + Disney" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Plataformas que incluye (separadas por comas):</label>
+          <input type="text" name="platforms" required placeholder="Netflix, Disney+, Max" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Precio Sugerido ($ ARS):</label>
+            <input type="text" name="price" required placeholder="9500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+          <div>
+            <label class="font-label-code text-xs text-on-surface-variant">Costo Base ($ ARS):</label>
+            <input type="text" name="cost" placeholder="4800" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeCreateComboModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-primary text-on-primary text-xs font-semibold rounded hover:bg-primary-container">Guardar Combo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Importar CSV -->
+  <div id="modal-csv-import" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;">
+    <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-lg p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-on-surface">Carga Masiva de Archivo CSV</h3>
+        <button onclick="closeCsvModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+      </div>
+      <div class="flex items-center gap-2 mb-2">
+        <a href="/api/csv-template/stock.csv" class="text-xs text-primary underline">Descargar Plantilla Stock</a>
+        <span class="text-on-surface-variant">•</span>
+        <a href="/api/csv-template/sales.csv" class="text-xs text-primary underline">Descargar Plantilla Ventas</a>
+      </div>
+      <form action="/api/import/csv" method="POST" enctype="multipart/form-data" class="flex flex-col gap-3">
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Tipo de Carga:</label>
+          <select name="import_type" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <option value="stock">Cuentas Libres para Stock</option>
+            <option value="sales">Ventas Asignadas a Clientes</option>
+          </select>
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Seleccionar archivo CSV:</label>
+          <input type="file" name="file" accept=".csv,text/csv" required class="w-full p-1 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeCsvModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-tertiary text-on-tertiary text-xs font-semibold rounded hover:bg-tertiary-container">Procesar CSV</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Visor de Comprobante Centralizado -->
+  <div id="modal-receipt-viewer" class="fixed inset-0 bg-black/85 backdrop-blur-md hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeReceiptModal()">
+    <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-2xl max-h-[90vh] p-4 flex flex-col gap-3 shadow-2xl overflow-hidden">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-tertiary">receipt_long</span>
+          <h3 id="receipt-modal-title" class="text-sm font-bold text-on-surface">Comprobante Adjunto</h3>
+        </div>
+        <button type="button" onclick="closeReceiptModal()" class="text-on-surface-variant hover:text-on-surface text-lg cursor-pointer">✕</button>
+      </div>
+      <div id="receipt-modal-body" class="flex-1 overflow-auto flex items-center justify-center min-h-[320px] max-h-[65vh] bg-black/50 rounded-lg p-2">
+        <!-- Inyectado dinámicamente -->
+      </div>
+      <div class="flex justify-between items-center pt-2 border-t border-surface-container text-xs">
+        <a id="receipt-modal-download" href="#" download="comprobante" class="text-sky-400 hover:underline flex items-center gap-1 font-semibold">
+          <span class="material-symbols-outlined text-sm">download</span> Descargar Archivo
+        </a>
+        <button type="button" onclick="closeReceiptModal()" class="h-8 px-4 bg-surface-container hover:bg-surface-container-high text-xs rounded cursor-pointer">Cerrar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Denegar / Rechazar Pago -->
+  <div id="modal-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeRejectPaymentModal()">
+    <div class="bg-surface-container-low border border-error/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="reject-modal-title" class="text-base font-bold text-error flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">cancel</span> Denegar Comprobante
+        </h3>
+        <button type="button" onclick="closeRejectPaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="reject-payment-form" action="" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" name="notify_toggle_present" value="1">
+        <p class="text-xs text-on-surface-variant">El pago será marcado como <b>rechazado</b> en el sistema.</p>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Motivo del rechazo (opcional):</label>
+          <input type="text" name="reason" placeholder="Ej: Monto incorrecto o datos bancarios no coincidentes" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="reject-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar notificación de rechazo al cliente por WhatsApp</span>
+        </label>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeRejectPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-error text-on-error text-xs font-semibold rounded hover:bg-error-container cursor-pointer">Confirmar Rechazo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Aprobar Pago Individual -->
+  <div id="modal-approve-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeApprovePaymentModal()">
+    <div class="bg-surface-container-low border border-emerald-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="approve-modal-title" class="text-base font-bold text-emerald-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">check_circle</span> Aprobar Pago
+        </h3>
+        <button type="button" onclick="closeApprovePaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="approve-payment-form" action="" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" name="notify_toggle_present" value="1">
+        <p class="text-xs text-on-surface-variant">
+          Se renovará la suscripción del cliente y se registrará el ingreso en las finanzas del sistema.
+        </p>
+        
+        <div class="bg-surface-container p-3 rounded-lg border border-surface-container-highest text-xs flex flex-col gap-1.5">
+          <div>Cliente: <b id="approve-modal-client" class="text-on-surface"></b></div>
+          <div>Servicio: <b id="approve-modal-service" class="text-sky-300 font-semibold"></b></div>
+          <div>Monto a acreditar: <b id="approve-modal-amount" class="text-emerald-400 font-mono text-sm"></b></div>
+        </div>
+
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="approve-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar WhatsApp de confirmación al cliente</span>
+        </label>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeApprovePaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded-lg cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors shadow">✅ Confirmar Aprobación</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Aprobar Pagos en Lote -->
+  <div id="modal-bulk-approve-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeBulkApproveModal()">
+    <div class="bg-surface-container-low border border-emerald-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-emerald-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">done_all</span> Aprobar Pagos Seleccionados
+        </h3>
+        <button type="button" onclick="closeBulkApproveModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="bulk-approve-payment-form" action="/api/pending-payments/bulk-approve" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" id="bulk-approve-ids-input" name="payment_ids" value="">
+        <input type="hidden" name="notify_toggle_present" value="1">
+        <p class="text-xs text-on-surface-variant">
+          Vas a aprobar y procesar <b id="bulk-approve-count" class="text-emerald-400 font-bold">0</b> comprobantes en lote. Se renovarán las suscripciones correspondientes y se registrarán en finanzas.
+        </p>
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="bulk-approve-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar confirmación a cada cliente por WhatsApp</span>
+        </label>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeBulkApproveModal()" class="h-8 px-3 bg-surface-container text-xs rounded-lg cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer shadow">Confirmar Aprobación Masiva</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Denegar Pagos en Lote -->
+  <div id="modal-bulk-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeBulkRejectModal()">
+    <div class="bg-surface-container-low border border-error/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-error flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">remove_done</span> Denegar Pagos Seleccionados
+        </h3>
+        <button type="button" onclick="closeBulkRejectModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="bulk-reject-payment-form" action="/api/pending-payments/bulk-reject" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" id="bulk-reject-ids-input" name="payment_ids" value="">
+        <input type="hidden" name="notify_toggle_present" value="1">
+        <p class="text-xs text-on-surface-variant">
+          Vas a denegar <b id="bulk-reject-count" class="text-error font-bold">0</b> comprobantes seleccionados.
+        </p>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Motivo del rechazo masivo:</label>
+          <input type="text" name="reason" value="Comprobante no válido o duplicado" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="bulk-reject-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar notificación de rechazo a cada cliente por WhatsApp</span>
+        </label>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeBulkRejectModal()" class="h-8 px-3 bg-surface-container text-xs rounded-lg cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-error text-on-error text-xs font-semibold rounded-lg hover:bg-error-container cursor-pointer">Confirmar Rechazo Masivo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Rotar Contraseña y Notificar Co-Usuarios -->
+  <div id="modal-rotate-password" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeRotatePasswordModal()">
+    <div class="bg-surface-container-low border border-pink-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="rotate-modal-title" class="text-base font-bold text-pink-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">lock_reset</span> Rotar Contraseña y Notificar
+        </h3>
+        <button type="button" onclick="closeRotatePasswordModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="rotate-password-form" action="/api/accounts/rotate-password" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" id="rotate-email-input" name="email_or_account_id" value="">
+        <input type="hidden" id="rotate-unpaid-id-input" name="unpaid_account_id" value="">
+        
+        <p class="text-xs text-on-surface-variant">
+          Cuenta: <b id="rotate-acc-label" class="text-on-surface font-mono"></b>
+        </p>
+        <div class="bg-surface-container p-2.5 rounded text-xs text-amber-300">
+          💡 <b>Multi-Perfil Inteligente:</b> Si otros clientes comparten esta cuenta, el sistema actualizará la contraseña en todos los perfiles y les enviará automáticamente sus nuevos accesos por WhatsApp. El perfil impago quedará libre a stock.
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Nueva Contraseña Maestra:</label>
+          <input type="text" name="new_password" required placeholder="NuevaClave2026*" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-pink-300 font-bold">
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeRotatePasswordModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-pink-600 text-white text-xs font-semibold rounded hover:bg-pink-700 cursor-pointer">Rotar y Notificar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Registrar Pago Parcial / Seña -->
+  <div id="modal-partial-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closePartialPaymentModal()">
+    <div class="bg-surface-container-low border border-amber-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="partial-modal-title" class="text-base font-bold text-amber-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">payments</span> Registrar Pago Parcial / Seña
+        </h3>
+        <button type="button" onclick="closePartialPaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="partial-payment-form" action="/api/accounts/partial-payment" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" name="notify_toggle_present" value="1">
+        <input type="hidden" id="partial-account-id-input" name="account_id" value="">
+        <input type="hidden" id="partial-pending-payment-id-input" name="pending_payment_id" value="">
+        
+        <p class="text-xs text-on-surface-variant">
+          Cliente: <b id="partial-client-label" class="text-on-surface"></b> | Servicio: <b id="partial-platform-label" class="text-on-surface"></b>
+        </p>
+
+        <div id="partial-debt-banner" class="bg-surface-container p-2 rounded text-xs text-amber-300">
+          Saldo actual: <b id="partial-debt-amount">$0</b>
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Monto Abonado ($ ARS):</label>
+          <input type="number" step="any" id="partial-amount-input" name="amount" required placeholder="Ej: 3500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-emerald-400 font-bold">
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Medio de Pago:</label>
+          <select name="payment_method" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+            <option value="Transferencia Bancaria">Transferencia Bancaria</option>
+            <option value="Mercado Pago">Mercado Pago</option>
+            <option value="Efectivo">Efectivo</option>
+            <option value="USDT / Cripto">USDT / Cripto</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Nota / Referencia (opcional):</label>
+          <input type="text" name="notes" placeholder="Seña entrega 1ra parte" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="partial-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar notificación de pago parcial al cliente por WhatsApp</span>
+        </label>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closePartialPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-amber-600 text-white text-xs font-semibold rounded hover:bg-amber-700 cursor-pointer">Guardar Pago Parcial</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Vanilla JavaScript: View Switcher, Ficha 360, Filtros y Modales -->
+  <script>
+    // 1. Tabbed Multi-View Switcher Logic con Persistencia y Soporte de Hash
+    function switchView(target, scrollToTop = true) {
+      if (!target) return;
+
+      const aliasMap = {
+        'tab-overview': 'overview',
+        'tab-pending': 'pending-payments',
+        'tab-pending-payments': 'pending-payments',
+        'pending-payments': 'pending-payments',
+        'pending_payments': 'pending-payments',
+        'pending': 'pending-payments',
+        'tab-fallen': 'fallen-reports',
+        'tab-fallen-reports': 'fallen-reports',
+        'fallen-reports': 'fallen-reports',
+        'fallen_reports': 'fallen-reports',
+        'fallen': 'fallen-reports',
+        'tab-active': 'accounts',
+        'tab-accounts': 'accounts',
+        'tab-screens': 'screens',
+        'tab-stock': 'stock',
+        'tab-catalog': 'catalog',
+        'tab-suppliers': 'suppliers',
+        'tab-finance': 'finance',
+        'tab-templates': 'integrations',
+        'tab-integrations': 'integrations',
+        'tab-tools': 'tools',
+        'tab-logs': 'logs'
+      };
+
+      let cleanTarget = String(target).replace(/^#/, '').trim();
+      if (aliasMap[cleanTarget]) {
+        cleanTarget = aliasMap[cleanTarget];
+      }
+
+      const activeView = document.getElementById('view-' + cleanTarget);
+      if (!activeView) return;
+
+      // Ocultar todos los paneles
+      const views = document.querySelectorAll('.view-panel');
+      views.forEach(v => v.classList.add('hidden'));
+
+      // Mostrar el panel seleccionado
+      activeView.classList.remove('hidden');
+
+      // Actualizar enlaces del Sidebar
+      const navLinks = document.querySelectorAll('#sidebar-nav .nav-item');
+      navLinks.forEach(link => {
+        const linkTarget = link.getAttribute('data-nav-target');
+        if (linkTarget === cleanTarget) {
+          link.className = 'nav-item flex items-center justify-between px-3 py-2 rounded transition-all bg-surface-container-high text-primary font-semibold border border-primary/20 shadow-sm';
+        } else {
+          link.className = 'nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors';
+        }
+      });
+
+      // Actualizar Mobile Bottom Bar
+      const mobileBtns = document.querySelectorAll('.mobile-nav-btn');
+      mobileBtns.forEach(btn => {
+        if (btn.getAttribute('data-target') === cleanTarget) {
+          btn.classList.add('text-primary');
+          btn.classList.remove('text-on-surface-variant');
+        } else {
+          btn.classList.remove('text-primary');
+          btn.classList.add('text-on-surface-variant');
+        }
+      });
+
+      // Guardar pestaña en localStorage y actualizar hash en la URL
+      try {
+        localStorage.setItem('streamvault_active_tab', cleanTarget);
+        if (window.location.hash !== '#' + cleanTarget) {
+          history.replaceState(null, null, '#' + cleanTarget);
+        }
+      } catch (e) {}
+
+      // Cerrar sidebar en celular si estaba abierto
+      closeMobileSidebar();
+
+      // Scroll top solo si fue por clic manual
+      if (scrollToTop) {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
+
+    // Inicializar la pestaña correcta al cargar o recargar la página
+    function initActiveTab() {
+      const hash = window.location.hash ? window.location.hash.replace(/^#/, '').trim() : '';
+      let savedTab = '';
+      try {
+        savedTab = localStorage.getItem('streamvault_active_tab') || '';
+      } catch (e) {}
+
+      const targetTab = hash || savedTab || 'overview';
+      switchView(targetTab, false);
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initActiveTab);
+    } else {
+      initActiveTab();
+    }
+
+    window.addEventListener('hashchange', () => {
+      if (window.location.hash) {
+        switchView(window.location.hash, false);
+      }
+    });
+
+    // Attach Click Handlers to Nav Items
+    document.querySelectorAll('#sidebar-nav .nav-item').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const target = link.getAttribute('data-nav-target');
+        if (target) {
+          switchView(target, true);
+        }
+      });
+    });
+
+    // 2. Mobile Sidebar Off-Canvas Toggle
+    function toggleMobileSidebar() {
+      const sidebar = document.getElementById('main-sidebar');
+      const backdrop = document.getElementById('mobile-sidebar-backdrop');
+      const isOpen = !sidebar.classList.contains('-translate-x-full');
+      if (isOpen) {
+        closeMobileSidebar();
+      } else {
+        sidebar.classList.remove('-translate-x-full');
+        backdrop.classList.remove('hidden');
+        document.body.classList.add('overflow-hidden');
+      }
+    }
+
+    function closeMobileSidebar() {
+      const sidebar = document.getElementById('main-sidebar');
+      const backdrop = document.getElementById('mobile-sidebar-backdrop');
+      if (sidebar) sidebar.classList.add('-translate-x-full');
+      if (backdrop) backdrop.classList.add('hidden');
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    // 3. Client 360° Slide-Over Drawer
+    async function openClient360Modal(clientId) {
+      const drawer = document.getElementById('modal-client-360');
+      const backdrop = document.getElementById('drawer-backdrop');
+      if (!drawer || !backdrop) return;
+
+      drawer.classList.remove('translate-x-full');
+      backdrop.classList.remove('opacity-0', 'pointer-events-none');
+      backdrop.classList.add('opacity-100');
+      document.body.classList.add('overflow-hidden');
+
+      document.getElementById('m360-name').innerText = 'Cargando perfil...';
+
+      try {
+        const res = await fetch('/api/client/360/' + encodeURIComponent(clientId));
+        if (!res.ok) {
+          alert('No se pudo cargar la información del cliente.');
+          closeClient360Modal();
+          return;
+        }
+        const data = await res.json();
+        const c = data.client;
+        const health = data.health_status;
+        const kpis = data.financial_kpis;
+        const billing = data.consolidated_billing;
+        const act = data.active_accounts || [];
+        const pays = data.payments_history || [];
+
+        document.getElementById('m360-name').innerText = c.name;
+        document.getElementById('m360-code').innerText = 'Código: ' + (c.client_code || '-');
+
+        const typeBadge = document.getElementById('m360-type-badge');
+        typeBadge.innerText = c.client_type_label || 'Cliente';
+        typeBadge.style.background = c.client_type === 'revendedor_vip' ? '#d97706' : (c.client_type === 'revendedor' ? '#7c3aed' : '#0284c7');
+
+        const healthBadge = document.getElementById('m360-health-badge');
+        healthBadge.innerText = health.label;
+        healthBadge.className = 'badge ' + (health.badge_class || 'badge-ok');
+        document.getElementById('m360-health-summary').innerText = health.summary || '';
+
+        // Contactos
+        const waWrap = document.getElementById('m360-wa-wrap');
+        const waLink = document.getElementById('m360-wa-link');
+        if (c.clean_whatsapp) {
+          waLink.href = 'https://wa.me/' + c.clean_whatsapp;
+          waLink.innerText = c.whatsapp || c.clean_whatsapp;
+          waWrap.style.display = 'inline-flex';
+        } else {
+          waWrap.style.display = 'none';
+        }
+
+        const tgWrap = document.getElementById('m360-tg-wrap');
+        const tgLink = document.getElementById('m360-tg-link');
+        if (c.telegram) {
+          const tgUser = c.telegram.replace('@', '');
+          tgLink.href = 'https://t.me/' + tgUser;
+          tgLink.innerText = '@' + tgUser;
+          tgWrap.style.display = 'inline-flex';
+        } else {
+          tgWrap.style.display = 'none';
+        }
+
+        // KPIs
+        document.getElementById('m360-ltv').innerText = kpis.ltv_formatted || '$ 0';
+        document.getElementById('m360-profit').innerText = kpis.total_profit_formatted || '$ 0';
+        document.getElementById('m360-monthly').innerText = kpis.monthly_committed_spend_formatted || '$ 0';
+        document.getElementById('m360-accounts-count').innerText = act.length + ' servicio(s)';
+
+        // Cobro consolidado
+        const consBox = document.getElementById('m360-consolidated-box');
+        const consBtn = document.getElementById('m360-consolidated-btn');
+        if (billing && billing.success && billing.wa_link) {
+          consBox.style.display = 'flex';
+          consBtn.href = billing.wa_link;
+          document.getElementById('m360-consolidated-desc').innerText = 
+            'Total a renovar: ' + billing.total_amount_formatted + ' (' + billing.accounts_count + ' suscripciones)';
+        } else {
+          consBox.style.display = 'none';
+        }
+
+        // Lista de suscripciones activas
+        const actList = document.getElementById('m360-active-list');
+        actList.innerHTML = '';
+        if (act.length === 0) {
+          actList.innerHTML = '<div class="text-xs text-on-surface-variant p-2 bg-surface-container rounded">No posee suscripciones activas actualmente.</div>';
+        } else {
+          act.forEach(a => {
+            const perf = a.profile_name ? ' • Perfil: ' + a.profile_name : '';
+            const pin = a.profile_pin ? ' [PIN: ' + a.profile_pin + ']' : '';
+            const div = document.createElement('div');
+            div.className = 'p-2 rounded bg-surface-container border border-surface-container-highest flex flex-col gap-1 text-xs';
+            div.innerHTML = `
+              <div class="flex items-center justify-between">
+                <strong class="text-on-surface">${a.platform}${perf}</strong>
+                <span class="badge ${a.badge_class}">${a.status_label}</span>
+              </div>
+              <div class="text-on-surface-variant font-mono text-[11px] truncate">${a.email}${pin}</div>
+              <div class="flex items-center justify-between text-[11px] pt-1 border-t border-surface-container-highest">
+                <span>Vence: ${a.expiry_date}</span>
+                <span class="text-tertiary font-semibold">${a.price_formatted}</span>
+              </div>
+            `;
+            actList.appendChild(div);
+          });
+        }
+
+        // Historial de pagos
+        const payList = document.getElementById('m360-payments-list');
+        payList.innerHTML = '';
+        if (pays.length === 0) {
+          payList.innerHTML = '<div class="text-xs text-on-surface-variant">Sin cobros registrados aún.</div>';
+        } else {
+          pays.slice(0, 5).forEach(p => {
+            const row = document.createElement('div');
+            row.className = 'flex items-center justify-between p-1.5 rounded bg-surface-container text-[11px] font-mono';
+            row.innerHTML = `
+              <span>${p.created_at ? p.created_at.substring(0, 10) : '-'} • ${p.platform}</span>
+              <span class="text-tertiary font-bold">${p.amount_formatted}</span>
+            `;
+            payList.appendChild(row);
+          });
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error conectando con el servidor.');
+        closeClient360Modal();
+      }
+    }
+
+    function closeClient360Modal() {
+      const drawer = document.getElementById('modal-client-360');
+      const backdrop = document.getElementById('drawer-backdrop');
+      if (drawer) drawer.classList.add('translate-x-full');
+      if (backdrop) {
+        backdrop.classList.remove('opacity-100');
+        backdrop.classList.add('opacity-0', 'pointer-events-none');
+      }
+      document.body.classList.remove('overflow-hidden');
+    }
+
+    // 4. Filtros de Tabla de Cuentas
+    function filterAccountsTable(platform, btn) {
+      const chips = document.querySelectorAll('#account-platform-filters .filter-chip');
+      chips.forEach(c => {
+        c.className = 'px-3 py-1 rounded bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-medium filter-chip';
+      });
+      btn.className = 'px-3 py-1 rounded bg-surface-container-highest text-primary text-xs font-medium filter-chip active';
+
+      const rows = document.querySelectorAll('#active-accounts-table tbody tr');
+      rows.forEach(row => {
+        const text = row.innerText.toLowerCase();
+        if (platform === 'all' || text.includes(platform.toLowerCase())) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    }
+
+    function searchAccountsTable(term) {
+      const q = term.toLowerCase();
+      const rows = document.querySelectorAll('#active-accounts-table tbody tr');
+      rows.forEach(row => {
+        row.style.display = row.innerText.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+
+    // 5. Global Search Handler
+    const globalInput = document.getElementById('global-search-input');
+    if (globalInput) {
+      globalInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          switchView('accounts');
+          const val = globalInput.value;
+          const searchBox = document.getElementById('accounts-search-box');
+          if (searchBox) {
+            searchBox.value = val;
+            searchAccountsTable(val);
+          }
+        }
+      });
+    }
+
+    // 6. Modales simples
+    function openSellAccountModal() {
+      const m = document.getElementById('modal-sell-account');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeSellAccountModal() {
+      const m = document.getElementById('modal-sell-account');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openAddStockModal() {
+      const m = document.getElementById('modal-add-stock');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeAddStockModal() {
+      const m = document.getElementById('modal-add-stock');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openSellComboModal() {
+      const m = document.getElementById('modal-sell-combo');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeSellComboModal() {
+      const m = document.getElementById('modal-sell-combo');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openCreateComboModal() {
+      const m = document.getElementById('modal-create-combo');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeCreateComboModal() {
+      const m = document.getElementById('modal-create-combo');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+    function openCsvModal() {
+      const m = document.getElementById('modal-csv-import');
+      if (m) { m.classList.remove('hidden'); m.classList.add('flex'); m.style.display = 'flex'; }
+    }
+    function closeCsvModal() {
+      const m = document.getElementById('modal-csv-import');
+      if (m) { m.classList.add('hidden'); m.classList.remove('flex'); m.style.display = 'none'; }
+    }
+
+    // 7. Modales de Comprobantes y Rechazo de Pagos
+    function viewReceipt(paymentId, isPdf, fileName) {
+      const modal = document.getElementById('modal-receipt-viewer');
+      const body = document.getElementById('receipt-modal-body');
+      const title = document.getElementById('receipt-modal-title');
+      const dl = document.getElementById('receipt-modal-download');
+      if (!modal || !body) return;
+
+      const fileTitle = fileName || ('comprobante_P' + paymentId);
+      const url = '/api/pending-payments/' + paymentId + '/receipt';
+
+      if (title) title.innerText = 'Comprobante #P' + paymentId + ' (' + fileTitle + ')';
+      if (dl) {
+        dl.href = url;
+        dl.download = fileTitle;
+      }
+
+      if (isPdf) {
+        body.innerHTML = `<iframe src="${url}" class="w-full h-[65vh] rounded border-0 bg-white shadow-inner"></iframe>`;
+      } else {
+        body.innerHTML = `<img src="${url}" alt="Comprobante #P${paymentId}" class="max-w-full max-h-[65vh] object-contain rounded shadow" loading="lazy" />`;
+      }
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function viewReceiptDoc(dataUri, fileName) {
+      const modal = document.getElementById('modal-receipt-viewer');
+      const body = document.getElementById('receipt-modal-body');
+      const title = document.getElementById('receipt-modal-title');
+      const dl = document.getElementById('receipt-modal-download');
+      if (!modal || !body) return;
+
+      if (title) title.innerText = 'Comprobante: ' + (fileName || 'Archivo');
+      if (dl) {
+        dl.href = dataUri;
+        dl.download = fileName || 'comprobante';
+      }
+
+      if (dataUri && dataUri.startsWith('data:application/pdf')) {
+        body.innerHTML = `<iframe src="${dataUri}" class="w-full h-[65vh] rounded border-0 bg-white shadow-inner"></iframe>`;
+      } else {
+        body.innerHTML = `<img src="${dataUri}" alt="Comprobante" class="max-w-full max-h-[65vh] object-contain rounded shadow" />`;
+      }
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeReceiptModal() {
+      const modal = document.getElementById('modal-receipt-viewer');
+      const body = document.getElementById('receipt-modal-body');
+      if (body) body.innerHTML = '';
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    function openRejectPaymentModal(paymentId, clientName) {
+      const modal = document.getElementById('modal-reject-payment');
+      const title = document.getElementById('reject-modal-title');
+      const form = document.getElementById('reject-payment-form');
+      const notifyCb = document.getElementById('reject-notify-checkbox');
+      if (!modal) return;
+      if (title) title.innerHTML = `<span class="material-symbols-outlined text-lg">cancel</span> Denegar Pago #P${paymentId} (${clientName || 'Cliente'})`;
+      if (form) form.action = '/api/pending-payments/reject/' + paymentId;
+      if (notifyCb) notifyCb.checked = true;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeRejectPaymentModal() {
+      const modal = document.getElementById('modal-reject-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    // Modal: Aprobación Individual
+    function openApprovePaymentModal(paymentId, clientName, platform, amountFormatted) {
+      const modal = document.getElementById('modal-approve-payment');
+      const form = document.getElementById('approve-payment-form');
+      const title = document.getElementById('approve-modal-title');
+      const clientLabel = document.getElementById('approve-modal-client');
+      const serviceLabel = document.getElementById('approve-modal-service');
+      const amountLabel = document.getElementById('approve-modal-amount');
+      const notifyCb = document.getElementById('approve-notify-checkbox');
+
+      if (!modal) return;
+      if (form) form.action = '/api/pending-payments/approve/' + paymentId;
+      if (title) title.innerHTML = `<span class="material-symbols-outlined text-lg">check_circle</span> Aprobar Pago #P${paymentId}`;
+      if (clientLabel) clientLabel.innerText = clientName || 'Cliente';
+      if (serviceLabel) serviceLabel.innerText = platform || 'Suscripción';
+      if (amountLabel) amountLabel.innerText = amountFormatted || '$0';
+      if (notifyCb) notifyCb.checked = true;
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeApprovePaymentModal() {
+      const modal = document.getElementById('modal-approve-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    // Lógica de Selección Múltiple y Acciones Masivas
+    function getSelectedPendingIds() {
+      const checkedBoxes = document.querySelectorAll('.pending-checkbox:checked');
+      const ids = [];
+      checkedBoxes.forEach(cb => {
+        if (cb.value) ids.push(cb.value);
+      });
+      return ids;
+    }
+
+    function updatePendingSelection() {
+      const allCheckboxes = document.querySelectorAll('.pending-checkbox');
+      const checkedBoxes = document.querySelectorAll('.pending-checkbox:checked');
+      const masterCheckbox = document.getElementById('select-all-pending');
+      const bar = document.getElementById('bulk-pending-bar');
+      const countLabel = document.getElementById('bulk-selected-count');
+
+      const count = checkedBoxes.length;
+      if (countLabel) countLabel.innerText = count;
+
+      if (masterCheckbox) {
+        masterCheckbox.checked = (allCheckboxes.length > 0 && checkedBoxes.length === allCheckboxes.length);
+        masterCheckbox.indeterminate = (checkedBoxes.length > 0 && checkedBoxes.length < allCheckboxes.length);
+      }
+
+      if (bar) {
+        if (count > 0) {
+          bar.classList.remove('hidden');
+          bar.classList.add('flex');
+        } else {
+          bar.classList.add('hidden');
+          bar.classList.remove('flex');
+        }
+      }
+    }
+
+    function toggleSelectAllPending(master) {
+      const checkboxes = document.querySelectorAll('.pending-checkbox');
+      checkboxes.forEach(cb => {
+        cb.checked = master.checked;
+      });
+      updatePendingSelection();
+    }
+
+    function clearPendingSelection() {
+      const checkboxes = document.querySelectorAll('.pending-checkbox');
+      checkboxes.forEach(cb => {
+        cb.checked = false;
+      });
+      const master = document.getElementById('select-all-pending');
+      if (master) {
+        master.checked = false;
+        master.indeterminate = false;
+      }
+      updatePendingSelection();
+    }
+
+    function openBulkApproveModal() {
+      const ids = getSelectedPendingIds();
+      if (ids.length === 0) {
+        alert('Selecciona al menos un comprobante de pago.');
+        return;
+      }
+      const modal = document.getElementById('modal-bulk-approve-payment');
+      const countEl = document.getElementById('bulk-approve-count');
+      const inputEl = document.getElementById('bulk-approve-ids-input');
+      const notifyCb = document.getElementById('bulk-approve-notify-checkbox');
+      const barToggle = document.getElementById('bulk-notify-toggle');
+
+      if (!modal) return;
+      if (countEl) countEl.innerText = ids.length;
+      if (inputEl) inputEl.value = ids.join(',');
+      if (notifyCb && barToggle) notifyCb.checked = barToggle.checked;
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeBulkApproveModal() {
+      const modal = document.getElementById('modal-bulk-approve-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    function openBulkRejectModal() {
+      const ids = getSelectedPendingIds();
+      if (ids.length === 0) {
+        alert('Selecciona al menos un comprobante de pago.');
+        return;
+      }
+      const modal = document.getElementById('modal-bulk-reject-payment');
+      const countEl = document.getElementById('bulk-reject-count');
+      const inputEl = document.getElementById('bulk-reject-ids-input');
+      const notifyCb = document.getElementById('bulk-reject-notify-checkbox');
+      const barToggle = document.getElementById('bulk-notify-toggle');
+
+      if (!modal) return;
+      if (countEl) countEl.innerText = ids.length;
+      if (inputEl) inputEl.value = ids.join(',');
+      if (notifyCb && barToggle) notifyCb.checked = barToggle.checked;
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeBulkRejectModal() {
+      const modal = document.getElementById('modal-bulk-reject-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    function openRotatePasswordModal(email, platform, unpaidAccountId) {
+      const modal = document.getElementById('modal-rotate-password');
+      if (!modal) return;
+      document.getElementById('rotate-email-input').value = email;
+      document.getElementById('rotate-unpaid-id-input').value = unpaidAccountId || '';
+      document.getElementById('rotate-acc-label').innerText = `${platform} (${email})`;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeRotatePasswordModal() {
+      const modal = document.getElementById('modal-rotate-password');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    function openPartialPaymentModal(accountId, clientName, platform, currentDebt, pendingPaymentId, detectedAmount) {
+      const modal = document.getElementById('modal-partial-payment');
+      if (!modal) return;
+      const accInput = document.getElementById('partial-account-id-input');
+      const pendingInput = document.getElementById('partial-pending-payment-id-input');
+      const clientLabel = document.getElementById('partial-client-label');
+      const platLabel = document.getElementById('partial-platform-label');
+      const debtLabel = document.getElementById('partial-debt-amount');
+      const amtInput = document.getElementById('partial-amount-input');
+      const notifyCb = document.getElementById('partial-notify-checkbox');
+
+      if (accInput) accInput.value = (accountId && accountId !== '0') ? accountId : '';
+      if (pendingInput) pendingInput.value = pendingPaymentId || '';
+      if (clientLabel) clientLabel.innerText = clientName || 'Cliente';
+      if (platLabel) platLabel.innerText = platform || 'Suscripción';
+      if (debtLabel) debtLabel.innerText = (currentDebt && currentDebt > 0) ? ('$' + currentDebt) : 'Tarifa estándar';
+      if (notifyCb) notifyCb.checked = true;
+
+      if (amtInput) {
+        if (detectedAmount && detectedAmount > 0) {
+          amtInput.value = detectedAmount;
+        } else {
+          amtInput.value = '';
+        }
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closePartialPaymentModal() {
+      const modal = document.getElementById('modal-partial-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    // Tecla Escape para cerrar modales
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeClient360Modal();
+        closeSellAccountModal();
+        closeAddStockModal();
+        closeSellComboModal();
+        closeCreateComboModal();
+        closeCsvModal();
+        closeReceiptModal();
+        closeApprovePaymentModal();
+        closeBulkApproveModal();
+        closeBulkRejectModal();
+        closeRejectPaymentModal();
+        closeRotatePasswordModal();
+        closePartialPaymentModal();
+        closeMobileSidebar();
+      }
+    });
+  </script>
+</body>
+</html>

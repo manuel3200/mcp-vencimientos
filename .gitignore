@@ -11,3 +11,5 @@ __pycache__/
 # Data persistente
 data/
 v1/data/
+v2/data/
+v1_backup/

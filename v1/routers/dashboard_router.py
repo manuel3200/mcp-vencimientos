@@ -585,6 +585,7 @@ async def dashboard(request: Request):
         date_str = p.get("created_at", "")[:16]
 
         has_receipt = bool(p.get("receipt_base64"))
+        mime_type = (p.get("receipt_mimetype") or "").lower()
         clean_filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', p.get("receipt_filename") or "comprobante")
         is_pdf = "pdf" in mime_type or clean_filename.lower().endswith(".pdf")
 

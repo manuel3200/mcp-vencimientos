@@ -21,6 +21,7 @@ services:
       - ALERT_HOUR=${ALERT_HOUR:-9}
       - ALERT_MINUTE=${ALERT_MINUTE:-0}
       - TIMEZONE=${TIMEZONE:-America/Argentina/Buenos_Aires}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - DATA_DIR=/app/data
       - PORT=8000
     volumes:

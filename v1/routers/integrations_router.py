@@ -760,10 +760,15 @@ async def whatsapp_webhook(request: Request):
     if is_media and key.get("id"):
         try:
             media_data = await whatsapp_client.get_media_base64(key)
-            if media_data and media_data.get("base64"):
-                b64_str = media_data["base64"]
-                mime = (media_data.get("mimetype") or "").lower()
+            b64_str = ""
+            mime = ""
+            if media_data:
+                b64_str = media_data.get("base64") or (media_data.get("data", {}) if isinstance(media_data.get("data"), dict) else {}).get("base64") or ""
+                mime = (media_data.get("mimetype") or (media_data.get("data", {}) if isinstance(media_data.get("data"), dict) else {}).get("mimetype") or "").lower()
+            if not b64_str and msg_obj.get("base64"):
+                b64_str = msg_obj["base64"]
 
+            if b64_str:
                 # A. Si es PDF
                 if is_doc or "pdf" in mime or file_name_lower.endswith(".pdf"):
                     try:
@@ -820,8 +825,8 @@ async def whatsapp_webhook(request: Request):
                     except Exception as e:
                         logger.debug(f"Error analizando imagen con Gemini: {e}")
 
-                    # 2. Probar OCR Local con Tesseract ÚNICAMENTE si Gemini no pudo ejecutarse (fallback técnico)
-                    if not is_confirmed_receipt and detected_info is None and img_bytes:
+                    # 2. Respaldo OCR Local con Tesseract si la IA no confirmó el comprobante (ej: si hay anuncios publicitarios al pie de página)
+                    if not is_confirmed_receipt and img_bytes:
                         try:
                             ocr_text = receipt_service.extract_text_from_image(img_bytes)
                             if ocr_text:
@@ -829,19 +834,17 @@ async def whatsapp_webhook(request: Request):
                                 if ocr_info and ocr_info.get("is_receipt"):
                                     detected_info = ocr_info
                                     is_confirmed_receipt = True
-                                    logger.info(f"OCR local confirmó comprobante de {client_name}: {ocr_info.get('summary')}")
+                                    logger.info(f"OCR local confirmó comprobante legítimo de {client_name} ({sender_phone}): {ocr_info.get('summary')}")
                         except Exception as ocr_err:
                             logger.debug(f"Error en OCR local de imagen: {ocr_err}")
 
                     # 3. Si el cliente escribió palabras explícitas de pago en el caption y hay datos financieros
                     if not is_confirmed_receipt and has_receipt_intent:
-                        # Si la IA analizó la imagen y concluyó explícitamente que NO es comprobante, respetamos su veredicto
-                        if not (detected_info and detected_info.get("is_receipt") is False):
-                            text_info = receipt_service.parse_transfer_receipt_text(text)
-                            if text_info and (text_info.get("is_receipt") or (text_info.get("amount") and text_info.get("bank"))):
-                                detected_info = text_info
-                                is_confirmed_receipt = True
-                                logger.info(f"Comprobante confirmado por intención explícita y datos financieros de {client_name}")
+                        text_info = receipt_service.parse_transfer_receipt_text(text)
+                        if text_info and (text_info.get("is_receipt") or (text_info.get("amount") and text_info.get("bank"))):
+                            detected_info = text_info
+                            is_confirmed_receipt = True
+                            logger.info(f"Comprobante confirmado por intención explícita y datos financieros de {client_name}")
 
                     # 4. Salvaguarda: Si no fue verificado por IA, OCR o intención explícita con datos financieros,
                     # NUNCA registrar como pago ni enviar acuse falso. Las fotos de productos, juguetes, mascotas o casuales

@@ -227,7 +227,7 @@ def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
             break
 
     # 6. Detectar Número de Operación / Código
-    op_match = re.search(r'(?:operaci[oó]n|comprobante|transacci[oó]n|nro|c[oó]digo|control|referencia|coelsa|id)[\s:#.]*([0-9A-Za-z\-]{6,30})', t, re.IGNORECASE)
+    op_match = re.search(r'(?:operaci[oó]n(?: de [a-zA-Z\s]+)?|comprobante|transacci[oó]n|nro|c[oó]digo|control|referencia|coelsa|id)[\s:#.]*([0-9A-Za-z\-]{6,30})', t, re.IGNORECASE)
     if op_match:
         res["operation_id"] = op_match.group(1).strip("-#:")
     else:
@@ -240,7 +240,7 @@ def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
     banking_matches = sum(1 for bf in banking_fields if bf in t_lower)
 
     # 8. Detectar Fecha
-    date_match = re.search(r'\b([0-3]?[0-9][/-][0-1]?[0-9][/-]20[2-3][0-9])\b', t)
+    date_match = re.search(r'\b([0-3]?[0-9][/-](?:[0-1]?[0-9]|[a-zA-ZáéíóúÁÉÍÓÚ]+)[/-]20[2-3][0-9])\b', t)
     if date_match:
         res["date"] = date_match.group(1)
     else:
@@ -325,22 +325,29 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
 
     prompt_text = (
         "Eres un auditor y clasificador experto de comprobantes de pago y transferencias bancarias en Argentina.\n"
-        "Analiza la imagen adjunta para determinar con total precisión si es un COMPROBANTE DE PAGO BANCARIO o TRANSFERENCIA REAL.\n\n"
-        "CRITERIO ESTRICTO DE APROBACIÓN (is_receipt = true):\n"
-        "La imagen DEBE ser una captura de pantalla, ticket digital o comprobante formal de una transferencia, "
-        "pago o depósito bancario emitido por un banco o billetera virtual de Argentina (ej: Mercado Pago, Personal Pay, "
-        "Naranja X, Brubank, Onda Siempre / Banco Formosa, NBCH 24, Banco Galicia, Santander, BBVA, Banco Nación, "
-        "Banco Macro, Ualá, Cuenta DNI, MODO, Lemon Cash, Prex, Rapipago, Pago Fácil, etc.).\n"
-        "El destinatario suele ser Juan Manuel Ortiz (CVU: 0000003100098090274687, CUIL: 20-42185991-5).\n\n"
-        "CRITERIO ESTRICTO DE RECHAZO (is_receipt = false):\n"
-        "Debes clasificar OBLIGATORIAMENTE como is_receipt: false en CUALQUIERA de los siguientes casos:\n"
-        "- Fotos de productos, juguetes, mercadería, artículos de bazar, packaging, cajas de juguetes, burbujeros, vasos, slime, ropa, comida o paquetes.\n"
-        "- Fotos de mascotas, perros, gatos, animales, personas, selfies o niños.\n"
-        "- Fotos de la vida cotidiana, objetos del hogar, tiendas, estantes de comercios, vidrieras, paisajes o fotos artísticas.\n"
-        "- Capturas de chats de WhatsApp, mensajes de voz / audios, estados o memes.\n"
-        "- Capturas o fotos de pantallas de televisores (Smart TV) o apps de streaming (Netflix, Disney+, Max, etc.) mostrando errores, límites de dispositivos o códigos de inicio de sesión.\n"
-        "- Documentos académicos, libros, manuales, apuntes, fotocopias o tareas escolares.\n"
-        "- Cualquier imagen donde NO se aprecie de forma evidente un pago de dinero bancario efectuado.\n\n"
+        "Analiza la imagen adjunta para determinar con precisión si es un COMPROBANTE DE PAGO BANCARIO o TRANSFERENCIA REAL.\n\n"
+        "REGLA PRINCIPAL DE APROBACIÓN (is_receipt = true):\n"
+        "Si la imagen contiene un comprobante, ticket digital o constancia de transferencia o pago emitido por un banco o billetera virtual "
+        "(Mercado Pago, Personal Pay, Naranja X, Brubank, Onda Siempre / Banco Formosa, NBCH 24, Banco Galicia, Santander, "
+        "BBVA, Banco Nación, Banco Macro, Ualá, Cuenta DNI, MODO, Lemon, etc.):\n"
+        "-> DEBES responder con is_receipt: true.\n"
+        "-> Extrae el monto principal transferido (amount), el banco o billetera (bank), el número o código de operación (operation_id), "
+        "la fecha (date) y el destinatario (recipient).\n"
+        "-> Destinatario habitual: Juan Manuel Ortiz (CVU: 0000003100098090274687, CUIL: 20-42185991-5).\n\n"
+        "MUY IMPORTANTE (BANNERS Y PUBLICIDAD AL PIE DEL COMPROBANTE):\n"
+        "Muchos comprobantes auténticos (especialmente de Mercado Pago) incluyen al pie de página tarjetas publicitarias, avisos o promociones "
+        "(por ejemplo: 'Mago, tu asistente', 'Hacé pagos y transferencias por mensaje o audio', fotos de personas o modelos sosteniendo un celular, etc.). "
+        "ESTA PUBLICIDAD NO INVALIDA EL COMPROBANTE. Si la parte superior o principal contiene el comprobante de transferencia con los datos del pago, "
+        "ES UN COMPROBANTE VÁLIDO (is_receipt: true). Ignora la publicidad o fotos de personas del pie de página.\n"
+        "Asegúrate de extraer el MONTO REAL de la transferencia (arriba, ej: $ 4.500) y NO el monto que pueda aparecer como ejemplo en la publicidad.\n\n"
+        "CRITERIO DE RECHAZO (is_receipt = false):\n"
+        "Responde is_receipt: false ÚNICAMENTE si la imagen NO es un comprobante de pago bancario, por ejemplo:\n"
+        "- Fotos casuales de productos, juguetes, mercadería, artículos de bazar, packaging, cajas de juguetes, burbujeros, vasos, slime, ropa o comida.\n"
+        "- Fotos familiares, selfies puras o fotos de mascotas (perros, gatos) que no tienen ninguna relación con un pago.\n"
+        "- Fotos de objetos cotidianos, locales, vidrieras, paisajes o la calle.\n"
+        "- Capturas de chats de WhatsApp, mensajes de voz o memes.\n"
+        "- Capturas o fotos de pantallas de televisores (Smart TV) con errores de Netflix o streaming.\n"
+        "- Documentos académicos, libros, manuales, apuntes o fotocopias.\n\n"
         "Responde ÚNICAMENTE un objeto JSON válido con esta estructura exacta:\n"
         "{\n"
         '  "is_receipt": false,\n'
@@ -350,7 +357,7 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
         '  "date": null,\n'
         '  "recipient": null\n'
         "}\n"
-        "Si y solo si es un comprobante bancario real, cambia is_receipt a true y extrae los datos numéricos y de texto correspondientes."
+        "Si es un comprobante bancario real, cambia is_receipt a true y extrae los datos numéricos y de texto correspondientes."
     )
 
     payload = {

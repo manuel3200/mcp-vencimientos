@@ -77,7 +77,7 @@ def parse_http_custom_message(text: Optional[str]) -> Optional[Dict[str, Any]]:
 
     # 2. Evaluación de Venta Nueva (USUARIO + HWID + VALIDEZ)
     m_user = re.search(r'(?:USUARIO|USER)\s*:\s*([^\r\n]+)', raw, re.IGNORECASE)
-    m_hwid = re.search(r'HWID\s*:\s*([a-zA-Z0-9_\-\s]{8,80})', raw, re.IGNORECASE)
+    m_hwid = re.search(r'HWID\s*:\s*([^\r\n]+)', raw, re.IGNORECASE)
     m_validez = re.search(r'(?:VALIDEZ|VALIDO|VENCE|VENCIMIENTO)\s*:\s*(\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4})', raw, re.IGNORECASE)
 
     if m_user and m_hwid and m_validez:

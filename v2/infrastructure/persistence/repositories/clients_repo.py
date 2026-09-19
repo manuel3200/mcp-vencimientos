@@ -91,7 +91,6 @@ def register_or_update_client(
 def search_client(query: Union[str, int]) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     q = str(query).strip()
-    clean_q = q.replace(" ", "").replace("-", "")
     client_id = -1
     if q.isdigit() and len(q) <= 9:
         try:
@@ -101,16 +100,53 @@ def search_client(query: Union[str, int]) -> Optional[Dict[str, Any]]:
 
     try:
         with conn:
+            # 1. Búsqueda directa por ID, nombre exacto/parcial, código de cliente o Telegram
             row = conn.execute("""
                 SELECT * FROM clients 
                 WHERE id = ?
                 OR lower(name) LIKE lower(?)
                 OR lower(client_code) = lower(?)
                 OR lower(telegram) = lower(?)
-                OR replace(replace(whatsapp, ' ', ''), '-', '') LIKE ?
                 ORDER BY id ASC LIMIT 1
-            """, (client_id, f"%{q}%", q, f"@{q.lstrip('@')}", f"%{clean_q}%")).fetchone()
-            
+            """, (client_id, f"%{q}%", q, f"@{q.lstrip('@')}")).fetchone()
+
+            # 2. Búsqueda por dígitos telefónicos (si la consulta tiene al menos 8 dígitos)
+            if not row:
+                digits = re.sub(r'\D', '', q)
+                if len(digits) >= 8:
+                    last8 = digits[-8:]
+                    row = conn.execute("""
+                        SELECT * FROM clients
+                        WHERE replace(replace(replace(replace(whatsapp, '+', ''), ' ', ''), '-', ''), '(', '') LIKE ?
+                        ORDER BY id ASC LIMIT 1
+                    """, (f"%{last8}%",)).fetchone()
+
+            # 3. Búsqueda por palabras de nombre si venían combinadas con números (ej: '+54 9 11 2358-6964 Marco Antonio')
+            if not row and re.search(r'[a-zA-Z]{3,}', q):
+                text_only = re.sub(r'[\+\d\-\(\)\.]', ' ', q).strip()
+                words = [w for w in text_only.split() if len(w) >= 3]
+                for w in words:
+                    row = conn.execute("""
+                        SELECT * FROM clients
+                        WHERE lower(name) LIKE lower(?)
+                        ORDER BY id ASC LIMIT 1
+                    """, (f"%{w}%",)).fetchone()
+                    if row:
+                        break
+
+            # 4. Búsqueda inversa por correo electrónico de suscripción contratada
+            if not row and "@" in q:
+                email_match = re.search(r'[\w\.\+\-]+@[\w\.\-]+\.[a-zA-Z]+', q)
+                if email_match:
+                    found_email = email_match.group(0).lower()
+                    acct = conn.execute("""
+                        SELECT client_id FROM streaming_accounts
+                        WHERE lower(email) = ? AND client_id IS NOT NULL
+                        LIMIT 1
+                    """, (found_email,)).fetchone()
+                    if acct and acct["client_id"]:
+                        row = conn.execute("SELECT * FROM clients WHERE id = ?", (acct["client_id"],)).fetchone()
+
             if not row:
                 return None
             

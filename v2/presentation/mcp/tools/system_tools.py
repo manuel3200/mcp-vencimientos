@@ -271,43 +271,64 @@ async def enviar_whatsapp_cliente(
     delay_segundos: float = 2.0
 ) -> str:
     """Envía un mensaje de texto por WhatsApp directamente a un cliente o contacto usando Evolution API:
-    - destinatario: Puede ser el NOMBRE o alias del cliente en el CRM, contacto en Chatwoot, o directamente su número de teléfono (+549...).
+    - destinatario: Nombre o alias del cliente en el CRM, contacto en Chatwoot, o número de teléfono (ej: '+54 9 11 2358-6964 Marco Antonio' o '5491123586964').
     - mensaje: Texto del mensaje a enviar.
-    - telefono: (Opcional) Número del cliente si no se especificó en destinatario.
+    - telefono: (Opcional) Número telefónico directo si se especifica por separado.
     - delay_segundos: Simulación de escritura anti-baneo en segundos (por defecto 2.0).
     """
-    target = (destinatario or telefono or "").strip()
-    if not target:
+    raw_dest = (destinatario or "").strip()
+    raw_phone = (telefono or "").strip()
+    if not raw_dest and not raw_phone:
         return "❌ Error: Debes indicar el nombre del cliente o su número de teléfono."
-    if not mensaje.strip():
+    if not (mensaje or "").strip():
         return "❌ Error: El mensaje a enviar no puede estar vacío."
 
+    phone_to_send = ""
     client_name_str = ""
-    phone_to_send = target
 
-    # Si contiene letras o parece un nombre/código en vez de solo números
-    clean_digits = re.sub(r'[^0-9]', '', target)
-    if re.search(r'[a-zA-Z]', target) or len(clean_digits) < 8:
-        client = database.search_client(target)
+    # 1. Prioridad: ¿Se especificó un parámetro 'telefono' con dígitos válidos?
+    if raw_phone:
+        clean_p = database.clean_whatsapp_phone(raw_phone)
+        if len(clean_p) >= 8:
+            phone_to_send = clean_p
+            client_name_str = f" a {raw_dest}" if raw_dest else ""
+
+    # 2. ¿El destinatario contiene un número de teléfono (al menos 8 dígitos)?
+    if not phone_to_send and raw_dest:
+        digits = re.sub(r'\D', '', raw_dest)
+        if len(digits) >= 8:
+            phone_to_send = database.clean_whatsapp_phone(raw_dest)
+            name_part = re.sub(r'[\+\d\-\(\)\.]+', ' ', raw_dest).strip()
+            if name_part:
+                client_name_str = f" a {name_part}"
+
+    # 3. Si no hay dígitos suficientes en el destino, buscar por nombre o código en el CRM o Chatwoot
+    if not phone_to_send:
+        lookup_target = raw_dest or raw_phone
+        client = database.search_client(lookup_target)
         if client:
             phone_reg = client.get("whatsapp")
             if not phone_reg:
                 return f"❌ El cliente '{client.get('name')}' ({client.get('client_code')}) está registrado en el CRM pero no tiene número de WhatsApp configurado."
-            phone_to_send = phone_reg
+            phone_to_send = database.clean_whatsapp_phone(phone_reg)
             client_name_str = f" a {client.get('name')}"
         else:
             # Fallback inteligente: buscar en la libreta de contactos de Chatwoot
-            cw_contacts = await whatsapp_client.search_chatwoot_contacts(target)
-            if cw_contacts and cw_contacts[0].get("phone_number"):
-                c = cw_contacts[0]
-                phone_to_send = c["phone_number"]
-                client_name_str = f" a {c.get('name', target)} (Contacto de Chatwoot)"
-            else:
-                return f"❌ No se encontró ningún cliente en el CRM ni contacto en Chatwoot que coincida con '{target}'."
+            try:
+                cw_contacts = await whatsapp_client.search_chatwoot_contacts(lookup_target)
+                if cw_contacts and cw_contacts[0].get("phone_number"):
+                    c = cw_contacts[0]
+                    phone_to_send = database.clean_whatsapp_phone(c["phone_number"])
+                    client_name_str = f" a {c.get('name', lookup_target)} (Contacto de Chatwoot)"
+            except Exception as e:
+                logger.warning(f"Error consultando Chatwoot contacts: {e}")
+
+    if not phone_to_send or len(phone_to_send) < 8:
+        return f"❌ No se encontró ningún número de teléfono válido ni cliente registrado que coincida con '{raw_dest or raw_phone}'."
 
     res = await whatsapp_client.send_text_message(phone_to_send, mensaje, delay_seconds=delay_segundos)
     if res.get("success"):
-        return f"✅ Mensaje de WhatsApp enviado exitosamente{client_name_str} ({res.get('phone')}) (ID: {res.get('message_id')})."
+        return f"✅ Mensaje de WhatsApp enviado exitosamente{client_name_str} ({res.get('phone', phone_to_send)}) (ID: {res.get('message_id', 'ok')})."
     else:
         return f"❌ Error al enviar WhatsApp{client_name_str} ({phone_to_send}): {res.get('error')}"
 

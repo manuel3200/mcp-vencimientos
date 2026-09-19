@@ -713,4 +713,127 @@ def corregir_o_modificar_precio_cuenta(
 
 
 
+@mcp.tool()
+def buscar_cuenta(query: str = "", correo: str = "", email: str = "") -> str:
+    """Busca los detalles de una cuenta de streaming por correo o ID:
+    - query / correo / email: Correo electrónico o ID de la cuenta.
+    """
+    target = (query or correo or email or "").strip()
+    if not target:
+        return "❌ Error: Debes indicar el correo o ID de la cuenta."
+
+    from db.connection import get_connection
+    conn = get_connection()
+    try:
+        with conn:
+            rows = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.client_type, c.client_code
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) LIKE lower(?) OR a.id = ?
+                ORDER BY a.id DESC LIMIT 5
+            """, (f"%{target}%", int(target) if target.isdigit() else -1)).fetchall()
+
+            if not rows:
+                return f"❌ No se encontró ninguna cuenta que coincida con '{target}'."
+
+            lines = [f"📺 <b>Cuentas encontradas ({len(rows)}):</b>\n"]
+            for r in rows:
+                perf = f" (Perfil: {r['profile_name']})" if r.get("profile_name") else ""
+                pin = f" [PIN: {r['profile_pin']}]" if r.get("profile_pin") else ""
+                c_info = f"{r.get('client_name') or 'Libre en stock'}"
+                if r.get("client_whatsapp"):
+                    c_info += f" (WhatsApp: {r['client_whatsapp']})"
+                lines.append(
+                    f"• [ID #{r['id']}] <b>{r['platform']}{perf}</b>\n"
+                    f"  Correo: <code>{r['email']}</code> | Clave: <code>{r['password']}</code>{pin}\n"
+                    f"  Vence: <code>{r['expiry_date']}</code> | Estado: <b>{r['status'].upper()}</b>\n"
+                    f"  Cliente: {c_info} | Precio: {r.get('price') or '-'}\n"
+                )
+            return "\n".join(lines)
+    finally:
+        conn.close()
+
+
+@mcp.tool()
+def renovar_servicio_cliente(
+    cliente_o_correo: str,
+    nueva_fecha_vencimiento: str = "",
+    dias_a_sumar: int = 30,
+    monto_cobrado: str = ""
+) -> str:
+    """Extiende el vencimiento de una cuenta o pantalla de streaming de un cliente (+30 días o fecha específica) y asienta el pago:
+    - cliente_o_correo: Correo de la cuenta, nombre del cliente o número de teléfono.
+    - nueva_fecha_vencimiento: (Opcional) Formato YYYY-MM-DD. Si se omite, calcula +30 días (o los indicados en dias_a_sumar).
+    - dias_a_sumar: Cantidad de días a sumar si no se especificó nueva_fecha_vencimiento (por defecto 30).
+    - monto_cobrado: (Opcional) Importe cobrado al cliente para el balance contable.
+    """
+    target = cliente_o_correo.strip()
+    if not target:
+        return "❌ Error: Debes indicar el correo de la cuenta o el cliente."
+
+    from db.connection import get_connection
+    from datetime import date, timedelta, datetime
+    conn = get_connection()
+    try:
+        with conn:
+            # 1. Buscar la cuenta
+            row = conn.execute("""
+                SELECT a.*, c.name as client_name, c.whatsapp as client_whatsapp, c.id as c_id
+                FROM streaming_accounts a
+                LEFT JOIN clients c ON a.client_id = c.id
+                WHERE lower(a.email) LIKE lower(?)
+                   OR lower(c.name) LIKE lower(?)
+                   OR a.id = ?
+                ORDER BY a.id DESC LIMIT 1
+            """, (f"%{target}%", f"%{target}%", int(target) if target.isdigit() else -1)).fetchone()
+
+            if not row:
+                return f"❌ No se encontró ninguna cuenta asociada a '{target}' para renovar."
+
+            acc = dict(row)
+            curr_expiry = acc.get("expiry_date", "")
+
+            # Calcular nueva fecha
+            final_date = nueva_fecha_vencimiento.strip()
+            if not final_date:
+                base_date = date.today()
+                if curr_expiry:
+                    try:
+                        parsed_curr = datetime.strptime(curr_expiry[:10], "%Y-%m-%d").date()
+                        if parsed_curr >= date.today():
+                            base_date = parsed_curr
+                    except Exception:
+                        pass
+                final_date = (base_date + timedelta(days=dias_a_sumar)).isoformat()
+
+            # Actualizar vencimiento
+            conn.execute("""
+                UPDATE streaming_accounts
+                SET expiry_date = ?, status = 'ocupada', payment_status = 'pagado',
+                    last_alert_sent = '', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (final_date, acc["id"]))
+
+            # Registrar cobro si corresponde
+            price_val = database.parse_money(monto_cobrado or acc.get("price") or 0.0)
+            if price_val > 0 and acc.get("client_id"):
+                conn.execute("""
+                    INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                    VALUES (?, ?, ?, 0.0, ?, 'Transferencia', 'Renovación de suscripción')
+                """, (acc["id"], acc["client_id"], price_val, price_val))
+
+            return (
+                f"✅ CUENTA RENOVADA CON ÉXITO:\n"
+                f"• Cliente: <b>{acc.get('client_name') or 'Cliente'}</b>\n"
+                f"• Servicio: <b>{acc['platform']}</b>" + (f" ({acc['profile_name']})" if acc.get('profile_name') else "") + "\n"
+                f"• Correo: <code>{acc['email']}</code>\n"
+                f"• Vencimiento anterior: {curr_expiry or 'N/A'}\n"
+                f"• <b>Nuevo Vencimiento:</b> <code>{final_date}</code>\n"
+                f"• Cobro asentado: {database.format_ars(price_val)}"
+            )
+    finally:
+        conn.close()
+
+
 # --- Herramientas Evolution API & WhatsApp Bot (Paso 5) ---

@@ -16,30 +16,73 @@ logger = logging.getLogger("mcp")
 
 
 @mcp.tool()
-async def buscar_cliente(query: str) -> str:
-    """Busca un cliente por nombre/alias ('Carlos', 'Maik'), código (CLI-001), WhatsApp o Telegram."""
-    client = database.search_client(query)
+async def buscar_cliente(
+    query: str = "",
+    cliente: str = "",
+    nombre: str = "",
+    telefono: str = "",
+    email: str = ""
+) -> str:
+    """Busca un cliente por nombre/alias ('Carlos', 'Maik'), código (CLI-001), WhatsApp, Telegram o correo electrónico:
+    - query: Término de búsqueda general (nombre, teléfono, código o email).
+    - cliente / nombre: (Opcional) Nombre o alias del cliente si se pasa como parámetro nombrado.
+    - telefono: (Opcional) Teléfono o WhatsApp del cliente.
+    - email: (Opcional) Correo electrónico de la cuenta contratada.
+    """
+    search_term = (query or cliente or nombre or telefono or email or "").strip()
+    if not search_term:
+        return "❌ Error: Debes indicar un nombre, teléfono, código o correo para buscar el cliente."
+
+    client = database.search_client(search_term)
+    if not client:
+        # Extraer dígitos de teléfono si venían mezclados
+        digits = re.sub(r'\D', '', search_term)
+        if len(digits) >= 8:
+            client = database.search_client(digits)
+
     if not client:
         # Fallback inteligente: buscar en la libreta de contactos de Chatwoot (WhatsApp)
-        cw_contacts = await whatsapp_client.search_chatwoot_contacts(query)
-        if cw_contacts:
-            c = cw_contacts[0]
-            loc_attr = c.get("additional_attributes") or {}
-            loc_parts = [loc_attr.get("city"), loc_attr.get("country")]
-            loc = ", ".join([p for p in loc_parts if p]) or "No especificada"
-            return (
-                f"📱 <b>Contacto encontrado en Chatwoot (WhatsApp):</b>\n"
-                f"• Nombre: <b>{c.get('name') or 'Sin nombre'}</b>\n"
-                f"• WhatsApp: <code>{c.get('phone_number') or 'No registrado'}</code>\n"
-                f"• Ubicación: {loc}\n"
-                f"• Chatwoot ID: #{c.get('id')}\n\n"
-                f"ℹ️ <i>Este contacto existe en Chatwoot/WhatsApp pero <b>aún no tiene suscripciones o cuenta comercial activa en el CRM</b>.</i>\n\n"
-                f"👉 <b>Acciones que puedes pedirme:</b>\n"
-                f"• <i>'Registra a {c.get('name')} como cliente'</i> para darlo de alta en el CRM.\n"
-                f"• <i>'Mándale un mensaje a {c.get('name')} por WhatsApp diciéndole...'</i>\n"
-                f"• <i>'Véndele una cuenta a {c.get('name')}...'</i>"
-            )
-        return f"❌ No se encontró ningún cliente ni contacto en Chatwoot que coincida con '{query}'."
+        try:
+            cw_contacts = await whatsapp_client.search_chatwoot_contacts(search_term)
+            if cw_contacts:
+                c = cw_contacts[0]
+                loc_attr = c.get("additional_attributes") or {}
+                loc_parts = [loc_attr.get("city"), loc_attr.get("country")]
+                loc = ", ".join([p for p in loc_parts if p]) or "No especificada"
+                return (
+                    f"📱 <b>Contacto encontrado en Chatwoot (WhatsApp):</b>\n"
+                    f"• Nombre: <b>{c.get('name') or 'Sin nombre'}</b>\n"
+                    f"• WhatsApp: <code>{c.get('phone_number') or 'No registrado'}</code>\n"
+                    f"• Ubicación: {loc}\n"
+                    f"• Chatwoot ID: #{c.get('id')}\n\n"
+                    f"ℹ️ <i>Este contacto existe en Chatwoot/WhatsApp pero <b>aún no tiene suscripciones o cuenta comercial activa en el CRM</b>.</i>\n\n"
+                    f"👉 <b>Acciones que puedes pedirme:</b>\n"
+                    f"• <i>'Registra a {c.get('name')} como cliente'</i> para darlo de alta en el CRM.\n"
+                    f"• <i>'Mándale un mensaje a {c.get('name')} por WhatsApp diciéndole...'</i>\n"
+                    f"• <i>'Véndele una cuenta a {c.get('name')}...'</i>"
+                )
+        except Exception as e:
+            logger.warning(f"Error consultando Chatwoot contacts: {e}")
+
+        # Si no existe, responder con opciones accionables para que la IA no se trabe
+        cand_phone = ""
+        digits = re.sub(r'\D', '', search_term)
+        if len(digits) >= 8:
+            cand_phone = database.clean_whatsapp_phone(digits)
+
+        resp = [
+            f"ℹ️ No se encontró ningún cliente registrado con '{search_term}' en el CRM.",
+            "",
+            "👉 <b>Acciones directas disponibles:</b>"
+        ]
+        if cand_phone:
+            resp.append(f"• <b>Enviar WhatsApp directo ya:</b> Puedes usar la herramienta `enviar_whatsapp_cliente(destinatario='{cand_phone}', mensaje='...')` para notificarle de inmediato sin necesidad de darlo de alta antes.")
+            resp.append(f"• <b>Dar de alta en el CRM:</b> Puedes usar `vender_o_asignar_servicio` o `registrar_cliente(nombre='{nombre or search_term}', whatsapp='{cand_phone}')`.")
+        else:
+            resp.append("• Para enviarle WhatsApp directo, usa `enviar_whatsapp_cliente(destinatario='<telefono>', mensaje='...')`.")
+            resp.append(f"• Para darlo de alta en el CRM, usa `registrar_cliente(nombre='{search_term}')`.")
+
+        return "\n".join(resp)
 
     tipo = "👔 Revendedor" if client.get("client_type") == "revendedor" else "👤 Consumidor Final"
     lines = [
@@ -68,11 +111,14 @@ async def buscar_cliente(query: str) -> str:
 
 
 @mcp.tool()
-def consultar_ficha_cliente(cliente: str) -> str:
+def consultar_ficha_cliente(cliente: str = "", query: str = "", nombre: str = "") -> str:
     """Consulta la Ficha 360° integral de un cliente: salud de pagos, LTV en ARS, ganancia neta generada, suscripciones activas y link de cobro consolidado."""
-    profile = database.get_client_360_profile(cliente)
+    target = (cliente or query or nombre or "").strip()
+    if not target:
+        return "❌ Error: Debes indicar el nombre o código del cliente."
+    profile = database.get_client_360_profile(target)
     if not profile:
-        return f"❌ No se encontró ningún cliente con '{cliente}'."
+        return f"❌ No se encontró ningún cliente con '{target}'."
 
     c = profile["client"]
     health = profile["health_status"]

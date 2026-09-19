@@ -60,7 +60,41 @@ def run_tests():
     from core.utils import parse_money
     assert parse_money(acc_vip["price"]) == 3500.0, f"Esperado 3500.0, asignado: {acc_vip['price']}"
 
-    print("    ✅ Tarifas Comerciales: 5/5 casos de prueba superados exitosamente.")
+    # 6. Búsqueda inteligente de clientes (Normalización de teléfonos, queries combinadas y búsqueda inversa por email)
+    marco = database.find_or_create_client(
+        name="Marco Antonio",
+        whatsapp="5491123586964",
+        client_type="consumidor_final"
+    )
+    assert marco["id"] > 0
+
+    acc_marco = database.assign_or_sell_account(
+        client_name=marco["name"],
+        platform="Netflix (Casa Extra)",
+        email="therayonet+rayo44@gmail.com",
+        password="colom78@bia1",
+        expiry_date="2026-09-18",
+        whatsapp=marco["whatsapp"]
+    )
+    assert acc_marco["id"] > 0
+
+    # Búsqueda por número con prefijo '+' y espacios
+    found_by_phone = database.search_client("+54 9 11 2358-6964")
+    assert found_by_phone is not None, "Debe encontrar al cliente por teléfono con formato internacional"
+    assert found_by_phone["name"] == "Marco Antonio"
+
+    # Búsqueda combinada (teléfono + nombre en la misma consulta)
+    found_by_combined = database.search_client("+54 9 11 2358-6964 Marco Antonio")
+    assert found_by_combined is not None, "Debe encontrar al cliente cuando el prompt mezcla teléfono y nombre"
+    assert found_by_combined["name"] == "Marco Antonio"
+
+    # Búsqueda inversa por correo electrónico de la cuenta contratada
+    found_by_email = database.search_client("therayonet+rayo44@gmail.com")
+    assert found_by_email is not None, "Debe encontrar al cliente mediante el correo de su cuenta activa"
+    assert found_by_email["name"] == "Marco Antonio"
+
+    print("    ✅ Tarifas Comerciales y Clientes: 9/9 casos de prueba superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()
+

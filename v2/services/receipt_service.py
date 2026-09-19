@@ -166,16 +166,27 @@ def parse_transfer_receipt_text(text: str) -> Dict[str, Any]:
 
     # 4. Detectar Banco o Billetera (Priorizando Banco Origen/Emisor sobre Banco Destino)
     origin_bank = None
-    header_chunk = t_lower[:200]
-    for bank in KNOWN_BANKS:
-        b_low = bank.lower()
-        if b_low in header_chunk:
-            origin_bank = bank
-            break
-        if re.search(r'(?:cuenta\s+origen|desde|emisor|de:?)[\s\S]{0,50}?' + re.escape(b_low), t_lower):
-            origin_bank = bank
-            break
 
+    # A. Buscar específicamente en sección de "cuenta origen" / "desde"
+    origin_section = re.search(r'(?:cuenta\s+origen|billetera\s+origen|desde|emisor)[\s\S]{1,150}?(?:cuenta\s+destino|hacia|para|informaci[oó]n|coelsa|$)', t_lower)
+    if origin_section:
+        sec_text = origin_section.group(0)
+        for bank in KNOWN_BANKS:
+            b_low = bank.lower()
+            if b_low in sec_text or (bank == "Naranja X" and "naranjax" in sec_text):
+                origin_bank = bank
+                break
+
+    # B. Si no se encontró en cuenta origen, buscar en el encabezado superior del comprobante (primeros 120 caracteres)
+    if not origin_bank:
+        header_chunk = t_lower[:120]
+        for bank in KNOWN_BANKS:
+            b_low = bank.lower()
+            if b_low in header_chunk or (bank == "Naranja X" and "naranjax" in header_chunk):
+                origin_bank = bank
+                break
+
+    # C. Si no se encontró en origen ni encabezado, buscar en todo el texto (evitando cuenta destino si hay otra opción)
     if origin_bank:
         res["bank"] = origin_bank
     else:

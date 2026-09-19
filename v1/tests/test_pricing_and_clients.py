@@ -49,9 +49,9 @@ def run_tests():
         expiry_date="2026-10-30",
         whatsapp=client_vip["whatsapp"],
         client_type=client_vip["client_type"]
-    )
     # Debe haber aplicado la tarifa VIP $3500
-    assert float(acc_vip["price"]) == 3500.0, f"Esperado 3500.0, asignado: {acc_vip['price']}"
+    from core.utils import parse_money
+    assert parse_money(acc_vip["price"]) == 3500.0, f"Esperado 3500.0, asignado: {acc_vip['price']}"
 
     print("    ✅ Tarifas Comerciales: 5/5 casos de prueba superados exitosamente.")
 

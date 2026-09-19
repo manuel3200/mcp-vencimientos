@@ -16,6 +16,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python for Test Harness
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r v1/requirements.txt
+
+      - name: 🛡️ Run Test Harness Verification (Quality Gate)
+        run: |
+          python v1/harness_verify.py
+
       - name: Set up QEMU (for ARM64 support)
         uses: docker/setup-qemu-action@v3
 

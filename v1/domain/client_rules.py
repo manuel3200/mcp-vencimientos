@@ -27,8 +27,10 @@ def preserve_client_type(existing_type: Optional[str], incoming_type: Optional[s
     elif "revend" in in_raw and "vip" not in e_type:
         return "revendedor"
     elif "final" in in_raw:
+        if e_type in ("revendedor_vip", "revendedor"):
+            return e_type
         return "consumidor_final"
-    
+
     # Si no se pasó nada o vino el default, preservar el estatus previo de mayor privilegio
     if e_type in ("revendedor_vip", "revendedor") and not in_raw:
         return e_type

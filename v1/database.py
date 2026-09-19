@@ -161,8 +161,6 @@ from db.repositories.fallen_reports_repo import (
 register_streaming_sale = assign_or_sell_account
 get_client_360 = get_client_360_profile
 
-from services.http_custom_service import (
-    parse_http_custom_message,
-    process_http_custom_outgoing_message
-)
+from domain.http_custom_rules import parse_http_custom_message
+from services.http_custom_service import process_http_custom_outgoing_message
 

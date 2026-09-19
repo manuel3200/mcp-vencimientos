@@ -4,19 +4,19 @@ from datetime import datetime, date
 from typing import Optional, Dict, Any
 
 from db.connection import get_connection
-import database
 from telegram_bot import send_telegram_message
 
 logger = logging.getLogger("services.http_custom")
-
 
 from domain.http_custom_rules import parse_date_to_iso, parse_http_custom_message, is_valid_hwid
 from domain.client_rules import classify_client_type, get_client_type_label
 from domain.pricing_rules import resolve_http_custom_price
 
+__all__ = ["parse_http_custom_message", "process_http_custom_outgoing_message"]
 
 async def process_http_custom_outgoing_message(recipient_phone: str, text: str, source: str = "whatsapp") -> Dict[str, Any]:
     """Procesa un mensaje saliente detectado de HTTP Custom, registrando venta o renovación y actualizando finanzas."""
+    import database
     parsed = parse_http_custom_message(text)
     if not parsed:
         return {"status": "ignored", "reason": "not_http_custom"}

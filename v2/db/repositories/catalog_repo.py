@@ -148,7 +148,8 @@ def get_suggested_price(
             """, (f"%{clean_plat}%", clean_plat, clean_stype)).fetchone()
             
         if row:
-            p_vip = float(row.get("price_reseller_vip") or 0.0)
+            row_dict = dict(row)
+            p_vip = float(row_dict.get("price_reseller_vip") or 0.0)
             if is_vip and p_vip > 0:
                 sale_price = p_vip
             elif is_reseller:

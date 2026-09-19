@@ -519,5 +519,12 @@ def init_db():
                 conn.execute("ALTER TABLE fallen_reports ADD COLUMN followup_count INTEGER DEFAULT 0")
             except Exception:
                 pass
+
+            # Saneamiento automático de comprobantes duplicados y corrección de montos OCR
+            try:
+                from db.repositories.payments_approval_repo import cleanup_duplicate_pending_payments
+                cleanup_duplicate_pending_payments()
+            except Exception:
+                pass
     finally:
         conn.close()

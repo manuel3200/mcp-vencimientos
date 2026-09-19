@@ -143,7 +143,8 @@ from db.repositories.payments_approval_repo import (
     count_pending_payments,
     approve_pending_payment,
     reject_pending_payment,
-    prune_old_approved_receipts_base64
+    prune_old_approved_receipts_base64,
+    cleanup_duplicate_pending_payments
 )
 
 from db.repositories.fallen_reports_repo import (

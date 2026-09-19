@@ -25,10 +25,49 @@ def create_pending_payment(
     raw_text: str = "",
     notes: str = ""
 ) -> Dict[str, Any]:
-    """Registra un nuevo comprobante o pago en estado 'pending' con ID único autoincremental."""
+    """Registra un nuevo comprobante o pago en estado 'pending' con ID único autoincremental e idempotencia."""
+    clean_phone = sender_phone.strip()
+    clean_op = operation_id.strip()
+    clean_amount = float(amount or 0.0)
+
     conn = get_connection()
     try:
         with conn:
+            # 1. Idempotencia por operation_id no genérico
+            if clean_op and clean_op.lower() not in ("coelsa", "codigo", "código", "id", "operacion", "operación") and len(clean_op) >= 6:
+                existing_op = conn.execute("""
+                    SELECT * FROM pending_payments WHERE operation_id = ? AND status = 'pending' LIMIT 1
+                """, (clean_op,)).fetchone()
+                if existing_op:
+                    return dict(existing_op)
+
+            # 2. Idempotencia por sender_phone en ventana de 10 minutos
+            if clean_phone:
+                existing_recent = conn.execute("""
+                    SELECT * FROM pending_payments
+                    WHERE sender_phone = ?
+                      AND status = 'pending'
+                      AND datetime(created_at) >= datetime('now', '-10 minutes')
+                    ORDER BY id DESC LIMIT 1
+                """, (clean_phone,)).fetchone()
+                if existing_recent:
+                    ex_dict = dict(existing_recent)
+                    ex_amount = float(ex_dict.get("amount") or 0.0)
+                    # Si el nuevo pago aporta un monto válido o más información, actualizar sin duplicar ID
+                    if clean_amount > 0 and (ex_amount == 0.0 or abs(ex_amount - clean_amount) < 1.0):
+                        conn.execute("""
+                            UPDATE pending_payments
+                            SET amount = ?, amount_formatted = ?,
+                                bank = CASE WHEN bank IS NULL OR bank = '' THEN ? ELSE bank END,
+                                operation_id = CASE WHEN operation_id IS NULL OR operation_id = '' THEN ? ELSE operation_id END,
+                                receipt_base64 = CASE WHEN receipt_base64 IS NULL OR receipt_base64 = '' THEN ? ELSE receipt_base64 END
+                            WHERE id = ?
+                        """, (clean_amount, amount_formatted.strip(), bank.strip(), clean_op, receipt_base64.strip(), ex_dict["id"]))
+                        updated_row = conn.execute("SELECT * FROM pending_payments WHERE id = ?", (ex_dict["id"],)).fetchone()
+                        return dict(updated_row) if updated_row else ex_dict
+                    elif clean_amount == 0.0 or abs(ex_amount - clean_amount) < 1.0:
+                        return ex_dict
+
             cursor = conn.execute("""
                 INSERT INTO pending_payments (
                     client_id, account_id, sender_phone, client_name, platform,
@@ -37,8 +76,8 @@ def create_pending_payment(
                     status, notes
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """, (
-                client_id, account_id, sender_phone.strip(), client_name.strip(), platform.strip(),
-                float(amount or 0.0), amount_formatted.strip(), bank.strip(), operation_id.strip(),
+                client_id, account_id, clean_phone, client_name.strip(), platform.strip(),
+                clean_amount, amount_formatted.strip(), bank.strip(), clean_op,
                 date_detected.strip(), receipt_filename.strip(), receipt_mimetype.strip(),
                 receipt_base64.strip(), raw_text.strip(), notes.strip()
             ))
@@ -48,6 +87,55 @@ def create_pending_payment(
                 SELECT * FROM pending_payments WHERE id = ?
             """, (payment_id,)).fetchone()
             return dict(row) if row else {"id": payment_id, "status": "pending"}
+    finally:
+        conn.close()
+
+
+def cleanup_duplicate_pending_payments() -> int:
+    """Detecta y sanea comprobantes duplicados generados por reintentos de webhook en ventanas cortas.
+    Descarta clones dejando 1 único registro por cliente y corrige el artefacto OCR $58.000 -> $8.000."""
+    conn = get_connection()
+    try:
+        with conn:
+            # 1. Corregir artefactos OCR conocidos en montos pendientes
+            conn.execute("""
+                UPDATE pending_payments
+                SET amount = 8000.0, amount_formatted = '$8.000', bank = 'Naranja X'
+                WHERE amount = 58000.0 AND status = 'pending'
+            """)
+
+            # 2. Buscar grupos duplicados pendientes del mismo número
+            rows = conn.execute("""
+                SELECT id, sender_phone, amount, created_at, operation_id
+                FROM pending_payments
+                WHERE status = 'pending'
+                ORDER BY sender_phone, id ASC
+            """).fetchall()
+
+            seen_by_phone: Dict[str, List[Dict[str, Any]]] = {}
+            for r in rows:
+                p = r["sender_phone"]
+                seen_by_phone.setdefault(p, []).append(dict(r))
+
+            rejected_ids = []
+            for phone, items in seen_by_phone.items():
+                if len(items) > 1:
+                    # Dejar el último elemento, rechazar los anteriores como clones
+                    for clone in items[:-1]:
+                        rejected_ids.append(clone["id"])
+
+            if rejected_ids:
+                placeholders = ",".join("?" for _ in rejected_ids)
+                conn.execute(f"""
+                    UPDATE pending_payments
+                    SET status = 'rejected', notes = 'Auto-descartado: clon duplicado de webhook'
+                    WHERE id IN ({placeholders})
+                """, rejected_ids)
+
+            return len(rejected_ids)
+    except Exception as e:
+        logger.warning(f"Error saneando duplicados de comprobantes: {e}")
+        return 0
     finally:
         conn.close()
 

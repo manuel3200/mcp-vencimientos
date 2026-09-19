@@ -25,6 +25,9 @@ router = APIRouter()
 _AUTO_REPLY_COOLDOWNS: Dict[str, float] = {}
 COOLDOWN_SECONDS = 180.0
 
+# Deduplicación en memoria de IDs de mensajes de WhatsApp procesados (TTL 2 horas)
+_PROCESSED_MESSAGE_IDS: Dict[str, float] = {}
+
 # ==========================================
 @router.get("/api/whatsapp/status")
 async def api_whatsapp_status(request: Request):
@@ -177,12 +180,31 @@ async def whatsapp_webhook(request: Request):
     except Exception:
         return JSONResponse({"status": "ignored", "reason": "invalid_json"})
 
-    event = body.get("event") or body.get("type", "")
-    data = body.get("data", {}) or {}
+    event = (body.get("event") or body.get("type", "")).lower()
+    # 0. FILTRO DE EVENTOS: Solo procesar eventos de mensajes entrantes (messages.upsert)
+    # Ignorar mensajes de actualización de estado (messages.update), acuses de entrega/lectura, etc.
+    if event and event not in ("messages.upsert", "messages_upsert"):
+        return JSONResponse({"status": "ignored", "reason": f"unhandled_event_{event}"})
 
+    data = body.get("data", {}) or {}
     key = data.get("key", {}) or body.get("key", {})
     from_me = key.get("fromMe", False)
     remote_jid = key.get("remoteJid", "")
+    msg_id = (key.get("id") or "").strip()
+
+    # 0.1 DEDUPLICACIÓN POR MESSAGE ID (wamid) PARA EVITAR PROCESAR CLONES
+    if msg_id:
+        now = time.time()
+        if len(_PROCESSED_MESSAGE_IDS) > 2000:
+            expired = [m for m, t_exp in _PROCESSED_MESSAGE_IDS.items() if now - t_exp > 7200]
+            for m in expired:
+                _PROCESSED_MESSAGE_IDS.pop(m, None)
+
+        if msg_id in _PROCESSED_MESSAGE_IDS:
+            logger.info(f"Mensaje #{msg_id} ya procesado previamente. Ignorando evento duplicado de webhook.")
+            return JSONResponse({"status": "ignored", "reason": "already_processed_msg_id"})
+        _PROCESSED_MESSAGE_IDS[msg_id] = now
+
 
     # 1. Extraer contenido de texto o caption primero para verificar si es un comando administrativo
     msg_obj = data.get("message", {}) or body.get("message", {}) or {}
@@ -890,7 +912,19 @@ async def whatsapp_webhook(request: Request):
             except Exception:
                 pass
 
-        amount_fmt_val = (detected_info.get("amount_formatted") or (format_ars(amount_val) if amount_val > 0 else "")) if detected_info else (format_ars(amount_val) if amount_val > 0 else "")
+        # Validación cruzada contra tarifa esperada para mitigar artefactos OCR '$' -> '5' (ej: 58.000 -> 8.000)
+        if target_acc and target_acc.get("price"):
+            try:
+                raw_digits = re.sub(r'[^\d]', '', str(target_acc.get("price")))
+                if raw_digits:
+                    expected_price = float(raw_digits)
+                    if amount_val == 50000.0 + expected_price:
+                        logger.warning(f"Artefacto OCR '$'->'5' detectado ({amount_val} vs esperado {expected_price}). Corrigiendo a {expected_price}")
+                        amount_val = expected_price
+            except Exception:
+                pass
+
+        amount_fmt_val = (format_ars(amount_val) if amount_val > 0 else "") or (detected_info.get("amount_formatted") if detected_info else "")
         bank_val = (detected_info.get("bank") or "") if detected_info else ""
         op_val = (detected_info.get("operation_id") or "") if detected_info else ""
         date_val = (detected_info.get("date") or "") if detected_info else ""

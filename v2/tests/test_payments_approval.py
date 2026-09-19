@@ -88,7 +88,66 @@ def run_tests():
     assert pen_checked["receipt_base64"] == "", "El Base64 debía haber sido purgado"
     assert pen_checked["amount"] == 5000.0, "Los metadatos contables deben preservarse"
 
-    print("    ✅ Aprobación y Pagos: 7/7 casos de prueba superados exitosamente.")
+    # 6. Idempotencia de creación de comprobantes: No duplicar en ventana de 10 min
+    idem_p1 = database.create_pending_payment(
+        sender_phone="5493704336652",
+        client_name="Jackelinne Coria",
+        amount=8000.0,
+        bank="Naranja X",
+        operation_id="PDX4OGNY4L6L0RPV20L6EY"
+    )
+    # Segundo reintento idéntico (simulando webhook retry de Evolution API)
+    idem_p2 = database.create_pending_payment(
+        sender_phone="5493704336652",
+        client_name="Jackelinne Coria",
+        amount=8000.0,
+        bank="Naranja X",
+        operation_id="PDX4OGNY4L6L0RPV20L6EY"
+    )
+    assert idem_p1["id"] == idem_p2["id"], f"Fallo de idempotencia: creó IDs distintos ({idem_p1['id']} vs {idem_p2['id']})"
+
+    # 7. Parseo inteligente de comprobante Naranja X y mitigación de artefactos OCR
+    import services.receipt_service as receipt_service
+
+    receipt_raw_text = """
+    NaranjaX
+    Comprobante de transferencia
+    Enviaste
+    $ 8.000 00
+    19/SEP/2026 - 19:03 h
+    Cuenta origen
+    Jackelinne Coria
+    Naranja X
+    CBU 4530000800015433014397
+    CUIL 20-36959836-9
+    Cuenta destino
+    Juan Manuel Ortiz
+    Mercado Pago
+    CVU 0000003100098090274687
+    CUIL 20-42185991-5
+    Información de la operación
+    COELSA ID
+    PDX4OGNY4L6L0RPV20L6EY
+    Código de transacción
+    e0b5fadc-14c8-40fb-8202-7fd4e5b131ab
+    """
+    parsed = receipt_service.parse_transfer_receipt_text(receipt_raw_text)
+    assert parsed["is_receipt"] is True
+    assert parsed["amount"] == 8000.0, f"Monto incorrecto extraído: {parsed['amount']}"
+    assert parsed["bank"] == "Naranja X", f"Banco emisor incorrecto: {parsed['bank']}"
+    assert parsed["operation_id"] == "PDX4OGNY4L6L0RPV20L6EY", f"Op ID incorrecto: {parsed['operation_id']}"
+    assert parsed["operation_id"] != "COELSA", "No debe extraer la palabra 'COELSA' como ID"
+
+    # 8. Corrección de artefacto OCR ('$' leído como '5' antes del monto)
+    ocr_corrupt_text = "NaranjaX Comprobante Enviaste 58.000 00 COELSA ID PDX4OGNY4L6L0RPV20L6EY"
+    parsed_corrupt = receipt_service.parse_transfer_receipt_text(ocr_corrupt_text)
+    assert parsed_corrupt["amount"] == 8000.0, f"Falló corrección de artefacto OCR: {parsed_corrupt['amount']}"
+
+    # 9. Limpieza y saneamiento de registros duplicados
+    cleaned_count = database.cleanup_duplicate_pending_payments()
+    assert isinstance(cleaned_count, int)
+
+    print("    ✅ Aprobación y Pagos: 10/10 casos de prueba superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()

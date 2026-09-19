@@ -192,10 +192,11 @@ async def dashboard(request: Request):
         safe_cname = (a.get('client_name') or 'Cliente').replace("'", "\\'")
         safe_email = (a.get('email') or '').replace("'", "\\'")
         safe_plat = (a.get('platform') or '').replace("'", "\\'")
+        acc_id = a.get('id', '')
 
-        btn_rotate = f'<button type="button" onclick="openRotatePasswordModal(\'{safe_email}\', \'{safe_plat}\', {a[\'id\']})" class="btn-action" style="background:#be185d;color:white;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Rotar Contraseña y Notificar Co-Usuarios">🔐 Rotar Clave</button>'
-        btn_partial = f'<button type="button" onclick="openPartialPaymentModal({a[\'id\']}, \'{safe_cname}\', \'{safe_plat}\', {debt})" class="btn-action" style="background:#78350f;color:#fde68a;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Registrar Pago Parcial">💵 Parcial</button>'
-        btn_baja = f'<form action="/api/accounts/mark-baja/{a[\'id\']}" method="POST" style="display:inline;" onsubmit="return confirm(\'¿Marcar cuenta #{a[\'id\']} para baja / cambio de clave? Se detendrán los avisos automáticos diarios.\');"><button type="submit" class="btn-action" style="color:#f43f5e;padding:4px 6px;border-radius:5px;font-size:0.75rem;" title="Marcar para Baja / Detener alertas">🛑</button></form>' if st != 'por_cambiar_clave' else ''
+        btn_rotate = f'<button type="button" onclick="openRotatePasswordModal(\'{safe_email}\', \'{safe_plat}\', {acc_id})" class="btn-action" style="background:#be185d;color:white;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Rotar Contraseña y Notificar Co-Usuarios">🔐 Rotar Clave</button>'
+        btn_partial = f'<button type="button" onclick="openPartialPaymentModal({acc_id}, \'{safe_cname}\', \'{safe_plat}\', {debt})" class="btn-action" style="background:#78350f;color:#fde68a;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Registrar Pago Parcial">💵 Parcial</button>'
+        btn_baja = f'<form action="/api/accounts/mark-baja/{acc_id}" method="POST" style="display:inline;" onsubmit="return confirm(\'¿Marcar cuenta #{acc_id} para baja / cambio de clave? Se detendrán los avisos automáticos diarios.\');"><button type="submit" class="btn-action" style="color:#f43f5e;padding:4px 6px;border-radius:5px;font-size:0.75rem;" title="Marcar para Baja / Detener alertas">🛑</button></form>' if st != 'por_cambiar_clave' else ''
 
         active_rows += f"""
         <tr>

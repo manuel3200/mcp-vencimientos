@@ -1,0 +1,39 @@
+﻿# Version control
+.git
+.gitignore
+.github
+
+# Python cache & compiled bytecode
+**/__pycache__
+**/*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local database files & persistent storage
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Environment configurations & secrets
+.env
+.env.*
+!.env.example
+
+# IDE & OS temporary files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Test suites & CI scripts (not needed in production image)
+tests/
+harness_verify.py
+README.md

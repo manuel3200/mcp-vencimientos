@@ -24,11 +24,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-# Copiar el código fuente
-COPY . .
-
-# Crear carpeta persistente para la base de datos SQLite
+# Crear carpeta persistente para la base de datos SQLite antes del código
 RUN mkdir -p /app/data
+
+# Copiar el código fuente de la aplicación
+COPY . .
 
 # Puerto expuesto
 EXPOSE 8000

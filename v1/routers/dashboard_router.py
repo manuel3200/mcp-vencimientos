@@ -607,6 +607,9 @@ async def dashboard(request: Request):
 
         pending_payments_rows += f"""
         <tr>
+            <td style="width:36px;text-align:center;">
+                <input type="checkbox" class="pending-checkbox cursor-pointer" value="{pid}" onchange="updatePendingSelection()" style="width:16px;height:16px;accent-color:#10b981;">
+            </td>
             <td><strong style="color:#38bdf8;font-size:0.95rem;">#P{pid}</strong></td>
             <td><strong>{c_name}</strong><br><small>{wa_link}</small></td>
             <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span><br><code style="font-size:0.75rem;">{acc_email}</code></td>
@@ -614,9 +617,7 @@ async def dashboard(request: Request):
             <td><small style="color:#94a3b8;">{date_str}</small></td>
             <td>{receipt_html}</td>
             <td style="white-space:nowrap;">
-                <form action="/api/pending-payments/approve/{pid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Aprobar pago #P{pid} de {js_client_name}? Se renovará la suscripción y se registrará en finanzas.');">
-                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" title="Aprobar Pago">✅ Aprobar</button>
-                </form>
+                <button type="button" onclick="openApprovePaymentModal({pid}, '{js_client_name}', '{js_plat}', '{amt_str}')" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" title="Aprobar Pago">✅ Aprobar</button>
                 <button type="button" onclick="openPartialPaymentModal('{acc_id_arg}', '{js_client_name}', '{js_plat}', 0, {pid}, {amt_val})" class="btn-action" style="background:#78350f;color:#fde68a;border:none;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;cursor:pointer;" title="Registrar Pago Parcial">💵 Parcial</button>
                 <button type="button" onclick="openRejectPaymentModal({pid}, '{js_client_name}')" class="btn-action" style="background:#dc2626;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;cursor:pointer;" title="Denegar Pago">❌ Denegar</button>
             </td>
@@ -624,7 +625,7 @@ async def dashboard(request: Request):
         """
 
     if not pending_payments_rows:
-        pending_payments_rows = "<tr><td colspan='7' style='text-align:center;color:#10b981;padding:24px;'>🎉 ¡No hay pagos pendientes de aprobación! Todos los cobros están al día.</td></tr>"
+        pending_payments_rows = "<tr><td colspan='8' style='text-align:center;color:#10b981;padding:24px;'>🎉 ¡No hay pagos pendientes de aprobación! Todos los cobros están al día.</td></tr>"
 
     # 12. Filas de Reportes de Cuentas Caídas (#C<ID>)
     fallen_reports = database.list_fallen_reports(limit=50)

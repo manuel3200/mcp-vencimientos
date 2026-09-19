@@ -1,6 +1,7 @@
 import urllib.parse
 import logging
 import base64
+import asyncio
 from typing import Optional, Any
 
 from fastapi import APIRouter, Request, Form, HTTPException
@@ -59,12 +60,19 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
         raise HTTPException(status_code=401)
     username = _get_username(user)
     custom_amt = None
+    notify_client = True
     try:
         if request.headers.get("content-type", "").startswith(("application/x-www-form-urlencoded", "multipart/form-data")):
             form_data = await request.form()
             custom_amt_str = form_data.get("amount")
+            notify_val = form_data.get("notify_client")
+            if notify_val is not None:
+                notify_client = str(notify_val).lower() in ("1", "true", "on", "yes")
         else:
             custom_amt_str = request.query_params.get("amount")
+            notify_val = request.query_params.get("notify_client")
+            if notify_val is not None:
+                notify_client = str(notify_val).lower() in ("1", "true", "on", "yes")
         if custom_amt_str:
             from core.utils import parse_money
             parsed_a = parse_money(custom_amt_str)
@@ -83,7 +91,7 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
         p = res.get("payment") or {}
         amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
         phone = p.get("sender_phone") or p.get("client_whatsapp")
-        if phone:
+        if phone and notify_client:
             try:
                 import whatsapp_client
                 clean_phone = database.clean_whatsapp_phone(phone)
@@ -98,11 +106,13 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
                 logger.warning(f"Error enviando WhatsApp de pago #{payment_id}: {e}")
 
         try:
+            wa_status_str = "Enviada" if notify_client else "Desactivada por admin"
             await send_telegram_message(
                 f"✅ <b>PAGO #P{payment_id} APROBADO DESDE PANEL WEB</b>\n\n"
                 f"• Cliente: <b>{p.get('client_name') or 'Cliente'}</b>\n"
                 f"• Servicio: <b>{p.get('platform') or '-'}</b> (<code>{p.get('account_email') or '-'}</code>)\n"
                 f"• Monto: <b>{amt_fmt}</b>\n"
+                f"• Notificación WhatsApp: <b>{wa_status_str}</b>\n"
                 f"• Aprobado por: <b>{username}</b>"
             )
         except Exception as e:
@@ -122,6 +132,9 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
     username = _get_username(user)
     form = await request.form()
     reason = str(form.get("reason", "")).strip() if form else ""
+    notify_client = True
+    if form and form.get("notify_client") is not None:
+        notify_client = str(form.get("notify_client")).lower() in ("1", "true", "on", "yes")
 
     try:
         res = database.reject_pending_payment(payment_id, reason=reason, admin_user=f"Web ({username})")
@@ -132,7 +145,7 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
     if res.get("success"):
         p = res.get("payment") or {}
         phone = p.get("sender_phone") or p.get("client_whatsapp")
-        if phone:
+        if phone and notify_client:
             try:
                 import whatsapp_client
                 clean_phone = database.clean_whatsapp_phone(phone)
@@ -147,16 +160,210 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
                 logger.warning(f"Error enviando WhatsApp de rechazo #{payment_id}: {e}")
 
         try:
+            wa_status_str = "Enviada" if notify_client else "Desactivada por admin"
             await send_telegram_message(
                 f"❌ <b>COMPROBANTE #P{payment_id} DENEGADO DESDE PANEL WEB</b>\n\n"
                 f"• Cliente: <b>{p.get('client_name') or 'Cliente'}</b>\n"
                 f"• Motivo: {reason or 'Sin especificar'}\n"
+                f"• Notificación WhatsApp: <b>{wa_status_str}</b>\n"
                 f"• Denegado por: <b>{username}</b>"
             )
         except Exception as e:
             logger.warning(f"Error enviando Telegram de rechazo #{payment_id}: {e}")
 
     return RedirectResponse(url="/?msg=pago_rechazado#pending-payments", status_code=303)
+
+
+@router.post("/api/pending-payments/bulk-approve")
+async def bulk_approve_pending_payments_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = _get_username(user)
+
+    payment_ids = []
+    notify_client = True
+
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            payment_ids = [int(x) for x in body.get("payment_ids", []) if str(x).isdigit()]
+            notify_val = body.get("notify_client")
+            if notify_val is not None:
+                notify_client = bool(notify_val)
+        except Exception as e:
+            logger.warning(f"Error parseando JSON en bulk-approve: {e}")
+    else:
+        form = await request.form()
+        raw_ids = form.get("payment_ids", "")
+        if raw_ids:
+            for part in str(raw_ids).split(","):
+                part = part.strip()
+                if part.isdigit():
+                    payment_ids.append(int(part))
+        notify_val = form.get("notify_client")
+        if notify_val is not None:
+            notify_client = str(notify_val).lower() in ("1", "true", "on", "yes")
+
+    if not payment_ids:
+        return RedirectResponse(url="/?err=no_hay_pagos_seleccionados#pending-payments", status_code=303)
+
+    success_count = 0
+    fail_count = 0
+    approved_details = []
+
+    for idx, pid in enumerate(payment_ids):
+        try:
+            res = database.approve_pending_payment(pid, admin_user=f"Web ({username})")
+            if res.get("success"):
+                success_count += 1
+                p = res.get("payment") or {}
+                amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+                phone = p.get("sender_phone") or p.get("client_whatsapp")
+                approved_details.append(f"#{pid} {p.get('client_name', 'Cliente')} ({amt_fmt})")
+
+                if phone and notify_client:
+                    try:
+                        import whatsapp_client
+                        clean_phone = database.clean_whatsapp_phone(phone)
+                        if clean_phone:
+                            wa_reply = (
+                                f"🎉 ¡Hola {p.get('client_name', 'Cliente')}! Confirmamos la recepción y acreditación de tu pago"
+                                + (f" de *{amt_fmt}*" if amt_fmt else "") + f" para tu servicio *{p.get('platform') or 'activo'}*.\n\n"
+                                f"Tu suscripción quedó confirmada y al día. ¡Muchas gracias por tu pago y preferencia! 🙌✨"
+                            )
+                            # Pequeño delay de 1.5s entre mensajes para protección anti-bloqueo
+                            if idx > 0:
+                                await asyncio.sleep(1.5)
+                            await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
+                    except Exception as e:
+                        logger.warning(f"Error enviando WhatsApp en bulk approve #{pid}: {e}")
+            else:
+                fail_count += 1
+                logger.warning(f"Bulk approve fallo para #{pid}: {res.get('error')}")
+        except Exception as e:
+            logger.error(f"Error procesando bulk approve para #{pid}: {e}", exc_info=True)
+            fail_count += 1
+
+    try:
+        notify_status_str = "Con aviso WhatsApp a clientes" if notify_client else "Sin notificación a clientes"
+        summary_text = (
+            f"⚡ <b>APROBACIÓN MASIVA DE PAGOS (PANEL WEB)</b>\n\n"
+            f"• Aprobados con éxito: <b>{success_count}</b>\n"
+            f"• Fallidos/Omitidos: <b>{fail_count}</b>\n"
+            f"• Notificación WhatsApp: <b>{notify_status_str}</b>\n"
+            f"• Operador: <b>{username}</b>\n\n"
+        )
+        if approved_details:
+            summary_text += "<b>Detalle:</b>\n" + "\n".join(f"• {d}" for d in approved_details[:10])
+            if len(approved_details) > 10:
+                summary_text += f"\n<i>...y {len(approved_details)-10} más</i>"
+        await send_telegram_message(summary_text)
+    except Exception as e:
+        logger.warning(f"Error enviando Telegram de bulk approve: {e}")
+
+    if "application/json" in request.headers.get("accept", "") or request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JSONResponse({"success": True, "approved": success_count, "failed": fail_count})
+    return RedirectResponse(url=f"/?msg=pagos_aprobados_lote_{success_count}#pending-payments", status_code=303)
+
+
+@router.post("/api/pending-payments/bulk-reject")
+async def bulk_reject_pending_payments_api(request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401)
+    username = _get_username(user)
+
+    payment_ids = []
+    reason = "Comprobante no válido o duplicado"
+    notify_client = True
+
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            payment_ids = [int(x) for x in body.get("payment_ids", []) if str(x).isdigit()]
+            if body.get("reason"):
+                reason = str(body.get("reason")).strip()
+            notify_val = body.get("notify_client")
+            if notify_val is not None:
+                notify_client = bool(notify_val)
+        except Exception as e:
+            logger.warning(f"Error parseando JSON en bulk-reject: {e}")
+    else:
+        form = await request.form()
+        raw_ids = form.get("payment_ids", "")
+        if raw_ids:
+            for part in str(raw_ids).split(","):
+                part = part.strip()
+                if part.isdigit():
+                    payment_ids.append(int(part))
+        if form.get("reason"):
+            reason = str(form.get("reason")).strip()
+        notify_val = form.get("notify_client")
+        if notify_val is not None:
+            notify_client = str(notify_val).lower() in ("1", "true", "on", "yes")
+
+    if not payment_ids:
+        return RedirectResponse(url="/?err=no_hay_pagos_seleccionados#pending-payments", status_code=303)
+
+    rejected_count = 0
+    fail_count = 0
+    rejected_details = []
+
+    for idx, pid in enumerate(payment_ids):
+        try:
+            res = database.reject_pending_payment(pid, reason=reason, admin_user=f"Web ({username})")
+            if res.get("success"):
+                rejected_count += 1
+                p = res.get("payment") or {}
+                phone = p.get("sender_phone") or p.get("client_whatsapp")
+                rejected_details.append(f"#{pid} {p.get('client_name', 'Cliente')}")
+
+                if phone and notify_client:
+                    try:
+                        import whatsapp_client
+                        clean_phone = database.clean_whatsapp_phone(phone)
+                        if clean_phone:
+                            wa_reply = (
+                                f"Hola {p.get('client_name', 'Cliente')}. Te informamos que no pudimos validar el comprobante de pago enviado (#P{pid}).\n\n"
+                                f"Motivo: {reason}.\n"
+                                f"Por favor revisa la operación o comunícate con nosotros para verificarlo."
+                            )
+                            if idx > 0:
+                                await asyncio.sleep(1.5)
+                            await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
+                    except Exception as e:
+                        logger.warning(f"Error enviando WhatsApp en bulk reject #{pid}: {e}")
+            else:
+                fail_count += 1
+                logger.warning(f"Bulk reject fallo para #{pid}: {res.get('error')}")
+        except Exception as e:
+            logger.error(f"Error procesando bulk reject para #{pid}: {e}", exc_info=True)
+            fail_count += 1
+
+    try:
+        notify_status_str = "Con aviso WhatsApp a clientes" if notify_client else "Sin notificación a clientes"
+        summary_text = (
+            f"❌ <b>RECHAZO MASIVO DE PAGOS (PANEL WEB)</b>\n\n"
+            f"• Denegados con éxito: <b>{rejected_count}</b>\n"
+            f"• Fallidos/Omitidos: <b>{fail_count}</b>\n"
+            f"• Motivo: <b>{reason}</b>\n"
+            f"• Notificación WhatsApp: <b>{notify_status_str}</b>\n"
+            f"• Operador: <b>{username}</b>\n\n"
+        )
+        if rejected_details:
+            summary_text += "<b>Detalle:</b>\n" + "\n".join(f"• {d}" for d in rejected_details[:10])
+            if len(rejected_details) > 10:
+                summary_text += f"\n<i>...y {len(rejected_details)-10} más</i>"
+        await send_telegram_message(summary_text)
+    except Exception as e:
+        logger.warning(f"Error enviando Telegram de bulk reject: {e}")
+
+    if "application/json" in request.headers.get("accept", "") or request.headers.get("x-requested-with") == "XMLHttpRequest":
+        return JSONResponse({"success": True, "rejected": rejected_count, "failed": fail_count})
+    return RedirectResponse(url=f"/?msg=pagos_rechazados_lote_{rejected_count}#pending-payments", status_code=303)
 
 
 @router.get("/api/pending-payments/{payment_id}/receipt")
@@ -344,12 +551,14 @@ async def partial_payment_api(
     pending_payment_id: Optional[str] = Form(None),
     amount: float = Form(...),
     payment_method: Optional[str] = Form("Transferencia"),
-    notes: Optional[str] = Form("")
+    notes: Optional[str] = Form(""),
+    notify_client: Optional[str] = Form("1")
 ):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
     username = _get_username(user)
+    do_notify = str(notify_client).lower() in ("1", "true", "on", "yes") if notify_client is not None else True
 
     acc_target = account_id.strip() if account_id else ""
     pending_item = None
@@ -405,7 +614,7 @@ async def partial_payment_api(
         paid_fmt = database.format_ars(amount)
         rem_fmt = database.format_ars(res.get("remaining_debt", 0.0))
 
-        if c_phone:
+        if c_phone and do_notify:
             try:
                 import whatsapp_client
                 c_clean = database.clean_whatsapp_phone(c_phone)
@@ -419,12 +628,14 @@ async def partial_payment_api(
             except Exception:
                 pass
 
+        wa_status_str = "Enviada" if do_notify else "Desactivada por admin"
         await send_telegram_message(
             f"💵 <b>PAGO PARCIAL REGISTRADO (PANEL WEB)</b>\n\n"
             f"• Cliente: <b>{c_name}</b>\n"
             f"• Servicio: <b>{res.get('platform', 'Streaming')}</b>\n"
             f"• Monto abonado: <b>{paid_fmt}</b>\n"
             f"• Saldo restante: <b>{rem_fmt}</b>\n"
+            f"• Notificación WhatsApp: <b>{wa_status_str}</b>\n"
             f"• Registrado por: <b>{username}</b>"
             + (f"\n• Comprobante procesado: <b>#P{target_pid}</b>" if target_pid else "")
         )

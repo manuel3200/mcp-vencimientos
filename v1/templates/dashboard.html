@@ -518,12 +518,41 @@
           </div>
         </div>
 
+        <!-- Barra de Acciones Masivas (Aparece al seleccionar 1 o más comprobantes) -->
+        <div id="bulk-pending-bar" class="hidden items-center justify-between bg-surface-container-low border border-primary/40 rounded-xl p-3 shadow-md flex-wrap gap-3">
+          <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-primary text-xl">checklist</span>
+              <span class="text-sm font-bold text-on-surface"><span id="bulk-selected-count" class="text-primary font-mono text-base">0</span> seleccionados</span>
+            </div>
+            <div class="h-4 w-[1px] bg-surface-container-highest hidden sm:block"></div>
+            <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer select-none bg-surface-container px-3 py-1.5 rounded-lg border border-surface-container-highest">
+              <input type="checkbox" id="bulk-notify-toggle" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+              <span class="font-medium">Notificar a clientes por WhatsApp</span>
+            </label>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button type="button" onclick="openBulkApproveModal()" class="h-8 px-3.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer transition-all shadow">
+              <span class="material-symbols-outlined text-sm">done_all</span> Aprobar Seleccionados
+            </button>
+            <button type="button" onclick="openBulkRejectModal()" class="h-8 px-3.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1.5 cursor-pointer transition-all shadow">
+              <span class="material-symbols-outlined text-sm">remove_done</span> Denegar Seleccionados
+            </button>
+            <button type="button" onclick="clearPendingSelection()" class="h-8 px-3 bg-surface-container hover:bg-surface-container-high text-on-surface-variant text-xs rounded-lg cursor-pointer transition-colors">
+              Desmarcar
+            </button>
+          </div>
+        </div>
+
         <!-- Tabla de Pagos Pendientes -->
         <div class="bg-surface-container-low border border-surface-container rounded-xl p-3 sm:p-4 shadow-sm flex flex-col gap-3">
           <div class="overflow-x-auto">
             <table id="pending-payments-table">
               <thead>
                 <tr>
+                  <th style="width:36px;text-align:center;">
+                    <input type="checkbox" id="select-all-pending" title="Seleccionar todos" onchange="toggleSelectAllPending(this)" class="cursor-pointer" style="width:16px;height:16px;accent-color:#10b981;">
+                  </th>
                   <th>ID</th>
                   <th>Cliente</th>
                   <th>Servicio / Cuenta</th>
@@ -1661,14 +1690,107 @@
         <button type="button" onclick="closeRejectPaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
       </div>
       <form id="reject-payment-form" action="" method="POST" class="flex flex-col gap-3">
-        <p class="text-xs text-on-surface-variant">El pago será marcado como <b>rechazado</b> y se le notificará al cliente por WhatsApp el motivo para que revise su transferencia.</p>
+        <p class="text-xs text-on-surface-variant">El pago será marcado como <b>rechazado</b> en el sistema.</p>
         <div>
           <label class="font-label-code text-xs text-on-surface-variant">Motivo del rechazo (opcional):</label>
           <input type="text" name="reason" placeholder="Ej: Monto incorrecto o datos bancarios no coincidentes" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
         </div>
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="reject-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar notificación de rechazo al cliente por WhatsApp</span>
+        </label>
         <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
           <button type="button" onclick="closeRejectPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
           <button type="submit" class="h-8 px-4 bg-error text-on-error text-xs font-semibold rounded hover:bg-error-container cursor-pointer">Confirmar Rechazo</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Aprobar Pago Individual -->
+  <div id="modal-approve-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeApprovePaymentModal()">
+    <div class="bg-surface-container-low border border-emerald-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 id="approve-modal-title" class="text-base font-bold text-emerald-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">check_circle</span> Aprobar Pago
+        </h3>
+        <button type="button" onclick="closeApprovePaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="approve-payment-form" action="" method="POST" class="flex flex-col gap-3">
+        <p class="text-xs text-on-surface-variant">
+          Se renovará la suscripción del cliente y se registrará el ingreso en las finanzas del sistema.
+        </p>
+        
+        <div class="bg-surface-container p-3 rounded-lg border border-surface-container-highest text-xs flex flex-col gap-1.5">
+          <div>Cliente: <b id="approve-modal-client" class="text-on-surface"></b></div>
+          <div>Servicio: <b id="approve-modal-service" class="text-sky-300 font-semibold"></b></div>
+          <div>Monto a acreditar: <b id="approve-modal-amount" class="text-emerald-400 font-mono text-sm"></b></div>
+        </div>
+
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="approve-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar WhatsApp de confirmación al cliente</span>
+        </label>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeApprovePaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded-lg cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors shadow">✅ Confirmar Aprobación</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Aprobar Pagos en Lote -->
+  <div id="modal-bulk-approve-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeBulkApproveModal()">
+    <div class="bg-surface-container-low border border-emerald-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-emerald-400 flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">done_all</span> Aprobar Pagos Seleccionados
+        </h3>
+        <button type="button" onclick="closeBulkApproveModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="bulk-approve-payment-form" action="/api/pending-payments/bulk-approve" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" id="bulk-approve-ids-input" name="payment_ids" value="">
+        <p class="text-xs text-on-surface-variant">
+          Vas a aprobar y procesar <b id="bulk-approve-count" class="text-emerald-400 font-bold">0</b> comprobantes en lote. Se renovarán las suscripciones correspondientes y se registrarán en finanzas.
+        </p>
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="bulk-approve-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar confirmación a cada cliente por WhatsApp</span>
+        </label>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeBulkApproveModal()" class="h-8 px-3 bg-surface-container text-xs rounded-lg cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer shadow">Confirmar Aprobación Masiva</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Denegar Pagos en Lote -->
+  <div id="modal-bulk-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeBulkRejectModal()">
+    <div class="bg-surface-container-low border border-error/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-error flex items-center gap-1.5">
+          <span class="material-symbols-outlined text-lg">remove_done</span> Denegar Pagos Seleccionados
+        </h3>
+        <button type="button" onclick="closeBulkRejectModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="bulk-reject-payment-form" action="/api/pending-payments/bulk-reject" method="POST" class="flex flex-col gap-3">
+        <input type="hidden" id="bulk-reject-ids-input" name="payment_ids" value="">
+        <p class="text-xs text-on-surface-variant">
+          Vas a denegar <b id="bulk-reject-count" class="text-error font-bold">0</b> comprobantes seleccionados.
+        </p>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Motivo del rechazo masivo:</label>
+          <input type="text" name="reason" value="Comprobante no válido o duplicado" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
+        </div>
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="bulk-reject-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar notificación de rechazo a cada cliente por WhatsApp</span>
+        </label>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeBulkRejectModal()" class="h-8 px-3 bg-surface-container text-xs rounded-lg cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-error text-on-error text-xs font-semibold rounded-lg hover:bg-error-container cursor-pointer">Confirmar Rechazo Masivo</button>
         </div>
       </form>
     </div>
@@ -1747,6 +1869,11 @@
           <label class="font-label-code text-xs text-on-surface-variant">Nota / Referencia (opcional):</label>
           <input type="text" name="notes" placeholder="Seña entrega 1ra parte" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
         </div>
+
+        <label class="flex items-center gap-2 text-xs text-on-surface cursor-pointer bg-surface-container p-2.5 rounded-lg border border-surface-container-highest select-none">
+          <input type="checkbox" id="partial-notify-checkbox" name="notify_client" value="1" checked class="rounded cursor-pointer" style="accent-color:#10b981;">
+          <span class="font-medium">Enviar notificación de pago parcial al cliente por WhatsApp</span>
+        </label>
 
         <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
           <button type="button" onclick="closePartialPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
@@ -2189,9 +2316,11 @@
       const modal = document.getElementById('modal-reject-payment');
       const title = document.getElementById('reject-modal-title');
       const form = document.getElementById('reject-payment-form');
+      const notifyCb = document.getElementById('reject-notify-checkbox');
       if (!modal) return;
       if (title) title.innerHTML = `<span class="material-symbols-outlined text-lg">cancel</span> Denegar Pago #P${paymentId} (${clientName || 'Cliente'})`;
       if (form) form.action = '/api/pending-payments/reject/' + paymentId;
+      if (notifyCb) notifyCb.checked = true;
       modal.classList.remove('hidden');
       modal.classList.add('flex');
       modal.style.display = 'flex';
@@ -2199,6 +2328,157 @@
 
     function closeRejectPaymentModal() {
       const modal = document.getElementById('modal-reject-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    // Modal: Aprobación Individual
+    function openApprovePaymentModal(paymentId, clientName, platform, amountFormatted) {
+      const modal = document.getElementById('modal-approve-payment');
+      const form = document.getElementById('approve-payment-form');
+      const title = document.getElementById('approve-modal-title');
+      const clientLabel = document.getElementById('approve-modal-client');
+      const serviceLabel = document.getElementById('approve-modal-service');
+      const amountLabel = document.getElementById('approve-modal-amount');
+      const notifyCb = document.getElementById('approve-notify-checkbox');
+
+      if (!modal) return;
+      if (form) form.action = '/api/pending-payments/approve/' + paymentId;
+      if (title) title.innerHTML = `<span class="material-symbols-outlined text-lg">check_circle</span> Aprobar Pago #P${paymentId}`;
+      if (clientLabel) clientLabel.innerText = clientName || 'Cliente';
+      if (serviceLabel) serviceLabel.innerText = platform || 'Suscripción';
+      if (amountLabel) amountLabel.innerText = amountFormatted || '$0';
+      if (notifyCb) notifyCb.checked = true;
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeApprovePaymentModal() {
+      const modal = document.getElementById('modal-approve-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    // Lógica de Selección Múltiple y Acciones Masivas
+    function getSelectedPendingIds() {
+      const checkedBoxes = document.querySelectorAll('.pending-checkbox:checked');
+      const ids = [];
+      checkedBoxes.forEach(cb => {
+        if (cb.value) ids.push(cb.value);
+      });
+      return ids;
+    }
+
+    function updatePendingSelection() {
+      const allCheckboxes = document.querySelectorAll('.pending-checkbox');
+      const checkedBoxes = document.querySelectorAll('.pending-checkbox:checked');
+      const masterCheckbox = document.getElementById('select-all-pending');
+      const bar = document.getElementById('bulk-pending-bar');
+      const countLabel = document.getElementById('bulk-selected-count');
+
+      const count = checkedBoxes.length;
+      if (countLabel) countLabel.innerText = count;
+
+      if (masterCheckbox) {
+        masterCheckbox.checked = (allCheckboxes.length > 0 && checkedBoxes.length === allCheckboxes.length);
+        masterCheckbox.indeterminate = (checkedBoxes.length > 0 && checkedBoxes.length < allCheckboxes.length);
+      }
+
+      if (bar) {
+        if (count > 0) {
+          bar.classList.remove('hidden');
+          bar.classList.add('flex');
+        } else {
+          bar.classList.add('hidden');
+          bar.classList.remove('flex');
+        }
+      }
+    }
+
+    function toggleSelectAllPending(master) {
+      const checkboxes = document.querySelectorAll('.pending-checkbox');
+      checkboxes.forEach(cb => {
+        cb.checked = master.checked;
+      });
+      updatePendingSelection();
+    }
+
+    function clearPendingSelection() {
+      const checkboxes = document.querySelectorAll('.pending-checkbox');
+      checkboxes.forEach(cb => {
+        cb.checked = false;
+      });
+      const master = document.getElementById('select-all-pending');
+      if (master) {
+        master.checked = false;
+        master.indeterminate = false;
+      }
+      updatePendingSelection();
+    }
+
+    function openBulkApproveModal() {
+      const ids = getSelectedPendingIds();
+      if (ids.length === 0) {
+        alert('Selecciona al menos un comprobante de pago.');
+        return;
+      }
+      const modal = document.getElementById('modal-bulk-approve-payment');
+      const countEl = document.getElementById('bulk-approve-count');
+      const inputEl = document.getElementById('bulk-approve-ids-input');
+      const notifyCb = document.getElementById('bulk-approve-notify-checkbox');
+      const barToggle = document.getElementById('bulk-notify-toggle');
+
+      if (!modal) return;
+      if (countEl) countEl.innerText = ids.length;
+      if (inputEl) inputEl.value = ids.join(',');
+      if (notifyCb && barToggle) notifyCb.checked = barToggle.checked;
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeBulkApproveModal() {
+      const modal = document.getElementById('modal-bulk-approve-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    function openBulkRejectModal() {
+      const ids = getSelectedPendingIds();
+      if (ids.length === 0) {
+        alert('Selecciona al menos un comprobante de pago.');
+        return;
+      }
+      const modal = document.getElementById('modal-bulk-reject-payment');
+      const countEl = document.getElementById('bulk-reject-count');
+      const inputEl = document.getElementById('bulk-reject-ids-input');
+      const notifyCb = document.getElementById('bulk-reject-notify-checkbox');
+      const barToggle = document.getElementById('bulk-notify-toggle');
+
+      if (!modal) return;
+      if (countEl) countEl.innerText = ids.length;
+      if (inputEl) inputEl.value = ids.join(',');
+      if (notifyCb && barToggle) notifyCb.checked = barToggle.checked;
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeBulkRejectModal() {
+      const modal = document.getElementById('modal-bulk-reject-payment');
       if (modal) {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
@@ -2235,12 +2515,14 @@
       const platLabel = document.getElementById('partial-platform-label');
       const debtLabel = document.getElementById('partial-debt-amount');
       const amtInput = document.getElementById('partial-amount-input');
+      const notifyCb = document.getElementById('partial-notify-checkbox');
 
       if (accInput) accInput.value = (accountId && accountId !== '0') ? accountId : '';
       if (pendingInput) pendingInput.value = pendingPaymentId || '';
       if (clientLabel) clientLabel.innerText = clientName || 'Cliente';
       if (platLabel) platLabel.innerText = platform || 'Suscripción';
       if (debtLabel) debtLabel.innerText = (currentDebt && currentDebt > 0) ? ('$' + currentDebt) : 'Tarifa estándar';
+      if (notifyCb) notifyCb.checked = true;
 
       if (amtInput) {
         if (detectedAmount && detectedAmount > 0) {
@@ -2274,6 +2556,9 @@
         closeCreateComboModal();
         closeCsvModal();
         closeReceiptModal();
+        closeApprovePaymentModal();
+        closeBulkApproveModal();
+        closeBulkRejectModal();
         closeRejectPaymentModal();
         closeRotatePasswordModal();
         closePartialPaymentModal();

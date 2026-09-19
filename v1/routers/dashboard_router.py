@@ -189,9 +189,9 @@ async def dashboard(request: Request):
             </form>
             """
 
-        safe_cname = (a.get('client_name') or 'Cliente').replace("'", "\\'")
-        safe_email = (a.get('email') or '').replace("'", "\\'")
-        safe_plat = (a.get('platform') or '').replace("'", "\\'")
+        safe_cname = (a.get('client_name') or 'Cliente').replace("'", " ").replace('"', " ").replace("\r", "").replace("\n", " ").strip()
+        safe_email = (a.get('email') or '').replace("'", " ").replace('"', " ").replace("\r", "").replace("\n", " ").strip()
+        safe_plat = (a.get('platform') or '').replace("'", " ").replace('"', " ").replace("\r", "").replace("\n", " ").strip()
         acc_id = a.get('id', '')
 
         btn_rotate = f'<button type="button" onclick="openRotatePasswordModal(\'{safe_email}\', \'{safe_plat}\', {acc_id})" class="btn-action" style="background:#be185d;color:white;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Rotar Contraseña y Notificar Co-Usuarios">🔐 Rotar Clave</button>'
@@ -573,31 +573,38 @@ async def dashboard(request: Request):
     pending_payments_rows = ""
     for p in pending_payments:
         pid = p["id"]
-        c_name = p.get("client_name") or "Cliente"
+        c_name = (p.get("client_name") or "Cliente").replace("\r", "").replace("\n", " ").strip()
         c_phone = p.get("sender_phone") or p.get("client_whatsapp") or ""
         wa_link = f'<a href="https://wa.me/{c_phone}" target="_blank" style="color: #22c55e; font-weight: 600;">+{c_phone}</a>' if c_phone else '-'
-        plat = p.get("platform") or "Suscripción"
+        plat = (p.get("platform") or "Suscripción").replace("\r", "").replace("\n", " ").strip()
         acc_email = p.get("account_email") or "-"
-        amt_str = p.get("amount_formatted") or (database.format_ars(p.get("amount") or 0.0))
+        amt_val = float(p.get("amount") or 0.0)
+        amt_str = p.get("amount_formatted") or (database.format_ars(amt_val))
         bank_info = p.get("bank") or "Transferencia"
         op_info = f"<br><small style='color:#94a3b8;'>Op: #{p.get('operation_id')}</small>" if p.get("operation_id") else ""
         date_str = p.get("created_at", "")[:16]
 
-        b64 = p.get("receipt_base64") or ""
-        mime_type = p.get("receipt_mimetype") or ""
-        clean_filename = (p.get("receipt_filename") or "comprobante").replace("'", "\\'")
-        if b64:
-            if "pdf" in mime_type.lower():
-                receipt_html = f'<button type="button" onclick="viewReceiptDoc(\'data:{mime_type};base64,{b64}\', \'{clean_filename}\')" class="btn-action" style="background:#1e293b;border:1px solid #f43f5e;color:#f43f5e;padding:3px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;">📄 Ver PDF</button>'
+        has_receipt = bool(p.get("receipt_base64"))
+        mime_type = (p.get("receipt_mimetype") or "").lower()
+        clean_filename = (p.get("receipt_filename") or "comprobante").replace("'", "").replace('"', '').replace("\r", "").replace("\n", "").strip()
+        is_pdf = "pdf" in mime_type or clean_filename.endswith(".pdf")
+
+        if has_receipt:
+            is_pdf_js = "true" if is_pdf else "false"
+            if is_pdf:
+                receipt_html = f'<button type="button" onclick="viewReceipt({pid}, {is_pdf_js}, \'{clean_filename}\')" class="btn-action" style="background:#1e293b;border:1px solid #f43f5e;color:#f43f5e;padding:3px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;">📄 Ver PDF</button>'
             else:
-                receipt_html = f'<button type="button" onclick="viewReceiptDoc(\'data:{mime_type};base64,{b64}\', \'{clean_filename}\')" class="btn-action" style="background:#1e293b;border:1px solid #38bdf8;color:#38bdf8;padding:3px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;">🖼️ Ver Imagen</button>'
+                receipt_html = f'<button type="button" onclick="viewReceipt({pid}, {is_pdf_js}, \'{clean_filename}\')" class="btn-action" style="background:#1e293b;border:1px solid #38bdf8;color:#38bdf8;padding:3px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;">🖼️ Ver Imagen</button>'
         elif p.get("raw_text"):
-            safe_raw = p.get("raw_text")[:50].replace('"', '&quot;').replace("'", "&#39;")
+            safe_raw = p.get("raw_text")[:50].replace('"', '&quot;').replace("'", "&#39;").replace("\n", " ")
             receipt_html = f'<span title="{safe_raw}" style="color:#94a3b8;font-size:0.75rem;cursor:help;">📝 Texto</span>'
         else:
             receipt_html = '<span style="color:#64748b;font-size:0.75rem;">Sin archivo</span>'
 
-        safe_client_name = c_name.replace("'", "\\'")
+        js_client_name = c_name.replace("'", " ").replace('"', " ").replace("\\", " ").strip()
+        js_plat = plat.replace("'", " ").replace('"', " ").replace("\\", " ").strip()
+        acc_id_arg = p.get("account_id") or 0
+
         pending_payments_rows += f"""
         <tr>
             <td><strong style="color:#38bdf8;font-size:0.95rem;">#P{pid}</strong></td>
@@ -607,11 +614,11 @@ async def dashboard(request: Request):
             <td><small style="color:#94a3b8;">{date_str}</small></td>
             <td>{receipt_html}</td>
             <td style="white-space:nowrap;">
-                <form action="/api/pending-payments/approve/{pid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Aprobar pago #P{pid} de {safe_client_name}? Se renovará la suscripción y se registrará en finanzas.');">
-                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Aprobar Pago">✅ Aprobar</button>
+                <form action="/api/pending-payments/approve/{pid}" method="POST" style="display:inline;" onsubmit="return confirm('¿Aprobar pago #P{pid} de {js_client_name}? Se renovará la suscripción y se registrará en finanzas.');">
+                    <button type="submit" class="btn-action" style="background:#059669;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;cursor:pointer;" title="Aprobar Pago">✅ Aprobar</button>
                 </form>
-                <button type="button" onclick="openPartialPaymentModal({p.get('account_id') or pid}, '{safe_client_name}', '{plat}', 0)" class="btn-action" style="background:#78350f;color:#fde68a;border:none;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Registrar Pago Parcial">💵 Parcial</button>
-                <button type="button" onclick="openRejectPaymentModal({pid}, '{safe_client_name}')" class="btn-action" style="background:#dc2626;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;" title="Denegar Pago">❌ Denegar</button>
+                <button type="button" onclick="openPartialPaymentModal('{acc_id_arg}', '{js_client_name}', '{js_plat}', 0, {pid}, {amt_val})" class="btn-action" style="background:#78350f;color:#fde68a;border:none;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;cursor:pointer;" title="Registrar Pago Parcial">💵 Parcial</button>
+                <button type="button" onclick="openRejectPaymentModal({pid}, '{js_client_name}')" class="btn-action" style="background:#dc2626;color:white;border:none;padding:4px 8px;border-radius:5px;font-size:0.75rem;font-weight:600;margin-left:4px;cursor:pointer;" title="Denegar Pago">❌ Denegar</button>
             </td>
         </tr>
         """

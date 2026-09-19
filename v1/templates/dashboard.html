@@ -1627,14 +1627,15 @@
         </div>
       </form>
   <!-- Modal: Visualizador de Comprobante (Imagen o PDF) -->
-  <div id="modal-receipt-viewer" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden items-center justify-center p-3">
+  <!-- Modal: Visor de Comprobante Centralizado -->
+  <div id="modal-receipt-viewer" class="fixed inset-0 bg-black/85 backdrop-blur-md z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closeReceiptModal()">
     <div class="bg-surface-container-low border border-surface-container rounded-xl w-full max-w-2xl max-h-[90vh] p-4 flex flex-col gap-3 shadow-2xl overflow-hidden">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <div class="flex items-center gap-2">
           <span class="material-symbols-outlined text-tertiary">receipt_long</span>
           <h3 id="receipt-modal-title" class="text-sm font-bold text-on-surface">Comprobante Adjunto</h3>
         </div>
-        <button onclick="closeReceiptModal()" class="text-on-surface-variant hover:text-on-surface text-lg">✕</button>
+        <button type="button" onclick="closeReceiptModal()" class="text-on-surface-variant hover:text-on-surface text-lg cursor-pointer">✕</button>
       </div>
       <div id="receipt-modal-body" class="flex-1 overflow-auto flex items-center justify-center min-h-[320px] max-h-[65vh] bg-black/50 rounded-lg p-2">
         <!-- Inyectado dinámicamente -->
@@ -1643,19 +1644,19 @@
         <a id="receipt-modal-download" href="#" download="comprobante" class="text-sky-400 hover:underline flex items-center gap-1 font-semibold">
           <span class="material-symbols-outlined text-sm">download</span> Descargar Archivo
         </a>
-        <button type="button" onclick="closeReceiptModal()" class="h-8 px-4 bg-surface-container hover:bg-surface-container-high text-xs rounded">Cerrar</button>
+        <button type="button" onclick="closeReceiptModal()" class="h-8 px-4 bg-surface-container hover:bg-surface-container-high text-xs rounded cursor-pointer">Cerrar</button>
       </div>
     </div>
   </div>
 
   <!-- Modal: Denegar / Rechazar Pago -->
-  <div id="modal-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+  <div id="modal-reject-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closeRejectPaymentModal()">
     <div class="bg-surface-container-low border border-error/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <h3 id="reject-modal-title" class="text-base font-bold text-error flex items-center gap-1.5">
           <span class="material-symbols-outlined text-lg">cancel</span> Denegar Comprobante
         </h3>
-        <button onclick="closeRejectPaymentModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+        <button type="button" onclick="closeRejectPaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
       </div>
       <form id="reject-payment-form" action="" method="POST" class="flex flex-col gap-3">
         <p class="text-xs text-on-surface-variant">El pago será marcado como <b>rechazado</b> y se le notificará al cliente por WhatsApp el motivo para que revise su transferencia.</p>
@@ -1664,21 +1665,21 @@
           <input type="text" name="reason" placeholder="Ej: Monto incorrecto o datos bancarios no coincidentes" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest">
         </div>
         <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
-          <button type="button" onclick="closeRejectPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
-          <button type="submit" class="h-8 px-4 bg-error text-on-error text-xs font-semibold rounded hover:bg-error-container">Confirmar Rechazo</button>
+          <button type="button" onclick="closeRejectPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-error text-on-error text-xs font-semibold rounded hover:bg-error-container cursor-pointer">Confirmar Rechazo</button>
         </div>
       </form>
     </div>
   </div>
 
   <!-- Modal: Rotar Contraseña y Notificar Co-Usuarios -->
-  <div id="modal-rotate-password" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+  <div id="modal-rotate-password" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closeRotatePasswordModal()">
     <div class="bg-surface-container-low border border-pink-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <h3 id="rotate-modal-title" class="text-base font-bold text-pink-400 flex items-center gap-1.5">
           <span class="material-symbols-outlined text-lg">lock_reset</span> Rotar Contraseña y Notificar
         </h3>
-        <button onclick="closeRotatePasswordModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+        <button type="button" onclick="closeRotatePasswordModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
       </div>
       <form id="rotate-password-form" action="/api/accounts/rotate-password" method="POST" class="flex flex-col gap-3">
         <input type="hidden" id="rotate-email-input" name="email_or_account_id" value="">
@@ -1697,24 +1698,25 @@
         </div>
 
         <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
-          <button type="button" onclick="closeRotatePasswordModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
-          <button type="submit" class="h-8 px-4 bg-pink-600 text-white text-xs font-semibold rounded hover:bg-pink-700">Rotar y Notificar</button>
+          <button type="button" onclick="closeRotatePasswordModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-pink-600 text-white text-xs font-semibold rounded hover:bg-pink-700 cursor-pointer">Rotar y Notificar</button>
         </div>
       </form>
     </div>
   </div>
 
   <!-- Modal: Registrar Pago Parcial / Seña -->
-  <div id="modal-partial-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3">
+  <div id="modal-partial-payment" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden items-center justify-center p-3" onclick="if(event.target===this)closePartialPaymentModal()">
     <div class="bg-surface-container-low border border-amber-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
       <div class="flex items-center justify-between pb-2 border-b border-surface-container">
         <h3 id="partial-modal-title" class="text-base font-bold text-amber-400 flex items-center gap-1.5">
           <span class="material-symbols-outlined text-lg">payments</span> Registrar Pago Parcial / Seña
         </h3>
-        <button onclick="closePartialPaymentModal()" class="text-on-surface-variant hover:text-on-surface">✕</button>
+        <button type="button" onclick="closePartialPaymentModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
       </div>
       <form id="partial-payment-form" action="/api/accounts/partial-payment" method="POST" class="flex flex-col gap-3">
         <input type="hidden" id="partial-account-id-input" name="account_id" value="">
+        <input type="hidden" id="partial-pending-payment-id-input" name="pending_payment_id" value="">
         
         <p class="text-xs text-on-surface-variant">
           Cliente: <b id="partial-client-label" class="text-on-surface"></b> | Servicio: <b id="partial-platform-label" class="text-on-surface"></b>
@@ -1726,7 +1728,7 @@
 
         <div>
           <label class="font-label-code text-xs text-on-surface-variant">Monto Abonado ($ ARS):</label>
-          <input type="number" step="any" name="amount" required placeholder="Ej: 3500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-emerald-400 font-bold">
+          <input type="number" step="any" id="partial-amount-input" name="amount" required placeholder="Ej: 3500" class="w-full h-8 px-2 bg-surface-container text-xs rounded border border-surface-container-highest font-mono text-emerald-400 font-bold">
         </div>
 
         <div>
@@ -1745,8 +1747,8 @@
         </div>
 
         <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
-          <button type="button" onclick="closePartialPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded">Cancelar</button>
-          <button type="submit" class="h-8 px-4 bg-amber-600 text-white text-xs font-semibold rounded hover:bg-amber-700">Guardar Pago Parcial</button>
+          <button type="button" onclick="closePartialPaymentModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-amber-600 text-white text-xs font-semibold rounded hover:bg-amber-700 cursor-pointer">Guardar Pago Parcial</button>
         </div>
       </form>
     </div>
@@ -2091,65 +2093,143 @@
     function closeCsvModal() { document.getElementById('modal-csv-import').style.display = 'none'; }
 
     // 7. Modales de Comprobantes y Rechazo de Pagos
+    function viewReceipt(paymentId, isPdf, fileName) {
+      const modal = document.getElementById('modal-receipt-viewer');
+      const body = document.getElementById('receipt-modal-body');
+      const title = document.getElementById('receipt-modal-title');
+      const dl = document.getElementById('receipt-modal-download');
+      if (!modal || !body) return;
+
+      const fileTitle = fileName || ('comprobante_P' + paymentId);
+      const url = '/api/pending-payments/' + paymentId + '/receipt';
+
+      if (title) title.innerText = 'Comprobante #P' + paymentId + ' (' + fileTitle + ')';
+      if (dl) {
+        dl.href = url;
+        dl.download = fileTitle;
+      }
+
+      if (isPdf) {
+        body.innerHTML = `<iframe src="${url}" class="w-full h-[65vh] rounded border-0 bg-white shadow-inner"></iframe>`;
+      } else {
+        body.innerHTML = `<img src="${url}" alt="Comprobante #P${paymentId}" class="max-w-full max-h-[65vh] object-contain rounded shadow" loading="lazy" />`;
+      }
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
     function viewReceiptDoc(dataUri, fileName) {
       const modal = document.getElementById('modal-receipt-viewer');
       const body = document.getElementById('receipt-modal-body');
       const title = document.getElementById('receipt-modal-title');
       const dl = document.getElementById('receipt-modal-download');
-      
-      title.innerText = 'Comprobante: ' + (fileName || 'Archivo');
-      dl.href = dataUri;
-      dl.download = fileName || 'comprobante';
+      if (!modal || !body) return;
 
-      if (dataUri.startsWith('data:application/pdf')) {
-        body.innerHTML = `<iframe src="${dataUri}" class="w-full h-[60vh] rounded border-0"></iframe>`;
-      } else {
-        body.innerHTML = `<img src="${dataUri}" alt="Comprobante" class="max-w-full max-h-[60vh] object-contain rounded shadow" />`;
+      if (title) title.innerText = 'Comprobante: ' + (fileName || 'Archivo');
+      if (dl) {
+        dl.href = dataUri;
+        dl.download = fileName || 'comprobante';
       }
+
+      if (dataUri && dataUri.startsWith('data:application/pdf')) {
+        body.innerHTML = `<iframe src="${dataUri}" class="w-full h-[65vh] rounded border-0 bg-white shadow-inner"></iframe>`;
+      } else {
+        body.innerHTML = `<img src="${dataUri}" alt="Comprobante" class="max-w-full max-h-[65vh] object-contain rounded shadow" />`;
+      }
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
       modal.style.display = 'flex';
     }
 
     function closeReceiptModal() {
       const modal = document.getElementById('modal-receipt-viewer');
       const body = document.getElementById('receipt-modal-body');
-      body.innerHTML = '';
-      modal.style.display = 'none';
+      if (body) body.innerHTML = '';
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
     }
 
     function openRejectPaymentModal(paymentId, clientName) {
       const modal = document.getElementById('modal-reject-payment');
       const title = document.getElementById('reject-modal-title');
       const form = document.getElementById('reject-payment-form');
-      title.innerHTML = `<span class="material-symbols-outlined text-lg">cancel</span> Denegar Pago #P${paymentId} (${clientName})`;
-      form.action = '/api/pending-payments/reject/' + paymentId;
+      if (!modal) return;
+      if (title) title.innerHTML = `<span class="material-symbols-outlined text-lg">cancel</span> Denegar Pago #P${paymentId} (${clientName || 'Cliente'})`;
+      if (form) form.action = '/api/pending-payments/reject/' + paymentId;
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
       modal.style.display = 'flex';
     }
 
     function closeRejectPaymentModal() {
-      document.getElementById('modal-reject-payment').style.display = 'none';
+      const modal = document.getElementById('modal-reject-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
     }
 
     function openRotatePasswordModal(email, platform, unpaidAccountId) {
+      const modal = document.getElementById('modal-rotate-password');
+      if (!modal) return;
       document.getElementById('rotate-email-input').value = email;
       document.getElementById('rotate-unpaid-id-input').value = unpaidAccountId || '';
       document.getElementById('rotate-acc-label').innerText = `${platform} (${email})`;
-      document.getElementById('modal-rotate-password').style.display = 'flex';
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
     }
 
     function closeRotatePasswordModal() {
-      document.getElementById('modal-rotate-password').style.display = 'none';
+      const modal = document.getElementById('modal-rotate-password');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
     }
 
-    function openPartialPaymentModal(accountId, clientName, platform, currentDebt) {
-      document.getElementById('partial-account-id-input').value = accountId;
-      document.getElementById('partial-client-label').innerText = clientName;
-      document.getElementById('partial-platform-label').innerText = platform;
-      document.getElementById('partial-debt-amount').innerText = currentDebt > 0 ? ('$' + currentDebt) : 'Tarifa estándar';
-      document.getElementById('modal-partial-payment').style.display = 'flex';
+    function openPartialPaymentModal(accountId, clientName, platform, currentDebt, pendingPaymentId, detectedAmount) {
+      const modal = document.getElementById('modal-partial-payment');
+      if (!modal) return;
+      const accInput = document.getElementById('partial-account-id-input');
+      const pendingInput = document.getElementById('partial-pending-payment-id-input');
+      const clientLabel = document.getElementById('partial-client-label');
+      const platLabel = document.getElementById('partial-platform-label');
+      const debtLabel = document.getElementById('partial-debt-amount');
+      const amtInput = document.getElementById('partial-amount-input');
+
+      if (accInput) accInput.value = (accountId && accountId !== '0') ? accountId : '';
+      if (pendingInput) pendingInput.value = pendingPaymentId || '';
+      if (clientLabel) clientLabel.innerText = clientName || 'Cliente';
+      if (platLabel) platLabel.innerText = platform || 'Suscripción';
+      if (debtLabel) debtLabel.innerText = (currentDebt && currentDebt > 0) ? ('$' + currentDebt) : 'Tarifa estándar';
+
+      if (amtInput) {
+        if (detectedAmount && detectedAmount > 0) {
+          amtInput.value = detectedAmount;
+        } else {
+          amtInput.value = '';
+        }
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
     }
 
     function closePartialPaymentModal() {
-      document.getElementById('modal-partial-payment').style.display = 'none';
+      const modal = document.getElementById('modal-partial-payment');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
     }
 
     // Tecla Escape para cerrar modales

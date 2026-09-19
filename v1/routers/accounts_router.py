@@ -1,9 +1,10 @@
 import urllib.parse
 import logging
+import base64
 from typing import Optional
 
 from fastapi import APIRouter, Request, Form, HTTPException
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse, JSONResponse, Response
 
 import database
 from core.security import verify_session_cookie
@@ -127,6 +128,44 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
             f"• Denegado por: <b>{username}</b>"
         )
     return RedirectResponse(url="/#pending-payments", status_code=303)
+
+
+@router.get("/api/pending-payments/{payment_id}/receipt")
+async def get_pending_payment_receipt_api(payment_id: int, request: Request):
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    p = database.get_pending_payment(payment_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado")
+
+    b64_raw = p.get("receipt_base64") or ""
+    if not b64_raw:
+        raise HTTPException(status_code=404, detail="El pago no contiene un comprobante adjunto")
+
+    if "," in b64_raw:
+        b64_raw = b64_raw.split(",", 1)[1]
+    b64_clean = b64_raw.strip().replace("\n", "").replace("\r", "").replace(" ", "")
+
+    try:
+        data_bytes = base64.b64decode(b64_clean)
+    except Exception as e:
+        logger.error(f"Error decodificando comprobante base64 para #P{payment_id}: {e}")
+        raise HTTPException(status_code=500, detail="Error al decodificar comprobante")
+
+    mime = p.get("receipt_mimetype") or "image/jpeg"
+    filename = (p.get("receipt_filename") or f"comprobante_P{payment_id}.jpg").replace("\r", "").replace("\n", "").replace('"', '')
+    encoded_fn = urllib.parse.quote(filename)
+
+    return Response(
+        content=data_bytes,
+        media_type=mime,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"; filename*=UTF-8\'\'{encoded_fn}',
+            "Cache-Control": "private, max-age=3600"
+        }
+    )
 
 
 @router.post("/api/fallen-reports/authorize/{report_id}")
@@ -266,7 +305,8 @@ async def rotate_password_api(
 @router.post("/api/accounts/partial-payment")
 async def partial_payment_api(
     request: Request,
-    account_id: str = Form(...),
+    account_id: Optional[str] = Form(""),
+    pending_payment_id: Optional[str] = Form(None),
     amount: float = Form(...),
     payment_method: Optional[str] = Form("Transferencia"),
     notes: Optional[str] = Form("")
@@ -276,15 +316,57 @@ async def partial_payment_api(
         raise HTTPException(status_code=401)
     username = user.get("username", "admin")
 
-    res = database.register_partial_payment(
-        email_or_id=account_id.strip(),
-        amount=float(amount),
-        payment_method=payment_method or "Transferencia",
-        notes=f"{notes.strip()} (Registrado por {username})".strip()
-    )
+    acc_target = account_id.strip() if account_id else ""
+    pending_item = None
+    target_pid = None
+    if pending_payment_id and str(pending_payment_id).strip().isdigit():
+        target_pid = int(str(pending_payment_id).strip())
+        pending_item = database.get_pending_payment(target_pid)
+        if pending_item:
+            if not acc_target or acc_target in ("0", "None", str(target_pid)):
+                acc_target = pending_item.get("account_id")
+                if not acc_target and pending_item.get("client_id"):
+                    c_pro = database.get_client_360_profile(pending_item["client_id"])
+                    accs = c_pro.get("active_accounts", []) if c_pro else []
+                    if accs:
+                        acc_target = accs[0]["id"]
+            if not acc_target and pending_item.get("sender_phone"):
+                c_pro = database.get_client_by_phone(pending_item["sender_phone"])
+                if c_pro:
+                    accs = c_pro.get("active_accounts", [])
+                    if accs:
+                        acc_target = accs[0]["id"]
+
+    if not acc_target or acc_target in ("0", "None", ""):
+        if pending_item:
+            res = {
+                "success": True,
+                "platform": pending_item.get("platform", "Streaming"),
+                "client_name": pending_item.get("client_name") or "Cliente",
+                "remaining_debt": 0.0,
+                "client_whatsapp": pending_item.get("sender_phone")
+            }
+        else:
+            dest = "/#pending-payments" if target_pid else "/#accounts"
+            return RedirectResponse(url=f"{dest}?err={urllib.parse.quote('Debes especificar una cuenta válida')}", status_code=303)
+    else:
+        res = database.register_partial_payment(
+            email_or_id=str(acc_target),
+            amount=float(amount),
+            payment_method=payment_method or "Transferencia",
+            notes=f"{notes.strip()} (Registrado por {username})".strip()
+        )
+
     if res.get("success"):
-        c_phone = res.get("client_whatsapp")
-        c_name = res.get("client_name") or "Cliente"
+        if pending_item and target_pid:
+            database.reject_pending_payment(
+                target_pid,
+                reason=f"Acreditado como pago parcial de {database.format_ars(amount)} (Saldo rest: {database.format_ars(res.get('remaining_debt', 0))})",
+                admin_user=f"Web ({username})"
+            )
+
+        c_phone = res.get("client_whatsapp") or (pending_item.get("sender_phone") if pending_item else None)
+        c_name = res.get("client_name") or (pending_item.get("client_name") if pending_item else "Cliente")
         paid_fmt = database.format_ars(amount)
         rem_fmt = database.format_ars(res.get("remaining_debt", 0.0))
 
@@ -294,7 +376,7 @@ async def partial_payment_api(
                 c_clean = database.clean_whatsapp_phone(c_phone)
                 if c_clean:
                     c_msg = (
-                        f"¡Hola {c_name}! 🙌 Registramos tu pago parcial de *{paid_fmt}* para tu suscripción de *{res.get('platform')}*.\n\n"
+                        f"¡Hola {c_name}! 🙌 Registramos tu pago parcial de *{paid_fmt}* para tu suscripción de *{res.get('platform', 'Streaming')}*.\n\n"
                         f"📌 Tu saldo pendiente restante es de: *{rem_fmt}*.\n"
                         f"¡Muchas gracias! Cuando completes el saldo total se extenderá tu ciclo completo. ✨"
                     )
@@ -305,14 +387,17 @@ async def partial_payment_api(
         await send_telegram_message(
             f"💵 <b>PAGO PARCIAL REGISTRADO (PANEL WEB)</b>\n\n"
             f"• Cliente: <b>{c_name}</b>\n"
-            f"• Servicio: <b>{res.get('platform')}</b>\n"
+            f"• Servicio: <b>{res.get('platform', 'Streaming')}</b>\n"
             f"• Monto abonado: <b>{paid_fmt}</b>\n"
             f"• Saldo restante: <b>{rem_fmt}</b>\n"
             f"• Registrado por: <b>{username}</b>"
+            + (f"\n• Comprobante procesado: <b>#P{target_pid}</b>" if target_pid else "")
         )
-        return RedirectResponse(url="/?msg=partial_payment_saved#accounts", status_code=303)
+        dest = "/#pending-payments" if target_pid else "/#accounts"
+        return RedirectResponse(url=f"{dest}?msg=partial_payment_saved", status_code=303)
     else:
-        return RedirectResponse(url=f"/?err={urllib.parse.quote(res.get('error', 'Error'))}#accounts", status_code=303)
+        dest = "/#pending-payments" if target_pid else "/#accounts"
+        return RedirectResponse(url=f"{dest}?err={urllib.parse.quote(res.get('error', 'Error'))}", status_code=303)
 
 
 @router.post("/api/accounts/mark-baja/{account_id}")

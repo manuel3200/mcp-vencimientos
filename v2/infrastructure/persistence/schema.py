@@ -622,5 +622,124 @@ def init_db():
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ephemeral_secrets_token ON ephemeral_secrets(token)")
+
+            # 24. Programa de Referidos (Códigos y Saldo a Favor)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS referral_codes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id INTEGER UNIQUE REFERENCES clients(id) ON DELETE CASCADE,
+                    code TEXT UNIQUE NOT NULL,
+                    reward_balance_ars REAL DEFAULT 0.0,
+                    total_referred INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_referral_codes_code ON referral_codes(code)")
+
+            # 25. Historial de Recompensas de Referidos
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS referral_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    referrer_client_id INTEGER NOT NULL REFERENCES clients(id),
+                    referred_client_id INTEGER NOT NULL REFERENCES clients(id),
+                    reward_amount REAL NOT NULL,
+                    status TEXT DEFAULT 'credited',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_referral_history_referrer ON referral_history(referrer_client_id)")
+
+            # 26. Motor de Cupones de Descuento
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS coupons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    code TEXT UNIQUE NOT NULL,
+                    discount_type TEXT NOT NULL DEFAULT 'percent', -- 'percent', 'fixed_ars'
+                    discount_value REAL NOT NULL,
+                    min_purchase REAL DEFAULT 0.0,
+                    max_uses INTEGER DEFAULT 100,
+                    times_used INTEGER DEFAULT 0,
+                    expires_at TIMESTAMP NOT NULL,
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_coupons_code ON coupons(code)")
+
+            # 27. Redenciones de Cupones
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS coupon_redemptions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    coupon_id INTEGER NOT NULL REFERENCES coupons(id) ON DELETE CASCADE,
+                    client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+                    discount_applied REAL NOT NULL,
+                    order_amount REAL NOT NULL,
+                    redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_coupon_redemptions_coupon ON coupon_redemptions(coupon_id)")
+
+            # 28. Gamificación y Actividad de Miembros en Grupos de WhatsApp
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS group_member_activity (
+                    group_jid TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    push_name TEXT DEFAULT '',
+                    message_count INTEGER DEFAULT 0,
+                    points INTEGER DEFAULT 0,
+                    level_tier TEXT DEFAULT 'Bronce',
+                    last_active_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (group_jid, phone)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_group_member_activity_points ON group_member_activity(group_jid, points DESC)")
+
+            # 29. Auto-Respuesta a Preguntas Frecuentes (Community FAQs)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS community_faqs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    keyword_triggers TEXT NOT NULL,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    category TEXT DEFAULT 'general',
+                    is_active INTEGER DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Sembrar FAQs esenciales predeterminadas si la tabla está vacía
+            faqs_row = conn.execute("SELECT COUNT(*) as count FROM community_faqs").fetchone()
+            if faqs_row and faqs_row["count"] == 0:
+                initial_faqs = [
+                    (
+                        "pagar,pago,transferencia,alias,cbu,cuenta,banco,metodos de pago,como pago",
+                        "¿Cómo pagar y qué medios de pago aceptan?",
+                        "💳 *MEDIOS DE PAGO DISPONIBLES:*\n• Transferencia bancaria (CBU/CVU y Alias al instante)\n• Mercado Pago\n• Cripto / Binance USDT\n\n📌 *Importante:* Una vez realizado el pago, envía tu comprobante (foto o PDF) por este chat para acreditarlo automáticamente.",
+                        "pagos"
+                    ),
+                    (
+                        "caida,falla,no anda,se cayo,soporte,pantalla ocupada,error contraseña",
+                        "¿Qué hacer si una cuenta tiene problemas o cae?",
+                        "🛡️ *GARANTÍA Y SOPORTE STREAMVAULT:*\nSi tienes algún inconveniente con una cuenta, escribe en privado `/caida` seguido de tu correo para generar un ticket prioritario. Nuestro sistema verificará y reemplazará tus credenciales en minutos.",
+                        "soporte"
+                    ),
+                    (
+                        "catalogo,precios,planes,tarifas,cuanto sale,costo,combos",
+                        "¿Dónde puedo ver el catálogo de precios y servicios?",
+                        "🍿 *CATÁLOGO DE SERVICIOS Y COMBOS:*\nPuedes consultar nuestra lista oficial de servicios y promociones escribiendo `/catalogo` o `/precios` en el chat.",
+                        "ventas"
+                    ),
+                    (
+                        "http custom,vpn,hwid,internet ilimitado,como conectar",
+                        "¿Cómo funciona el servicio HTTP Custom?",
+                        "🌐 *HTTP CUSTOM / VPN:*\nPara activar o renovar tu servidor, ingresa a la app HTTP Custom, copia tu HWID y envíanoslo por privado para vincular tu acceso de alta velocidad.",
+                        "vpn"
+                    )
+                ]
+                for triggers, q, a, cat in initial_faqs:
+                    conn.execute("""
+                        INSERT INTO community_faqs (keyword_triggers, question, answer, category)
+                        VALUES (?, ?, ?, ?)
+                    """, (triggers, q, a, cat))
     finally:
         conn.close()

@@ -227,5 +227,32 @@ from db.repositories.groups_moderation_repo import (
     delete_group_config
 )
 
+# Crecimiento Comercial, Referidos, Cupones, Gamificación y Churn (Fase 4)
+from db.repositories.growth_repo import (
+    get_or_create_client_referral_code,
+    get_referral_by_code,
+    get_referral_by_client_id,
+    credit_referral_reward,
+    redeem_referral_balance,
+    create_coupon,
+    get_coupon,
+    record_coupon_redemption,
+    list_active_coupons,
+    increment_member_activity,
+    get_group_leaderboard,
+    list_active_faqs,
+    upsert_faq,
+    delete_faq,
+    get_client_churn_metrics
+)
+
+from core.growth import (
+    ReferralManager,
+    CouponManager,
+    GamificationManager,
+    FAQEngine,
+    ChurnPredictor
+)
+
 
 

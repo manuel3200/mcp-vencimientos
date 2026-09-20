@@ -286,3 +286,15 @@ def eliminar_grupo_whatsapp(group_jid: str) -> str:
         return f"🗑️ Grupo `{clean_jid}` eliminado de la base de datos."
     return f"ℹ️ El grupo `{clean_jid}` no estaba registrado."
 
+
+@mcp.tool()
+def consultar_ranking_grupo_whatsapp(group_jid: str, limite: int = 10) -> str:
+    """Consulta el ranking de miembros más activos y sus rangos de gamificación (Diamante, Oro, Plata, Bronce) en un grupo de WhatsApp."""
+    clean_jid = group_jid.strip()
+    if not clean_jid:
+        return "❌ Error: Debes ingresar el JID del grupo."
+    records = database.get_group_leaderboard(clean_jid, limit=limite)
+    g_cfg = database.get_group_config(clean_jid)
+    g_name = g_cfg.get("group_name") if g_cfg else "Grupo"
+    return database.GamificationManager.format_leaderboard(records, group_name=g_name)
+

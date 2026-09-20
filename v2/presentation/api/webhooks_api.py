@@ -466,6 +466,28 @@ async def whatsapp_webhook(request: Request):
                     return JSONResponse({"status": "ok", "action": "group_participant_demoted"})
             return JSONResponse({"status": "ignored", "reason": "unauthorized_group_command"})
 
+        # 4.2 GAMIFICACIÓN Y ACTIVIDAD EN COMUNIDAD (Fase 4)
+        push_name_member = data.get("pushName") or body.get("pushName") or ""
+        try:
+            database.increment_member_activity(group_jid, sender_phone, push_name_member)
+        except Exception as act_err:
+            logger.debug(f"Error registrando actividad de miembro en grupo: {act_err}")
+
+        # /ranking o /top: Podio de miembros más activos de la comunidad
+        if re.search(r'^/(?:ranking|top|lideres|podio)\b', text_lower):
+            leaderboard = database.get_group_leaderboard(group_jid, limit=7)
+            g_name = group_cfg.get("group_name") or "Comunidad"
+            rank_msg = database.GamificationManager.format_leaderboard(leaderboard, group_name=g_name)
+            await whatsapp_client.send_text_message(group_jid, rank_msg)
+            return JSONResponse({"status": "ok", "action": "group_leaderboard_sent"})
+
+        # Auto-Respuesta a FAQs Comunitarias en Grupo
+        matched_faq = database.FAQEngine.find_match(text)
+        if matched_faq:
+            faq_reply = f"🤖 *RESPUESTA AUTOMÁTICA:* {matched_faq['question']}\n\n{matched_faq['answer']}"
+            await whatsapp_client.send_text_message(group_jid, faq_reply)
+            return JSONResponse({"status": "ok", "action": "group_faq_replied", "faq_id": matched_faq["id"]})
+
         # En grupos, omitir auto-atención de cobros personales o credenciales para proteger la privacidad
         # Solo permitir catálogo público si lo solicitan expresamente
         if not any(cmd in text_lower for cmd in ("/catalogo", "/precios", "precios", "planes")):
@@ -1758,6 +1780,50 @@ async def whatsapp_webhook(request: Request):
 
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "fallen_report_created", "report_id": report_id})
+
+    # REGLA F: Programa de Referidos (/mi_codigo, /referidos) en Chat 1:1
+    if re.search(r'^/(?:mi_codigo|micodigo|referidos|referido)\b', text_lower):
+        if not client_profile or not client_profile.get("client"):
+            new_c = database.find_or_create_client(name=push_name, whatsapp=sender_phone)
+            client_id_val = new_c["id"]
+        else:
+            client_id_val = client_profile["client"]["id"]
+
+        bot_settings = database.get_whatsapp_api_settings()
+        bot_phone = bot_settings.get("bot_phone") or ""
+        ref_msg = database.ReferralManager.format_referral_summary(client_id_val, bot_phone=bot_phone)
+        await whatsapp_client.send_text_message(sender_phone, ref_msg, delay_seconds=1.5)
+        _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+        return JSONResponse({"status": "ok", "action": "referral_summary_sent"})
+
+    # REGLA G: Cupones de Descuento (/cupon <CODIGO>) en Chat 1:1
+    coupon_match = re.search(r'^/cupon\s+([A-Za-z0-9_-]+)', text_lower)
+    if coupon_match:
+        c_code = coupon_match.group(1).upper()
+        is_val, msg, discount, _ = database.CouponManager.validate_and_calculate(c_code, order_amount=8500.0)
+        c_item = database.get_coupon(c_code)
+        if is_val and c_item:
+            disc_label = f"{c_item['discount_value']}% OFF" if c_item['discount_type'] == 'percent' else f"${c_item['discount_value']} ARS de descuento"
+            c_reply = (
+                f"🎟️ *CUPÓN VÁLIDO:* `{c_code}`\n\n"
+                f"• Beneficio: *{disc_label}*\n"
+                f"• Compra mínima: ${c_item.get('min_purchase', 0):.2f} ARS\n"
+                f"• Vence: {c_item.get('expires_at', '')[:10]}\n\n"
+                f"💡 Al momento de contratar o renovar tu suscripción, indícanos este cupón para aplicarlo a tu orden."
+            )
+        else:
+            c_reply = f"❌ *CUPÓN NO DISPONIBLE:* {msg}"
+        await whatsapp_client.send_text_message(sender_phone, c_reply, delay_seconds=1.5)
+        _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+        return JSONResponse({"status": "ok", "action": "coupon_validated", "valid": is_val})
+
+    # REGLA H: Auto-Respuesta a FAQs Comunitarias en Chat 1:1
+    matched_faq_11 = database.FAQEngine.find_match(text)
+    if matched_faq_11:
+        faq_reply = f"🤖 *RESPUESTA AUTOMÁTICA:* {matched_faq_11['question']}\n\n{matched_faq_11['answer']}"
+        await whatsapp_client.send_text_message(sender_phone, faq_reply, delay_seconds=1.5)
+        _AUTO_REPLY_COOLDOWNS[sender_phone] = now
+        return JSONResponse({"status": "ok", "action": "private_faq_replied", "faq_id": matched_faq_11["id"]})
 
     return JSONResponse({"status": "ok", "action": "none"})
 

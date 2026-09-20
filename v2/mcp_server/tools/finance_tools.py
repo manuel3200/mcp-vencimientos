@@ -365,3 +365,74 @@ async def rechazar_comprobante_pago(
     )
 
 
+@mcp.tool()
+def crear_cupon_descuento(
+    codigo: str,
+    tipo_descuento: str = "percent",
+    valor_descuento: float = 10.0,
+    compra_minima: float = 0.0,
+    limite_usos: int = 100,
+    dias_vigencia: int = 30
+) -> str:
+    """Crea un cupón de descuento promocional para clientes en StreamVault.
+    - codigo: Texto del cupón (ej: 'PROMO10', 'BIENVENIDA', 'ESTRENO2026').
+    - tipo_descuento: 'percent' (porcentaje) o 'fixed_ars' (monto fijo en pesos).
+    - valor_descuento: Valor del descuento (ej: 15 para 15%, o 1500 para $1500 ARS).
+    - compra_minima: Monto mínimo de compra en ARS para aplicar el cupón.
+    - limite_usos: Cantidad máxima de canjes permitidos.
+    - dias_vigencia: Días antes de que el cupón expire.
+    """
+    try:
+        coupon = database.CouponManager.create(
+            code=codigo,
+            discount_type=tipo_descuento,
+            discount_value=valor_descuento,
+            min_purchase=compra_minima,
+            max_uses=limite_usos,
+            expires_in_days=dias_vigencia
+        )
+        t_label = f"{coupon['discount_value']}%" if coupon['discount_type'] == 'percent' else f"${coupon['discount_value']} ARS"
+        return (
+            f"🎟️ <b>CUPÓN CREADO EXITOSAMENTE:</b>\n\n"
+            f"• Código: <code>{coupon['code']}</code>\n"
+            f"• Descuento: <b>{t_label}</b>\n"
+            f"• Compra Mínima: ${coupon['min_purchase']:.2f} ARS\n"
+            f"• Cupo Máximo: {coupon['max_uses']} usos\n"
+            f"• Vence: {coupon['expires_at'][:10]}\n"
+            f"• Estado: 🟢 Activo"
+        )
+    except Exception as e:
+        return f"❌ Error creando cupón: {str(e)}"
+
+
+@mcp.tool()
+def listar_cupones_activos() -> str:
+    """Lista todos los cupones de descuento vigentes y disponibles para canje."""
+    coupons = database.list_active_coupons()
+    if not coupons:
+        return "ℹ️ No hay cupones activos actualmente en el sistema."
+
+    lines = ["🎟️ <b>CUPONES PROMOCIONALES ACTIVOS:</b>\n"]
+    for c in coupons:
+        t_label = f"{c['discount_value']}%" if c['discount_type'] == 'percent' else f"${c['discount_value']} ARS"
+        lines.append(
+            f"• <code>{c['code']}</code>: <b>{t_label}</b> | Usos: {c['times_used']}/{c['max_uses']} | Vence: {c['expires_at'][:10]}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def validar_cupon_descuento(codigo: str, monto_compra: float) -> str:
+    """Valida un código de cupón contra un monto de orden y calcula el ahorro neto en ARS."""
+    is_valid, msg, discount, final_amount = database.CouponManager.validate_and_calculate(codigo, monto_compra)
+    if is_valid:
+        return (
+            f"✅ <b>CUPÓN VÁLIDO:</b>\n"
+            f"• Código: <code>{codigo.upper()}</code>\n"
+            f"• Monto Original: ${monto_compra:.2f} ARS\n"
+            f"• Descuento: -${discount:.2f} ARS\n"
+            f"• <b>TOTAL FINAL A PAGAR: ${final_amount:.2f} ARS</b>"
+        )
+    return f"❌ <b>CUPÓN INVÁLIDO:</b> {msg}"
+
+

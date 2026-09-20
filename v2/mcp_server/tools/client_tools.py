@@ -273,4 +273,25 @@ def generar_mensaje_whatsapp(
         f"👉 Haz clic en el enlace para abrir WhatsApp con el mensaje ya redactado y listo para enviar."
     )
 
-# --- Herramientas de Pantallas Compartidas y Perfiles (Paso 3) ---
+
+@mcp.tool()
+def consultar_programa_referidos_cliente(cliente_o_id: str) -> str:
+    """Consulta el estado del programa de referidos de un cliente: código único, saldo a favor en ARS y amigos invitados."""
+    c = database.search_client(cliente_o_id)
+    if not c:
+        return f"❌ No se encontró ningún cliente para '{cliente_o_id}'."
+    client_id = c["id"]
+    return database.ReferralManager.format_referral_summary(client_id)
+
+
+@mcp.tool()
+def auditar_riesgo_churn_clientes(filtro_riesgo: str = "MEDIO") -> str:
+    """Ejecuta una auditoría predictiva de riesgo de churn (abandono de clientes) identificando morosidad, cuentas caídas no resueltas e inactividad.
+    - filtro_riesgo: 'ALTO' (solo clientes en alerta roja), 'MEDIO' (alertas amarillas y rojas) o 'TODOS'.
+    """
+    filtro = filtro_riesgo.upper().strip()
+    if filtro not in ("ALTO", "MEDIO", "TODOS"):
+        filtro = "MEDIO"
+    min_level = "ALTO" if filtro == "ALTO" else ("MEDIO" if filtro == "MEDIO" else "BAJO")
+    report = database.ChurnPredictor.get_risk_report(min_risk_level=min_level)
+    return database.ChurnPredictor.format_report(report)

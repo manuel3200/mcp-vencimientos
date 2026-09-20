@@ -4,7 +4,7 @@ from typing import Optional, List, Dict, Any
 
 from mcp_server.instance import mcp
 import database
-from infrastructure.external.evolution_whatsapp.client import whatsapp_client
+import whatsapp_client
 
 logger = logging.getLogger("mcp.group_tools")
 

@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 
 import database
 from core.security import verify_session_cookie
-from infrastructure.external.evolution_whatsapp.client import whatsapp_client
+import whatsapp_client
 
 logger = logging.getLogger("routers.groups")
 router = APIRouter()

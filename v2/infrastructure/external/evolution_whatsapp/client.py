@@ -1345,6 +1345,9 @@ async def send_group_tagall(group_jid: str, message: str = "", sender_name: str 
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+import sys
+whatsapp_client = sys.modules[__name__]
+
 
 
 

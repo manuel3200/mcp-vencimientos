@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List, Union
 
 from db.connection import get_connection
 from core.utils import parse_money
+
+logger = logging.getLogger("db.finance_repo")
 
 def register_customer_payment(
     email_or_id: str,
@@ -256,6 +259,17 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
     """Revierte un pago aprobado por error: restaura el vencimiento anterior y anula la transacción contable."""
     conn = get_connection()
     try:
+        # Migración defensiva en caliente para asegurar columnas necesarias
+        for col_stmt in (
+            "ALTER TABLE payments ADD COLUMN status TEXT DEFAULT 'completed'",
+            "ALTER TABLE payments ADD COLUMN is_partial INTEGER DEFAULT 0",
+            "ALTER TABLE payments ADD COLUMN remaining_balance REAL DEFAULT 0.0"
+        ):
+            try:
+                conn.execute(col_stmt)
+            except Exception:
+                pass
+
         with conn:
             row = conn.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
             if not row:
@@ -268,27 +282,55 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
             acc_id = p.get("account_id")
             restored_expiry = None
 
-            # Si la transacción estaba asociada a una cuenta de streaming, restaurar la fecha de corte previa
+            # Si la transacción estaba asociada a una cuenta de streaming:
             if acc_id:
+                # Comprobar si existen otros pagos activos/completados para esta cuenta
+                other_active_row = conn.execute("""
+                    SELECT COUNT(*) as cnt FROM payments
+                    WHERE account_id = ? AND id != ? AND (status IS NULL OR status != 'reversed')
+                """, (acc_id, payment_id)).fetchone()
+                other_active = int(other_active_row["cnt"]) if other_active_row else 0
+
                 acc_row = conn.execute("SELECT * FROM streaming_accounts WHERE id = ?", (acc_id,)).fetchone()
                 if acc_row:
                     acc = dict(acc_row)
                     prev_exp = acc.get("previous_expiry_date")
-                    if prev_exp and prev_exp != acc.get("expiry_date"):
-                        conn.execute("""
-                            UPDATE streaming_accounts
-                            SET expiry_date = ?, payment_status = 'pendiente', updated_at = CURRENT_TIMESTAMP
-                            WHERE id = ?
-                        """, (prev_exp, acc_id))
-                        restored_expiry = prev_exp
 
-            # Anular el pago en payments
+                    if other_active > 0:
+                        # Caso duplicado: aún queda al menos un pago válido activo
+                        # Si la duplicación extendió la fecha de vencimiento, restaurar el vencimiento previo
+                        # pero CONSERVAR payment_status = 'pagado' ya que el cliente pagó su servicio
+                        if prev_exp and prev_exp != acc.get("expiry_date"):
+                            conn.execute("""
+                                UPDATE streaming_accounts
+                                SET expiry_date = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """, (prev_exp, acc_id))
+                            restored_expiry = prev_exp
+                    else:
+                        # Caso normal (único pago): restaurar vencimiento y marcar como 'pendiente'
+                        if prev_exp and prev_exp != acc.get("expiry_date"):
+                            conn.execute("""
+                                UPDATE streaming_accounts
+                                SET expiry_date = ?, payment_status = 'pendiente', updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """, (prev_exp, acc_id))
+                            restored_expiry = prev_exp
+                        else:
+                            conn.execute("""
+                                UPDATE streaming_accounts
+                                SET payment_status = 'pendiente', updated_at = CURRENT_TIMESTAMP
+                                WHERE id = ?
+                            """, (acc_id,))
+
+            # Anular el pago en payments de forma segura contra NULL
             rev_note = f"REVERTIDO por {admin_user}: {reason}"
             conn.execute("""
                 UPDATE payments
-                SET status = 'reversed', notes = notes || ' | ' || ?
+                SET status = 'reversed',
+                    notes = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes || ' | ' || ? END
                 WHERE id = ?
-            """, (rev_note, payment_id))
+            """, (rev_note, rev_note, payment_id))
 
             try:
                 from core.audit import log_audit_event
@@ -308,11 +350,15 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
                 "success": True,
                 "payment_id": payment_id,
                 "amount": p["amount"],
-                "profit": p["profit"],
+                "reversed_amount": p["amount"],
+                "profit": p.get("profit", 0.0),
                 "account_id": acc_id,
                 "restored_expiry": restored_expiry,
                 "reason": reason
             }
+    except Exception as e:
+        logger.error(f"Error revirtiendo pago #{payment_id}: {e}", exc_info=True)
+        return {"success": False, "error": str(e)}
     finally:
         conn.close()
 

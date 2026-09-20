@@ -1,4 +1,5 @@
 import re
+import html
 import urllib.parse
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
@@ -255,21 +256,25 @@ def render_transactions_rows(transactions: List[Dict[str, Any]]) -> str:
         is_rev = t.get("status") == "reversed"
         amt_html = f"<s style='color:#ef4444;'>{database.format_ars(t['amount'])}</s>" if is_rev else f"<strong style='color:#10b981;'>+{database.format_ars(t['amount'])}</strong>"
         profit_html = "<small style='color:#64748b;'>Anulado</small>" if is_rev else f"<strong style='color:#38bdf8;'>+{database.format_ars(t['profit'])}</strong>"
+        notes_txt = html.escape(str(t.get('notes') or ''))
         rev_btn = f"""
         <form action="/api/payments/reverse/{t['id']}" method="POST" style="display:inline;" onsubmit="return confirm('¿Revertir y anular este cobro #{t['id']}? Se restaurará el vencimiento previo.');">
-            <button type="submit" class="btn-action" style="color:#f59e0b;font-size:0.7rem;padding:2px 5px;border-radius:4px;" title="Revertir y anular cobro">🔄</button>
+            <button type="submit" class="btn-action" style="color:#f59e0b;font-size:0.7rem;padding:2px 5px;border-radius:4px;" title="Revertir y anular cobro #{t['id']}">🔄</button>
         </form>
-        """ if not is_rev else "<span class='badge' style='background:#450a0a;color:#fca5a5;font-size:0.65rem;'>Revertido</span>"
+        """ if not is_rev else f"<span class='badge' style='background:#450a0a;color:#fca5a5;font-size:0.65rem;' title='{notes_txt}'>Revertido</span>"
+
+        created_str = str(t.get('created_at') or '')[:16]
+        method_str = html.escape(str(t.get('payment_method') or 'Transf.'))
 
         rows += f"""
         <tr>
-            <td><small style="color:#94a3b8;">{t['created_at'][:16]}</small></td>
+            <td><small style="color:#94a3b8;">{created_str}</small></td>
             <td><strong>{c_name}</strong> ({c_type})</td>
             <td><span class="badge" style="background:#1e3a8a;color:#93c5fd;">{plat}</span></td>
             <td>{amt_html}</td>
             <td><span style="color:#f59e0b;">-{database.format_ars(t['cost'])}</span></td>
             <td>{profit_html}</td>
-            <td><small>{t.get('payment_method') or 'Transf.'}</small></td>
+            <td><small title="{notes_txt}">{method_str}</small></td>
             <td>{rev_btn}</td>
         </tr>
         """

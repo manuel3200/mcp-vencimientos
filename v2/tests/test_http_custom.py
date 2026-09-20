@@ -113,8 +113,26 @@ def run_tests():
         assert out_renew["action"] == "renewal"
         assert out_renew["expiry_date"] == "2026-10-19"
 
+        # 7.4 Comprobar que en ventana de 24h no se duplica cobro de renovación
+        conn = get_connection()
+        try:
+            p_count_before_r2 = conn.execute("SELECT COUNT(*) FROM payments WHERE client_id = ?", (out_sale["client_id"],)).fetchone()[0]
+        finally:
+            conn.close()
+
+        out_renew_dup = await process_http_custom_outgoing_message(test_phone, msg_renew_17, source="TestHarness")
+        assert out_renew_dup["status"] == "success"
+
+        conn = get_connection()
+        try:
+            p_count_after_r2 = conn.execute("SELECT COUNT(*) FROM payments WHERE client_id = ?", (out_sale["client_id"],)).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert p_count_after_r2 == p_count_before_r2, f"Idempotencia de 24h falló: {p_count_before_r2} != {p_count_after_r2}"
+
     asyncio.run(test_db_flow())
-    print("    ✅ HTTP Custom & HWID: 10/10 casos de prueba superados exitosamente.")
+    print("    ✅ HTTP Custom & HWID: 11/11 casos de prueba superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()

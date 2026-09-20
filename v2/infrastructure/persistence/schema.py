@@ -142,6 +142,9 @@ def init_db():
                     profit REAL DEFAULT 0.0,
                     payment_method TEXT DEFAULT 'Transferencia',
                     notes TEXT DEFAULT '',
+                    is_partial INTEGER DEFAULT 0,
+                    status TEXT DEFAULT 'completed',
+                    remaining_balance REAL DEFAULT 0.0,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)

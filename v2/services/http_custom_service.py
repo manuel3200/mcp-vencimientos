@@ -116,14 +116,14 @@ async def process_http_custom_outgoing_message(recipient_phone: str, text: str, 
                     ))
                     acc_id = cursor.lastrowid
 
-                # 2.1 Verificación de idempotencia (evitar doble cobro si el mensaje se reenvía en 5 min)
+                # 2.1 Verificación de idempotencia (evitar doble cobro en ventana de 24 horas)
                 recent_p = conn.execute("""
                     SELECT id FROM payments
-                    WHERE client_id = ? AND amount = ?
-                      AND created_at >= datetime('now', '-5 minutes')
-                      AND notes LIKE ?
+                    WHERE (account_id = ? OR (client_id = ? AND amount = ?))
+                      AND (status IS NULL OR status != 'reversed')
+                      AND created_at >= datetime('now', '-24 hours')
                     LIMIT 1
-                """, (client_id, price, f"%{username}%")).fetchone()
+                """, (acc_id, client_id, price)).fetchone()
 
                 is_duplicate_payment = bool(recent_p)
                 if not is_duplicate_payment:
@@ -132,7 +132,7 @@ async def process_http_custom_outgoing_message(recipient_phone: str, text: str, 
                         VALUES (?, ?, ?, ?, ?, 'WhatsApp Auto', ?)
                     """, (acc_id, client_id, price, cost, profit, f"Venta HTTP Custom - Usuario: {username}"))
                 else:
-                    logger.info(f"Cobro omitido por idempotencia para {username} (ya registrado en últimos 5 min)")
+                    logger.info(f"Cobro omitido por idempotencia para venta de {username} (ya registrado en últimas 24 horas)")
 
             else:
                 # Renovación: Buscar la cuenta del cliente
@@ -176,14 +176,14 @@ async def process_http_custom_outgoing_message(recipient_phone: str, text: str, 
                     ))
                     acc_id = cursor.lastrowid
 
-                # 2.2 Verificación de idempotencia para renovación
+                # 2.2 Verificación de idempotencia para renovación (evitar doble cobro en ventana de 24 horas)
                 recent_renov_p = conn.execute("""
                     SELECT id FROM payments
-                    WHERE client_id = ? AND amount = ?
-                      AND created_at >= datetime('now', '-5 minutes')
-                      AND notes LIKE ?
+                    WHERE (account_id = ? OR (client_id = ? AND amount = ?))
+                      AND (status IS NULL OR status != 'reversed')
+                      AND created_at >= datetime('now', '-24 hours')
                     LIMIT 1
-                """, (client_id, price, f"%{username}%")).fetchone()
+                """, (acc_id, client_id, price)).fetchone()
 
                 is_duplicate_payment = bool(recent_renov_p)
                 if not is_duplicate_payment:
@@ -192,15 +192,36 @@ async def process_http_custom_outgoing_message(recipient_phone: str, text: str, 
                         VALUES (?, ?, ?, ?, ?, 'WhatsApp Auto', ?)
                     """, (acc_id, client_id, price, cost, profit, f"Renovación HTTP Custom - Usuario: {username}"))
                 else:
-                    logger.info(f"Cobro omitido por idempotencia para renovación de {username} (ya registrado en últimos 5 min)")
+                    logger.info(f"Cobro omitido por idempotencia para renovación de {username} (ya registrado en últimas 24 horas)")
 
             # 3. Auto-aprobar comprobantes pendientes de este cliente si existieran
-            cursor_pen = conn.execute("""
-                UPDATE pending_payments
-                SET status = 'approved', account_id = ?, notes = notes || ' | Aprobado auto por registro HTTP Custom'
-                WHERE status = 'pending' AND (client_id = ? OR (length(sender_phone) > 6 AND ? LIKE '%' || substr(sender_phone, -8)))
-            """, (acc_id, client_id, clean_phone if clean_phone else "____"))
-            approved_pending_count = cursor_pen.rowcount
+            clean_digits = "".join(filter(str.isdigit, clean_phone or ""))
+            phone_suffix = clean_digits[-8:] if len(clean_digits) >= 8 else (clean_digits if clean_digits else "____")
+
+            pending_matches = conn.execute("""
+                SELECT id, bank, amount, operation_id FROM pending_payments
+                WHERE status = 'pending'
+                  AND (
+                      client_id = ?
+                      OR (length(?) >= 6 AND sender_phone LIKE '%' || ?)
+                      OR (lower(client_name) = lower(?) AND lower(?) != '')
+                  )
+                ORDER BY id DESC
+            """, (client_id, phone_suffix, phone_suffix, username, username)).fetchall()
+
+            approved_pending_count = 0
+            if pending_matches:
+                for pm in pending_matches:
+                    pm_dict = dict(pm)
+                    conn.execute("""
+                        UPDATE pending_payments
+                        SET status = 'approved', account_id = COALESCE(account_id, ?),
+                            client_id = COALESCE(client_id, ?),
+                            resolved_at = CURRENT_TIMESTAMP,
+                            notes = CASE WHEN notes IS NULL OR notes = '' THEN 'Aprobado auto por registro HTTP Custom' ELSE notes || ' | Aprobado auto por registro HTTP Custom' END
+                        WHERE id = ?
+                    """, (acc_id, client_id, pm_dict["id"]))
+                    approved_pending_count += 1
     finally:
         conn.close()
 

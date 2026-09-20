@@ -373,6 +373,117 @@ def run_tests():
         tamper_failed = True
     assert tamper_failed is True, "Debe rechazar backup alterado/manipulado"
 
+    # 20. Test Reversión de Pago Individual y Restauración de Vencimiento
+    from db.connection import get_connection
+    cli_rev = database.find_or_create_client(name="Cliente Reversion", whatsapp="5491144556677")
+    acc_rev = database.create_account(
+        platform="Netflix",
+        email="rev_test@netflix.com",
+        password="pass",
+        expiry_date=date.today().isoformat(),
+        whatsapp="5491144556677",
+        price="6000"
+    )
+    database.collect_payment(
+        account_id=acc_rev["id"],
+        extend_days=30,
+        amount=6000.0,
+        payment_method="Transferencia"
+    )
+    conn_t = get_connection()
+    try:
+        p_row = conn_t.execute("SELECT id, amount, status FROM payments WHERE account_id = ? ORDER BY id DESC LIMIT 1", (acc_rev["id"],)).fetchone()
+        assert p_row is not None
+        p_id = p_row["id"]
+    finally:
+        conn_t.close()
+
+    rev_res = database.reverse_customer_payment(p_id, reason="Error de prueba")
+    assert rev_res["success"] is True, f"Error al revertir: {rev_res}"
+    assert rev_res["reversed_amount"] == 6000.0
+    assert rev_res["amount"] == 6000.0
+
+    acc_rev_after = database.get_account_by_id(acc_rev["id"])
+    assert acc_rev_after["payment_status"] == "pendiente", "Cuenta con pago único revertido debe quedar 'pendiente'"
+
+    # 21. Test Reversión de Pago Duplicado (Conserva 'pagado' si existe otro pago activo)
+    cli_dup = database.find_or_create_client(name="Cliente Doble", whatsapp="5491155667788")
+    acc_dup = database.create_account(
+        platform="HTTP Custom",
+        email="dup_user",
+        password="HWID",
+        expiry_date=date.today().isoformat(),
+        whatsapp="5491155667788",
+        price="8000"
+    )
+    database.collect_payment(account_id=acc_dup["id"], extend_days=30, amount=8000.0, payment_method="WhatsApp Auto")
+    exp_after_p1 = (date.today() + timedelta(days=30)).isoformat()
+    database.collect_payment(account_id=acc_dup["id"], extend_days=30, amount=8000.0, payment_method="MP")
+    
+    conn_t = get_connection()
+    try:
+        p2_id = conn_t.execute("SELECT id FROM payments WHERE account_id = ? ORDER BY id DESC LIMIT 1", (acc_dup["id"],)).fetchone()["id"]
+    finally:
+        conn_t.close()
+
+    rev_dup_res = database.reverse_customer_payment(p2_id, reason="Cobro duplicado")
+    assert rev_dup_res["success"] is True
+    acc_dup_after = database.get_account_by_id(acc_dup["id"])
+    assert acc_dup_after["payment_status"] == "pagado", "Cuenta con otro pago activo debe conservar 'pagado'"
+    assert acc_dup_after["expiry_date"] == exp_after_p1, f"Vencimiento debía volver a {exp_after_p1}, quedó {acc_dup_after['expiry_date']}"
+
+    # 22. Test Fusión Inteligente en approve_pending_payment (Evitar cobro doble con WhatsApp Auto)
+    cli_fuse = database.find_or_create_client(name="Cliente Fusión", whatsapp="5491166778899")
+    acc_fuse = database.create_account(
+        platform="HTTP Custom",
+        email="riveroangel_test",
+        password="HWID",
+        expiry_date=date.today().isoformat(),
+        whatsapp="5491166778899",
+        price="8000"
+    )
+    conn_t = get_connection()
+    try:
+        with conn_t:
+            conn_t.execute("""
+                INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                VALUES (?, ?, 8000.0, 0.0, 8000.0, 'WhatsApp Auto', 'Renovación HTTP Custom - Usuario: riveroangel_test')
+            """, (acc_fuse["id"], cli_fuse["id"]))
+            existing_wa_pay_id = conn_t.execute("SELECT last_insert_rowid()").fetchone()[0]
+            exp_fuse_target = (date.today() + timedelta(days=30)).isoformat()
+            conn_t.execute("UPDATE streaming_accounts SET expiry_date = ?, payment_status = 'pagado' WHERE id = ?", (exp_fuse_target, acc_fuse["id"]))
+    finally:
+        conn_t.close()
+
+    p_pen_fuse = database.create_pending_payment(
+        sender_phone="5491166778899",
+        client_name="Cliente Fusión",
+        client_id=cli_fuse["id"],
+        account_id=acc_fuse["id"],
+        amount=8000.0,
+        bank="Mercado Pago",
+        operation_id="OP-FUSE-1234"
+    )
+    fuse_app_res = database.approve_pending_payment(p_pen_fuse["id"], admin_user="admin")
+    assert fuse_app_res["success"] is True
+    fin_d = fuse_app_res.get("finance_details") or {}
+    assert fin_d.get("merged") is True, "Debía fusionar con el pago existente de WhatsApp Auto"
+    assert fin_d.get("existing_payment_id") == existing_wa_pay_id
+
+    conn_t = get_connection()
+    try:
+        total_p_count = conn_t.execute("SELECT COUNT(*) FROM payments WHERE account_id = ?", (acc_fuse["id"],)).fetchone()[0]
+        fused_row = conn_t.execute("SELECT payment_method, notes FROM payments WHERE id = ?", (existing_wa_pay_id,)).fetchone()
+    finally:
+        conn_t.close()
+
+    assert total_p_count == 1, f"Se esperaba 1 solo pago en el libro contable, se encontraron {total_p_count}"
+    assert fused_row["payment_method"] == "Mercado Pago", f"El método debió actualizarse a Mercado Pago, tiene: {fused_row['payment_method']}"
+    assert "Comprobante" in fused_row["notes"]
+
+    acc_fuse_check = database.get_account_by_id(acc_fuse["id"])
+    assert acc_fuse_check["expiry_date"] == exp_fuse_target, f"Vencimiento esperado {exp_fuse_target}, obtenido {acc_fuse_check['expiry_date']}"
+
     print("    ✅ Aprobación y Pagos: Todos los casos de prueba y parches defensivos superados exitosamente.")
 
 if __name__ == "__main__":

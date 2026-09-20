@@ -410,30 +410,92 @@ def approve_pending_payment(
                     curr_exp = item.get("account_expiry")
                     conn_chk = get_connection()
                     has_prior_payments = False
+                    recent_auto_p = None
                     try:
+                        # Buscar si ya existe un cobro registrado en las últimas 48 horas para esta cuenta o cliente
+                        # (por ejemplo, creado automáticamente por WhatsApp al enviar las credenciales)
+                        if amt_val > 0:
+                            recent_auto_p = conn_chk.execute("""
+                                SELECT * FROM payments
+                                WHERE account_id = ?
+                                  AND (status IS NULL OR status != 'reversed')
+                                  AND datetime(created_at) >= datetime('now', '-48 hours')
+                                ORDER BY id DESC LIMIT 1
+                            """, (acc_id,)).fetchone()
+                            if not recent_auto_p and client_id:
+                                recent_auto_p = conn_chk.execute("""
+                                    SELECT * FROM payments
+                                    WHERE client_id = ? AND amount = ?
+                                      AND (status IS NULL OR status != 'reversed')
+                                      AND datetime(created_at) >= datetime('now', '-48 hours')
+                                    ORDER BY id DESC LIMIT 1
+                                """, (client_id, amt_val)).fetchone()
+
                         p_cnt = conn_chk.execute("SELECT COUNT(*) as cnt FROM payments WHERE account_id = ?", (acc_id,)).fetchone()
                         has_prior_payments = bool(p_cnt and p_cnt["cnt"] > 0)
                     finally:
                         conn_chk.close()
 
-                    is_initial = False
-                    if not has_prior_payments and curr_exp:
+                    if recent_auto_p:
+                        # FUSIÓN INTELIGENTE: Ya se cobró/renovó esta cuenta en las últimas 48h (ej: WhatsApp Auto)
+                        # No duplicamos la transacción en payments ni sumamos +30 días adicionales de expiración.
+                        # Actualizamos el método de pago del cobro existente al banco real del comprobante y vinculamos.
+                        existing_p_id = recent_auto_p["id"]
+                        merge_note = f"Comprobante #{payment_id} verificado (Op: {op_code})"
+                        conn_merge = get_connection()
                         try:
-                            from datetime import date
-                            exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
-                            days_left = (exp_d - date.today()).days
-                            if days_left > 15:
-                                is_initial = True
-                        except Exception:
-                            pass
+                            with conn_merge:
+                                conn_merge.execute("""
+                                    UPDATE payments
+                                    SET payment_method = ?,
+                                        account_id = COALESCE(account_id, ?),
+                                        notes = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes || ' | ' || ? END
+                                    WHERE id = ?
+                                """, (bank_name, acc_id, merge_note, merge_note, existing_p_id))
+                        finally:
+                            conn_merge.close()
 
-                    finance_res = finance_repo.collect_payment(
-                        account_id=acc_id,
-                        extend_days=0 if is_initial else 30,
-                        amount=amt_val if amt_val > 0 else None,
-                        payment_method=bank_name,
-                        notes=f"Aprobado desde Pago #{payment_id} (Op: {op_code})"
-                    )
+                        # Asegurar que la cuenta quede marcada como 'pagado'
+                        conn_acc_up = get_connection()
+                        try:
+                            with conn_acc_up:
+                                conn_acc_up.execute("""
+                                    UPDATE streaming_accounts
+                                    SET payment_status = 'pagado', debt_balance = 0.0, updated_at = CURRENT_TIMESTAMP
+                                    WHERE id = ?
+                                """, (acc_id,))
+                        finally:
+                            conn_acc_up.close()
+
+                        finance_res = {
+                            "success": True,
+                            "merged": True,
+                            "existing_payment_id": existing_p_id,
+                            "amount": recent_auto_p["amount"],
+                            "profit": recent_auto_p.get("profit", 0.0),
+                            "payment_method": bank_name,
+                            "action_label": f"Vinculado a cobro existente #{existing_p_id} (evitado cobro doble)"
+                        }
+                        logger.info(f"Cobro #{payment_id} fusionado con transacción existente #{existing_p_id} ({recent_auto_p['payment_method']} -> {bank_name})")
+                    else:
+                        is_initial = False
+                        if not has_prior_payments and curr_exp:
+                            try:
+                                from datetime import date
+                                exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
+                                days_left = (exp_d - date.today()).days
+                                if days_left > 15:
+                                    is_initial = True
+                            except Exception:
+                                pass
+
+                        finance_res = finance_repo.collect_payment(
+                            account_id=acc_id,
+                            extend_days=0 if is_initial else 30,
+                            amount=amt_val if amt_val > 0 else None,
+                            payment_method=bank_name,
+                            notes=f"Aprobado desde Pago #{payment_id} (Op: {op_code})"
+                        )
                 except Exception as e:
                     logger.error(f"Error al impactar cobro financiero para cuenta #{acc_id}: {e}")
             else:
@@ -441,17 +503,47 @@ def approve_pending_payment(
                     conn = get_connection()
                     try:
                         with conn:
-                            conn.execute("""
-                                INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
-                                VALUES (NULL, ?, ?, 0.0, ?, ?, ?)
-                            """, (client_id, amt_val, amt_val, bank_name, f"Cobro aprobado #{payment_id} (Cliente: {item.get('client_name')}, Op: {op_code})"))
-                            finance_res = {
-                                "success": True,
-                                "amount": amt_val,
-                                "profit": amt_val,
-                                "payment_method": bank_name,
-                                "action_label": "Cobro sin cuenta vinculada"
-                            }
+                            recent_orphan_p = None
+                            if client_id:
+                                recent_orphan_p = conn.execute("""
+                                    SELECT * FROM payments
+                                    WHERE client_id = ? AND amount = ?
+                                      AND (status IS NULL OR status != 'reversed')
+                                      AND datetime(created_at) >= datetime('now', '-48 hours')
+                                    ORDER BY id DESC LIMIT 1
+                                """, (client_id, amt_val)).fetchone()
+
+                            if recent_orphan_p:
+                                existing_p_id = recent_orphan_p["id"]
+                                merge_note = f"Comprobante #{payment_id} verificado (Op: {op_code})"
+                                conn.execute("""
+                                    UPDATE payments
+                                    SET payment_method = ?,
+                                        notes = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes || ' | ' || ? END
+                                    WHERE id = ?
+                                """, (bank_name, merge_note, merge_note, existing_p_id))
+                                finance_res = {
+                                    "success": True,
+                                    "merged": True,
+                                    "existing_payment_id": existing_p_id,
+                                    "amount": amt_val,
+                                    "profit": recent_orphan_p.get("profit", 0.0),
+                                    "payment_method": bank_name,
+                                    "action_label": f"Vinculado a cobro existente #{existing_p_id} (evitado cobro doble)"
+                                }
+                                logger.info(f"Cobro sin cuenta #{payment_id} vinculado a transacción existente #{existing_p_id}")
+                            else:
+                                conn.execute("""
+                                    INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                                    VALUES (NULL, ?, ?, 0.0, ?, ?, ?)
+                                """, (client_id, amt_val, amt_val, bank_name, f"Cobro aprobado #{payment_id} (Cliente: {item.get('client_name')}, Op: {op_code})"))
+                                finance_res = {
+                                    "success": True,
+                                    "amount": amt_val,
+                                    "profit": amt_val,
+                                    "payment_method": bank_name,
+                                    "action_label": "Cobro sin cuenta vinculada"
+                                }
                     except Exception as e:
                         logger.error(f"Error al asentar cobro en payments: {e}")
                     finally:

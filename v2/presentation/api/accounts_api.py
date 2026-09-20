@@ -691,25 +691,37 @@ async def mark_baja_api(account_id: int, request: Request):
 
 
 @router.post("/api/payments/reverse/{payment_id}")
+@router.get("/api/payments/reverse/{payment_id}")
 async def reverse_payment_api(payment_id: int, request: Request):
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
     username = _get_username(user)
 
-    res = database.reverse_customer_payment(payment_id, reason=f"Revertido desde Panel Web ({username})")
-    if res.get("success"):
-        rev_amt = database.format_ars(res.get("reversed_amount", 0.0))
-        await send_telegram_message(
-            f"🔄 <b>COBRO #{payment_id} REVERTIDO (PANEL WEB)</b>\n\n"
-            f"• Monto Anulado: <b>{rev_amt}</b>\n"
-            f"• Cuenta #{res.get('account_id')} restaurada al vencimiento previo: <code>{res.get('restored_expiry') or 'original'}</code>\n"
-            f"• Descontado del balance financiero.\n"
-            f"• Operador: <b>{username}</b>"
-        )
-        return RedirectResponse(url="/?msg=payment_reversed#finance", status_code=303)
-    else:
-        return RedirectResponse(url=f"/?err={urllib.parse.quote(res.get('error', 'Error'))}#finance", status_code=303)
+    try:
+        res = database.reverse_customer_payment(payment_id, reason=f"Revertido desde Panel Web ({username})")
+        if res.get("success"):
+            rev_amt = database.format_ars(res.get("reversed_amount") or res.get("amount", 0.0))
+            restored = res.get("restored_expiry") or "sin cambios"
+            try:
+                await send_telegram_message(
+                    f"🔄 <b>COBRO #{payment_id} REVERTIDO (PANEL WEB)</b>\n\n"
+                    f"• Monto Anulado: <b>{rev_amt}</b>\n"
+                    f"• Cuenta #{res.get('account_id')} restaurada al vencimiento previo: <code>{restored}</code>\n"
+                    f"• Descontado del balance financiero.\n"
+                    f"• Operador: <b>{username}</b>"
+                )
+            except Exception as tg_err:
+                logger.warning(f"No se pudo enviar notificación de Telegram para reversión de cobro #{payment_id}: {tg_err}")
+
+            return RedirectResponse(url="/?msg=payment_reversed#finance", status_code=303)
+        else:
+            err_msg = res.get("error", "Error al revertir cobro")
+            logger.warning(f"Fallo al revertir cobro #{payment_id}: {err_msg}")
+            return RedirectResponse(url=f"/?err={urllib.parse.quote(err_msg)}#finance", status_code=303)
+    except Exception as e:
+        logger.error(f"Error crítico al revertir cobro #{payment_id}: {e}", exc_info=True)
+        return RedirectResponse(url=f"/?err={urllib.parse.quote(f'Error al revertir cobro #{payment_id}: {str(e)}')}#finance", status_code=303)
 
 
 @router.post("/api/mark-fallen/{account_id}")

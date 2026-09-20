@@ -66,7 +66,8 @@ def vender_perfil_compartido(
     notas: str = ""
 ) -> str:
     """Asigna automáticamente el próximo perfil o pantalla libre (ej: 'Casa Extra de Netflix', 'Disney+', 'Max') al cliente:
-    - cliente: Nombre o alias del cliente (ej: Carlos, Maik).
+    AUTO-REGISTRO: Si el cliente no existe previamente en el CRM, esta herramienta lo da de alta y registra automáticamente con su código único CLI-XXX. No es necesario registrarlo por separado.
+    - cliente: Nombre o alias del cliente (ej: Carlos, Maik, Leo).
     - plataforma: Nombre del servicio (ej: 'Netflix (Casa Extra)', 'Casa Extra de Netflix', 'Disney+', etc.). Si se pide Casa Extra de Netflix, asigna automáticamente la tarifa correspondiente ($8.500 final / $6.500 revendedor, costo $5.800).
     - fecha_vencimiento: Formato YYYY-MM-DD.
     - whatsapp / telegram: Datos de contacto.
@@ -126,6 +127,7 @@ def vender_cuenta_completa(
     notas: str = ""
 ) -> str:
     """Vende o entrega una CUENTA COMPLETA (4 pantallas / FULL HD / cuenta entera) a un cliente:
+    AUTO-REGISTRO: Si el cliente no existe previamente en el CRM, esta herramienta lo da de alta y registra automáticamente con su código único CLI-XXX. No es necesario registrarlo por separado.
     - cliente: Nombre del cliente o revendedor.
     - plataforma: Servicio completo (ej: 'Netflix (Cuenta Completa)', 'Netflix Full HD', 'Disney+', 'Max'). Para Netflix, aplica automáticamente la tarifa de Cuenta Completa ($25.000 final / $23.000 revendedor, costo $20.000).
     - fecha_vencimiento: Formato YYYY-MM-DD.
@@ -312,7 +314,15 @@ def vender_o_asignar_servicio(
     recurrencia: str = "mensual",
     notas: str = ""
 ) -> str:
-    """Registra una venta o asignación individual de cuenta o perfil de streaming a un cliente."""
+    """Registra una venta o asignación individual de cuenta o perfil de streaming a un cliente:
+    AUTO-REGISTRO: Si el cliente no existe previamente en el CRM, esta función lo da de alta y registra automáticamente con su código único (CLI-XXX). No es necesario registrarlo por separado.
+    - cliente: Nombre o alias del cliente (ej: Leo, Carlos, Maik).
+    - plataforma: Servicio contratado (ej: 'Netflix (Casa Extra)', 'Disney+', 'Max').
+    - correo / contrasena: Accesos de la cuenta.
+    - fecha_vencimiento: Formato YYYY-MM-DD.
+    - whatsapp / telegram: Contacto del comprador.
+    - precio: Importe cobrado (ej: 8500).
+    """
     try:
         # Verificación proactiva: Si el cliente ya existe en el CRM como revendedor, aplicar tarifa mayorista
         existing_client = database.search_client(cliente)

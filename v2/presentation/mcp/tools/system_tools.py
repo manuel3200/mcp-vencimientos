@@ -268,16 +268,21 @@ async def enviar_whatsapp_cliente(
     destinatario: str = "",
     mensaje: str = "",
     telefono: str = "",
+    nombre: str = "",
+    auto_registrar_cliente: bool = True,
     delay_segundos: float = 2.0
 ) -> str:
     """Envía un mensaje de texto por WhatsApp directamente a un cliente o contacto usando Evolution API:
     - destinatario: Nombre o alias del cliente en el CRM, contacto en Chatwoot, o número de teléfono (ej: '+54 9 11 2358-6964 Marco Antonio' o '5491123586964').
     - mensaje: Texto del mensaje a enviar.
     - telefono: (Opcional) Número telefónico directo si se especifica por separado.
+    - nombre: (Opcional) Nombre del cliente para registrarlo en el CRM si no existía.
+    - auto_registrar_cliente: (Por defecto True) Si el cliente no está en el CRM y se conoce su nombre, lo registra automáticamente con su código CLI-XXX. Si no hay nombre, solicita al administrador con qué nombre darlo de alta.
     - delay_segundos: Simulación de escritura anti-baneo en segundos (por defecto 2.0).
     """
     raw_dest = (destinatario or "").strip()
     raw_phone = (telefono or "").strip()
+    raw_name = (nombre or "").strip()
     if not raw_dest and not raw_phone:
         return "❌ Error: Debes indicar el nombre del cliente o su número de teléfono."
     if not (mensaje or "").strip():
@@ -291,7 +296,7 @@ async def enviar_whatsapp_cliente(
         clean_p = database.clean_whatsapp_phone(raw_phone)
         if len(clean_p) >= 8:
             phone_to_send = clean_p
-            client_name_str = f" a {raw_dest}" if raw_dest else ""
+            client_name_str = f" a {raw_name or raw_dest}" if (raw_name or raw_dest) else ""
 
     # 2. ¿El destinatario contiene un número de teléfono (al menos 8 dígitos)?
     if not phone_to_send and raw_dest:
@@ -301,6 +306,8 @@ async def enviar_whatsapp_cliente(
             name_part = re.sub(r'[\+\d\-\(\)\.]+', ' ', raw_dest).strip()
             if name_part:
                 client_name_str = f" a {name_part}"
+                if not raw_name:
+                    raw_name = name_part
 
     # 3. Si no hay dígitos suficientes en el destino, buscar por nombre o código en el CRM o Chatwoot
     if not phone_to_send:
@@ -312,6 +319,8 @@ async def enviar_whatsapp_cliente(
                 return f"❌ El cliente '{client.get('name')}' ({client.get('client_code')}) está registrado en el CRM pero no tiene número de WhatsApp configurado."
             phone_to_send = database.clean_whatsapp_phone(phone_reg)
             client_name_str = f" a {client.get('name')}"
+            if not raw_name:
+                raw_name = client.get("name")
         else:
             # Fallback inteligente: buscar en la libreta de contactos de Chatwoot
             try:
@@ -320,15 +329,35 @@ async def enviar_whatsapp_cliente(
                     c = cw_contacts[0]
                     phone_to_send = database.clean_whatsapp_phone(c["phone_number"])
                     client_name_str = f" a {c.get('name', lookup_target)} (Contacto de Chatwoot)"
+                    if not raw_name:
+                        raw_name = c.get('name', '')
             except Exception as e:
                 logger.warning(f"Error consultando Chatwoot contacts: {e}")
 
     if not phone_to_send or len(phone_to_send) < 8:
         return f"❌ No se encontró ningún número de teléfono válido ni cliente registrado que coincida con '{raw_dest or raw_phone}'."
 
+    # 4. Auto-registro inteligente en CRM si no está dado de alta
+    auto_reg_note = ""
+    if auto_registrar_cliente:
+        clean_d = re.sub(r'\D', '', phone_to_send)
+        existing = database.search_client(clean_d[-8:] if len(clean_d) >= 8 else clean_d)
+        if not existing:
+            # Si tenemos nombre, lo registramos inmediatamente
+            if raw_name and len(raw_name) >= 2:
+                try:
+                    new_c = database.find_or_create_client(name=raw_name, whatsapp=phone_to_send)
+                    auto_reg_note = f"\n👤 <b>Cliente registrado en el CRM:</b> {new_c['name']} (Código: <code>{new_c['client_code']}</code>)"
+                    client_name_str = f" a {new_c['name']}"
+                except Exception as ex:
+                    logger.warning(f"Error auto-registrando cliente en envío WhatsApp: {ex}")
+            else:
+                # No hay nombre: avisar y consultar al administrador
+                auto_reg_note = f"\n💡 <i>Aviso: El número {phone_to_send} no está registrado como cliente en el CRM. Pregunta al usuario: '¿Con qué nombre deseas registrar al cliente de este número?' o usa 'registrar_cliente'.</i>"
+
     res = await whatsapp_client.send_text_message(phone_to_send, mensaje, delay_seconds=delay_segundos)
     if res.get("success"):
-        return f"✅ Mensaje de WhatsApp enviado exitosamente{client_name_str} ({res.get('phone', phone_to_send)}) (ID: {res.get('message_id', 'ok')})."
+        return f"✅ Mensaje de WhatsApp enviado exitosamente{client_name_str} ({res.get('phone', phone_to_send)}) (ID: {res.get('message_id', 'ok')}).{auto_reg_note}"
     else:
         return f"❌ Error al enviar WhatsApp{client_name_str} ({phone_to_send}): {res.get('error')}"
 

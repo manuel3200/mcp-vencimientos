@@ -64,23 +64,33 @@ async def buscar_cliente(
         except Exception as e:
             logger.warning(f"Error consultando Chatwoot contacts: {e}")
 
-        # Si no existe, responder con opciones accionables para que la IA no se trabe
+        # Si no existe, responder con opciones claras y directivas de auto-alta
         cand_phone = ""
         digits = re.sub(r'\D', '', search_term)
         if len(digits) >= 8:
             cand_phone = database.clean_whatsapp_phone(digits)
 
+        cand_name = (nombre or cliente or "").strip()
+        if not cand_name:
+            name_part = re.sub(r'[\+\d\-\(\)\.]+', ' ', search_term).strip()
+            if name_part and len(name_part) >= 2:
+                cand_name = name_part
+            elif not cand_phone:
+                cand_name = search_term
+
         resp = [
-            f"ℹ️ No se encontró ningún cliente registrado con '{search_term}' en el CRM.",
+            f"ℹ️ El cliente '{search_term}' NO se encuentra registrado en el CRM.",
             "",
-            "👉 <b>Acciones directas disponibles:</b>"
+            "👉 <b>REGLA DEL SISTEMA:</b> Si estás procesando una venta, renovación o notificación, <b>DEBES registrar al cliente en el CRM</b>:",
         ]
-        if cand_phone:
-            resp.append(f"• <b>Enviar WhatsApp directo ya:</b> Puedes usar la herramienta `enviar_whatsapp_cliente(destinatario='{cand_phone}', mensaje='...')` para notificarle de inmediato sin necesidad de darlo de alta antes.")
-            resp.append(f"• <b>Dar de alta en el CRM:</b> Puedes usar `vender_o_asignar_servicio` o `registrar_cliente(nombre='{nombre or search_term}', whatsapp='{cand_phone}')`.")
+        if cand_name and cand_phone:
+            resp.append(f"• <b>Para registrarlo y asignarle la cuenta:</b> Usa directamente `vender_o_asignar_servicio(cliente='{cand_name}', whatsapp='{cand_phone}', ...)` (esta herramienta lo da de alta automáticamente en el CRM).")
+            resp.append(f"• <b>Para darlo de alta ahora:</b> Llama a `registrar_cliente(nombre='{cand_name}', whatsapp='{cand_phone}')`.")
+            resp.append(f"• <b>Para enviarle WhatsApp y registrarlo:</b> Usa `enviar_whatsapp_cliente(destinatario='{cand_phone}', nombre='{cand_name}', mensaje='...')`.")
+        elif cand_phone:
+            resp.append(f"• Dispones del teléfono (`{cand_phone}`) pero no del nombre. <b>Pregunta al administrador:</b> <i>'¿Con qué nombre deseas registrar al cliente del número {cand_phone}?'</i> o regístralo con `registrar_cliente(nombre='Cliente {cand_phone[-4:]}', whatsapp='{cand_phone}')`.")
         else:
-            resp.append("• Para enviarle WhatsApp directo, usa `enviar_whatsapp_cliente(destinatario='<telefono>', mensaje='...')`.")
-            resp.append(f"• Para darlo de alta en el CRM, usa `registrar_cliente(nombre='{search_term}')`.")
+            resp.append(f"• Dispones del nombre (`{cand_name}`) pero no del teléfono. <b>Pregunta al administrador:</b> <i>'¿Cuál es el número de WhatsApp de {cand_name}?'</i> o regístralo con `registrar_cliente(nombre='{cand_name}')`.")
 
         return "\n".join(resp)
 

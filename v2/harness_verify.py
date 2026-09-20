@@ -51,7 +51,8 @@ def main():
         ("Aislamiento de Privacidad, Cifrado y pHash (Fase 1)", "tests.test_group_privacy_isolation"),
         ("Protección Anti-DDoS y Rate Limiting (Fase 2)", "tests.test_ddos_and_rate_limiting"),
         ("Auditoría Inmutable, Enlaces Efímeros y Cifrado en Reposo (Fase 3)", "tests.test_audit_log_and_ephemeral_secrets"),
-        ("Crecimiento Comercial, Cupones, Referidos y Comunidad (Fase 4)", "tests.test_growth_and_community")
+        ("Crecimiento Comercial, Cupones, Referidos y Comunidad (Fase 4)", "tests.test_growth_and_community"),
+        ("Capacidades Avanzadas de WhatsApp: Reacciones, VCards, Stickers y Lectura", "tests.test_evolution_advanced_features")
     ]
 
     failed = 0

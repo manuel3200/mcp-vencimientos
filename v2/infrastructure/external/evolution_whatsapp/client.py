@@ -269,6 +269,172 @@ async def send_media_message(
         return {"success": False, "phone": clean_phone, "error": err}
 
 
+async def send_reaction(
+    remote_jid: str,
+    message_id: str,
+    emoji: str,
+    from_me: bool = False
+) -> Dict[str, Any]:
+    """Envía una reacción (emoji) a un mensaje de WhatsApp específico vía Evolution API."""
+    clean_jid = str(remote_jid or "").strip()
+    if not clean_jid:
+        return {"success": False, "error": "remote_jid requerido para reaccionar"}
+    if "@" not in clean_jid:
+        clean_digits = re.sub(r'[^0-9]', '', clean_jid)
+        clean_jid = f"{clean_digits}@s.whatsapp.net"
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/message/sendReaction/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+
+    payload = {
+        "key": {
+            "remoteJid": clean_jid,
+            "fromMe": from_me,
+            "id": message_id
+        },
+        "reaction": emoji
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                logger.info(f"Reacción '{emoji}' enviada a mensaje {message_id} en {clean_jid}")
+                return {"success": True, "data": resp.json()}
+            else:
+                err = f"HTTP {resp.status_code}: {resp.text[:250]}"
+                logger.warning(f"Error enviando reacción a {clean_jid}: {err}")
+                return {"success": False, "error": err}
+    except Exception as e:
+        logger.warning(f"Excepción enviando reacción a {clean_jid}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def send_contact_vcard(
+    phone: str,
+    full_name: str,
+    contact_phone: str,
+    organization: str = "StreamVault"
+) -> Dict[str, Any]:
+    """Envía una tarjeta de contacto (VCard) por WhatsApp para que el cliente agende con 1 clic."""
+    clean_phone = re.sub(r'[^0-9]', '', str(phone or ""))
+    if not clean_phone or len(clean_phone) < 8:
+        return {"success": False, "error": f"Número de destino inválido: '{phone}'"}
+
+    clean_target = re.sub(r'[^0-9]', '', str(contact_phone or ""))
+    if not clean_target:
+        clean_target = clean_phone
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/message/sendContact/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+
+    payload = {
+        "number": clean_phone,
+        "contact": [
+            {
+                "fullName": full_name or "Soporte StreamVault",
+                "wuid": f"{clean_target}@s.whatsapp.net",
+                "phoneNumber": f"+{clean_target}",
+                "organization": organization or "StreamVault"
+            }
+        ]
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                logger.info(f"VCard de contacto '{full_name}' enviada con éxito a {clean_phone}")
+                return {"success": True, "phone": clean_phone, "data": resp.json()}
+            else:
+                err = f"HTTP {resp.status_code}: {resp.text[:250]}"
+                logger.error(f"Fallo al enviar VCard a {clean_phone}: {err}")
+                return {"success": False, "error": err}
+    except Exception as e:
+        logger.error(f"Excepción al enviar VCard a {clean_phone}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def send_sticker(
+    phone: str,
+    sticker_data_or_url: str
+) -> Dict[str, Any]:
+    """Envía un sticker de WhatsApp (URL o base64) a través de Evolution API."""
+    clean_phone = re.sub(r'[^0-9]', '', str(phone or ""))
+    if not clean_phone or len(clean_phone) < 8:
+        return {"success": False, "error": f"Número de teléfono inválido: '{phone}'"}
+
+    clean_sticker = str(sticker_data_or_url or "").strip()
+    if not clean_sticker:
+        return {"success": False, "error": "Datos o URL de sticker requeridos"}
+
+    if "," in clean_sticker and not clean_sticker.startswith("http"):
+        clean_sticker = clean_sticker.split(",")[1]
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/message/sendSticker/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+
+    payload = {
+        "number": clean_phone,
+        "sticker": clean_sticker
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                logger.info(f"Sticker enviado con éxito a {clean_phone}")
+                return {"success": True, "phone": clean_phone, "data": resp.json()}
+            else:
+                err = f"HTTP {resp.status_code}: {resp.text[:250]}"
+                logger.error(f"Fallo al enviar sticker a {clean_phone}: {err}")
+                return {"success": False, "error": err}
+    except Exception as e:
+        logger.error(f"Excepción al enviar sticker a {clean_phone}: {e}")
+        return {"success": False, "error": str(e)}
+
+
+async def mark_as_read(
+    remote_jid: str,
+    message_id: str,
+    from_me: bool = False
+) -> Dict[str, Any]:
+    """Marca un mensaje como leído (enciende el doble tilde azul) vía Evolution API."""
+    clean_jid = str(remote_jid or "").strip()
+    if not clean_jid:
+        return {"success": False, "error": "remote_jid requerido"}
+    if "@" not in clean_jid:
+        clean_digits = re.sub(r'[^0-9]', '', clean_jid)
+        clean_jid = f"{clean_digits}@s.whatsapp.net"
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/chat/markMessageAsRead/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+
+    payload = {
+        "readMessages": [
+            {
+                "remoteJid": clean_jid,
+                "fromMe": from_me,
+                "id": message_id
+            }
+        ]
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                return {"success": True, "data": resp.json()}
+            else:
+                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 async def configure_webhook(webhook_url: str) -> Dict[str, Any]:
     """Registra o actualiza la URL del webhook en Evolution API para recibir eventos."""
     config = get_evolution_config()

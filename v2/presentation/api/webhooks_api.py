@@ -4,6 +4,7 @@ import time
 import urllib.parse
 import logging
 import secrets
+import asyncio
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Request, Form, HTTPException
@@ -173,6 +174,83 @@ async def api_whatsapp_logout(request: Request):
     return RedirectResponse(url="/?msg=wa_logged_out#integrations", status_code=302)
 
 
+async def _extract_req_payload(request: Request) -> Dict[str, Any]:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        try:
+            return await request.json()
+        except Exception:
+            return {}
+    try:
+        form = await request.form()
+        return dict(form)
+    except Exception:
+        return {}
+
+
+@router.post("/api/whatsapp/send-reaction")
+async def api_whatsapp_send_reaction(request: Request):
+    """Envía una reacción emoji a un mensaje específico de WhatsApp."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    payload = await _extract_req_payload(request)
+    remote_jid = payload.get("remote_jid") or payload.get("phone") or ""
+    message_id = payload.get("message_id") or ""
+    emoji = payload.get("emoji") or "👍"
+    if not remote_jid or not message_id:
+        raise HTTPException(status_code=400, detail="Se requiere remote_jid y message_id.")
+    res = await whatsapp_client.send_reaction(remote_jid, message_id, emoji)
+    return JSONResponse(res)
+
+
+@router.post("/api/whatsapp/send-vcard")
+async def api_whatsapp_send_vcard(request: Request):
+    """Envía una tarjeta de contacto (VCard) para agendamiento directo en WhatsApp."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    payload = await _extract_req_payload(request)
+    phone = payload.get("phone") or ""
+    full_name = payload.get("full_name") or "Soporte StreamVault"
+    contact_phone = payload.get("contact_phone") or phone
+    organization = payload.get("organization") or "StreamVault"
+    if not phone:
+        raise HTTPException(status_code=400, detail="Número de teléfono de destino requerido.")
+    res = await whatsapp_client.send_contact_vcard(phone, full_name, contact_phone, organization)
+    return JSONResponse(res)
+
+
+@router.post("/api/whatsapp/send-sticker")
+async def api_whatsapp_send_sticker(request: Request):
+    """Envía un sticker de WhatsApp a un destinatario."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    payload = await _extract_req_payload(request)
+    phone = payload.get("phone") or ""
+    sticker = payload.get("sticker") or ""
+    if not phone or not sticker:
+        raise HTTPException(status_code=400, detail="Número de teléfono y sticker requeridos.")
+    res = await whatsapp_client.send_sticker(phone, sticker)
+    return JSONResponse(res)
+
+
+@router.post("/api/whatsapp/mark-read")
+async def api_whatsapp_mark_read(request: Request):
+    """Marca un mensaje entrante de WhatsApp como leído."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+    payload = await _extract_req_payload(request)
+    remote_jid = payload.get("remote_jid") or payload.get("phone") or ""
+    message_id = payload.get("message_id") or ""
+    if not remote_jid or not message_id:
+        raise HTTPException(status_code=400, detail="Se requiere remote_jid y message_id.")
+    res = await whatsapp_client.mark_as_read(remote_jid, message_id)
+    return JSONResponse(res)
+
+
 @router.post("/api/webhook/whatsapp")
 async def whatsapp_webhook(request: Request):
     """Webhook receptor de eventos de Evolution API v2 (Baileys).
@@ -245,6 +323,13 @@ async def whatsapp_webhook(request: Request):
     from_me = key.get("fromMe", False)
     remote_jid = key.get("remoteJid", "")
     msg_id = (key.get("id") or "").strip()
+
+    # 0.15 MARCAR MENSAJE COMO LEÍDO (DOBLE TILDE AZUL)
+    if not from_me and msg_id and remote_jid and "status@broadcast" not in remote_jid:
+        try:
+            asyncio.create_task(whatsapp_client.mark_as_read(remote_jid, msg_id, from_me=False))
+        except Exception:
+            pass
 
     # 0.2 DEDUPLICACIÓN POR MESSAGE ID (wamid) PARA EVITAR PROCESAR CLONES
     if msg_id:
@@ -1275,9 +1360,16 @@ async def whatsapp_webhook(request: Request):
             receipt_base64=b64_val,
             raw_text=text,
             phash=computed_phash,
-            notes="Detectado vía WhatsApp Webhook"
+            notes=f"Detectado vía WhatsApp Webhook | msg_id:{msg_id} | jid:{remote_jid}"
         )
         payment_id = pending_item.get("id")
+
+        # REACCIÓN AUTOMÁTICA CON EMOJI ⏳ AL COMPROBANTE RECIBIDO
+        if msg_id and remote_jid:
+            try:
+                asyncio.create_task(whatsapp_client.send_reaction(remote_jid, msg_id, "⏳"))
+            except Exception as rx_e:
+                logger.debug(f"No se pudo enviar reacción ⏳ al comprobante #{payment_id}: {rx_e}")
 
         # Resumen del análisis
         analysis_line = ""

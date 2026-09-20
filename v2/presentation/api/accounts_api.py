@@ -2,6 +2,7 @@ import urllib.parse
 import logging
 import base64
 import asyncio
+import re
 from typing import Optional, Any
 
 from fastapi import APIRouter, Request, Form, HTTPException
@@ -110,6 +111,21 @@ async def approve_pending_payment_api(payment_id: int, request: Request):
         elif phone and not notify_client:
             logger.info(f"[PAGOS] Notificación WhatsApp omitida para #{payment_id} por configuración del admin.")
 
+        # REACCIÓN AUTOMÁTICA ✅ AL COMPROBANTE ORIGINAL
+        notes_str = str(p.get("notes") or "")
+        if "msg_id:" in notes_str:
+            try:
+                import whatsapp_client
+                m_match = re.search(r'msg_id:([^\s|]+)', notes_str)
+                j_match = re.search(r'jid:([^\s|]+)', notes_str)
+                if m_match:
+                    r_mid = m_match.group(1).strip()
+                    r_jid = j_match.group(1).strip() if j_match else (f"{database.clean_whatsapp_phone(phone)}@s.whatsapp.net" if phone else "")
+                    if r_jid and r_mid:
+                        asyncio.create_task(whatsapp_client.send_reaction(r_jid, r_mid, "✅"))
+            except Exception as rx_err:
+                logger.debug(f"No se pudo enviar reacción ✅ a comprobante #{payment_id}: {rx_err}")
+
         try:
             wa_status_str = "Enviada" if notify_client else "Desactivada por admin"
             await send_telegram_message(
@@ -170,6 +186,21 @@ async def reject_pending_payment_api(payment_id: int, request: Request):
                     await whatsapp_client.send_text_message(clean_phone, wa_reply, delay_seconds=1.0)
             except Exception as e:
                 logger.warning(f"Error enviando WhatsApp de rechazo #{payment_id}: {e}")
+
+        # REACCIÓN AUTOMÁTICA ❌ AL COMPROBANTE ORIGINAL
+        notes_str = str(p.get("notes") or "")
+        if "msg_id:" in notes_str:
+            try:
+                import whatsapp_client
+                m_match = re.search(r'msg_id:([^\s|]+)', notes_str)
+                j_match = re.search(r'jid:([^\s|]+)', notes_str)
+                if m_match:
+                    r_mid = m_match.group(1).strip()
+                    r_jid = j_match.group(1).strip() if j_match else (f"{database.clean_whatsapp_phone(phone)}@s.whatsapp.net" if phone else "")
+                    if r_jid and r_mid:
+                        asyncio.create_task(whatsapp_client.send_reaction(r_jid, r_mid, "❌"))
+            except Exception as rx_err:
+                logger.debug(f"No se pudo enviar reacción ❌ a comprobante #{payment_id}: {rx_err}")
 
         try:
             wa_status_str = "Enviada" if notify_client else "Desactivada por admin"

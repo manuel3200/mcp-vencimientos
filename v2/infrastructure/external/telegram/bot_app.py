@@ -526,9 +526,9 @@ async def handle_telegram_message(msg: Dict[str, Any]):
     _, authorized_chat = get_telegram_config()
     chat_id = str(msg.get("chat", {}).get("id", ""))
     
-    # Filtro de seguridad
-    if authorized_chat and chat_id != authorized_chat:
-        logger.warning(f"Mensaje ignorado de usuario no autorizado ID: {chat_id}")
+    # Filtro de seguridad estricto: Requiere que TELEGRAM_CHAT_ID esté configurado y coincida
+    if not authorized_chat or chat_id != authorized_chat:
+        logger.warning(f"Mensaje de Telegram ignorado: chat '{chat_id}' no autorizado (esperado: '{authorized_chat}').")
         return
 
     text = (msg.get("text") or "").strip()
@@ -988,7 +988,8 @@ async def handle_telegram_callback(query: Dict[str, Any]):
     chat_id = str(query.get("message", {}).get("chat", {}).get("id", ""))
     data = query.get("data", "")
 
-    if authorized_chat and chat_id != authorized_chat:
+    # Filtro de seguridad estricto
+    if not authorized_chat or chat_id != authorized_chat:
         await answer_callback_query(query_id, "No autorizado", show_alert=True)
         return
 

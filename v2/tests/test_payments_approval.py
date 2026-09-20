@@ -233,15 +233,15 @@ def run_tests():
     from datetime import date, timedelta
     cli_test = database.find_or_create_client(name="Cliente Renovador Temprano", whatsapp="5491122334455")
     exp_20d = (date.today() + timedelta(days=20)).isoformat()
-    acc_test = database.create_account(
+    acc_test = database.assign_or_sell_account(
+        client_name="Cliente Renovador Temprano",
         platform="Netflix",
         email="renovador_temprano@test.com",
         password="pass",
-        client_id=cli_test["id"],
-        expiry_date=exp_20d
+        expiry_date=exp_20d,
+        whatsapp="5491122334455",
+        price="5000"
     )
-    # Registrar un cobro previo para que la cuenta tenga historial financiero
-    database.collect_payment(account_id=acc_test["id"], amount=5000.0, notes="Cobro mes 1")
     
     # Simular que el cliente paga su renovación 20 días antes de vencer
     p_early = database.create_pending_payment(
@@ -271,9 +271,27 @@ def run_tests():
     
     match_ba = database.get_client_by_phone("5491198765432")
     assert match_ba is not None and match_ba["id"] == cli_ba["id"], "Debe coincidir exactamente con Cliente BA"
-    
+
     match_cba = database.get_client_by_phone("54935198765432")
     assert match_cba is not None and match_cba["id"] == cli_cba["id"], "Debe coincidir exactamente con Cliente CBA"
+
+    # 16. Test Detección de Comprobante Reciclado / Fraude
+    p_legit = database.create_pending_payment(
+        sender_phone="5491100112233",
+        client_name="Cliente Honesto",
+        amount=6000.0,
+        operation_id="OP-UNICA-999"
+    )
+    database.approve_pending_payment(p_legit["id"])
+
+    # Intento de reenvío del mismo comprobante ya aprobado
+    p_fraud = database.create_pending_payment(
+        sender_phone="5491199887766",
+        client_name="Cliente Tramposo",
+        amount=6000.0,
+        operation_id="OP-UNICA-999"
+    )
+    assert "ALERTA DE FRAUDE" in p_fraud["notes"], "Debe alertar intento de comprobante reciclado"
 
     print("    ✅ Aprobación y Pagos: Todos los casos de prueba y parches defensivos superados exitosamente.")
 

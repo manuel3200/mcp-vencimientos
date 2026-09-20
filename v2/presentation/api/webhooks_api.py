@@ -500,7 +500,7 @@ async def whatsapp_webhook(request: Request):
 
     if (admin_approval_all_match or admin_approval_match or admin_reject_match or admin_partial_pay_match or
         admin_reverse_pay_match or admin_undo_replace_match or admin_baja_match or
-        admin_change_match or admin_wait_match or admin_fallen_match):
+        admin_change_match or admin_wait_match or (admin_fallen_match and is_owner)):
         admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
         clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
 
@@ -1225,8 +1225,13 @@ async def whatsapp_webhook(request: Request):
             ]
         }
 
+        is_fraud_alert = "ALERTA DE FRAUDE" in (pending_item.get("notes") or "")
+        fraud_banner_tg = "\n🚨 <b>¡ALERTA DE FRAUDE / COMPROBANTE YA UTILIZADO!</b>\nEste número de operación ya fue aprobado en el pasado. ¡Revisa con máxima precaución antes de aprobar!\n\n" if is_fraud_alert else ""
+        fraud_banner_wa = "\n🚨 *¡ALERTA DE FRAUDE / COMPROBANTE RECICLADO!*\nEste número de operación YA FUE APROBADO en el pasado. Verifica minuciosamente antes de aprobar.\n\n" if is_fraud_alert else ""
+
         tg_msg = (
             f"🧾 <b>¡NUEVO COMPROBANTE RECIBIDO! (#P{payment_id})</b>\n\n"
+            f"{fraud_banner_tg}"
             f"• Cliente: <b>{client_name}</b> ({client_tag})\n"
             f"• WhatsApp: <code>{sender_phone}</code>\n"
             f"{service_lines}"
@@ -1249,6 +1254,7 @@ async def whatsapp_webhook(request: Request):
 
             admin_notice = (
                 f"🧾 *NUEVO COMPROBANTE RECIBIDO (#P{payment_id})*\n"
+                f"{fraud_banner_wa}"
                 f"• *Cliente:* {client_name} (+{sender_phone})\n"
                 f"• *Servicio Principal:* {platform_val or 'Suscripción'}" + (f" ({target_acc['email']})" if target_acc else "") + "\n"
                 f"• *Monto Detectado:* {amount_fmt_val or 'No detectado'}" + (f" | *Banco:* {bank_val}" if bank_val else "") + "\n"
@@ -1318,6 +1324,12 @@ async def whatsapp_webhook(request: Request):
         "/vencimiento", "/vencimientos", "/clave", "/cuenta", "/servicios", "/miservicio", "/miservicios", "/estado", "mi cuenta", "mis cuentas", "mi clave", "mis servicios", "mi servicio"
     ]
     if any(k in text_lower for k in expiry_intents):
+        if is_group:
+            # Nunca enviar credenciales personales ni cuentas dentro de un grupo público
+            warning_msg = f"🔒 @{sender_phone}, por tu seguridad y privacidad, las consultas de claves, cuentas y vencimientos deben realizarse por mensaje privado directo con el bot."
+            await whatsapp_client.send_text_message(group_jid, warning_msg)
+            return JSONResponse({"status": "ignored", "reason": "credential_request_in_group_redirected"})
+
         if client_profile and client_profile.get("active_accounts"):
             accs = client_profile["active_accounts"]
             lines = [f"¡Hola {client_name}! 🍿 Aquí tienes el estado de tus servicios activos:\n"]

@@ -33,8 +33,19 @@ def create_pending_payment(
     conn = get_connection()
     try:
         with conn:
-            # 1. Idempotencia por operation_id no genérico
-            if clean_op and clean_op.lower() not in ("coelsa", "codigo", "código", "id", "operacion", "operación") and len(clean_op) >= 6:
+            # 1. Comprobar si el comprobante ya fue aprobado en el pasado (Prevención de Comprobante Reciclado / Fraude)
+            if clean_op and clean_op.lower() not in ("coelsa", "codigo", "código", "id", "operacion", "operación", "-", "none") and len(clean_op) >= 6:
+                prior_approved = conn.execute("""
+                    SELECT id, created_at, resolved_at, client_name, amount_formatted
+                    FROM pending_payments
+                    WHERE operation_id = ? AND status = 'approved'
+                    LIMIT 1
+                """, (clean_op,)).fetchone()
+                if prior_approved:
+                    p_dict = dict(prior_approved)
+                    logger.warning(f"¡ALERTA DE SEGURIDAD! Reutilización de comprobante aprobado: Op '{clean_op}' (Pago #{p_dict['id']}, resuelto {p_dict.get('resolved_at')})")
+                    notes = f"[ALERTA DE FRAUDE: Comprobante #{clean_op} YA FUE APROBADO previamente en pago #{p_dict['id']} el {p_dict.get('resolved_at')}] " + notes
+
                 existing_op = conn.execute("""
                     SELECT * FROM pending_payments WHERE operation_id = ? AND status = 'pending' LIMIT 1
                 """, (clean_op,)).fetchone()

@@ -23,6 +23,7 @@ class Settings:
 
     # Seguridad y Sesiones
     SESSION_SECRET_KEY: str = os.getenv("SESSION_SECRET_KEY", "mcp-super-secret-key-change-in-prod-2026")
+    WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "").strip()
     ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin").strip().lower()
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123").strip()
 
@@ -45,5 +46,7 @@ class Settings:
     CHATWOOT_URL: str = os.getenv("CHATWOOT_URL", "http://chatwoot-rails:3000").strip().rstrip("/")
     CHATWOOT_TOKEN: str = os.getenv("CHATWOOT_TOKEN", "").strip()
     CHATWOOT_ACCOUNT_ID: str = os.getenv("CHATWOOT_ACCOUNT_ID", "1").strip()
+    CHATWOOT_WEBHOOK_SECRET: str = os.getenv("CHATWOOT_WEBHOOK_SECRET", "").strip()
+
 
 settings = Settings()

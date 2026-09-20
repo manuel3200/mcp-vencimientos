@@ -731,25 +731,27 @@ def purge_accounts_except_client(client_name_query: str = "samuel martin") -> Di
             
             protected_client_ids = [r["id"] for r in protected_clients]
             
+            if not protected_client_ids:
+                return {
+                    "success": False,
+                    "error": f"Operación abortada por seguridad: no se encontró ningún cliente coincidente con '{client_name_query}'. Ninguna cuenta fue eliminada.",
+                    "deleted_count": 0,
+                    "protected_client": client_name_query,
+                    "kept_accounts": []
+                }
+
             # Cuentas que se van a eliminar
-            if protected_client_ids:
-                placeholders = ",".join("?" for _ in protected_client_ids)
-                to_delete = conn.execute(f"""
-                    SELECT id, email, platform, status, client_id
-                    FROM streaming_accounts
-                    WHERE client_id IS NULL OR client_id NOT IN ({placeholders})
-                """, protected_client_ids).fetchall()
-                
-                del_cursor = conn.execute(f"""
-                    DELETE FROM streaming_accounts
-                    WHERE client_id IS NULL OR client_id NOT IN ({placeholders})
-                """, protected_client_ids)
-            else:
-                to_delete = conn.execute("""
-                    SELECT id, email, platform, status, client_id
-                    FROM streaming_accounts
-                """).fetchall()
-                del_cursor = conn.execute("DELETE FROM streaming_accounts")
+            placeholders = ",".join("?" for _ in protected_client_ids)
+            to_delete = conn.execute(f"""
+                SELECT id, email, platform, status, client_id
+                FROM streaming_accounts
+                WHERE client_id IS NULL OR client_id NOT IN ({placeholders})
+            """, protected_client_ids).fetchall()
+            
+            del_cursor = conn.execute(f"""
+                DELETE FROM streaming_accounts
+                WHERE client_id IS NULL OR client_id NOT IN ({placeholders})
+            """, protected_client_ids)
 
             deleted_count = del_cursor.rowcount
             

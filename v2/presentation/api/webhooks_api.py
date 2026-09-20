@@ -3,6 +3,7 @@ import re
 import time
 import urllib.parse
 import logging
+import secrets
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Request, Form, HTTPException
@@ -13,11 +14,13 @@ import whatsapp_client
 from telegram_bot import send_telegram_message
 from core.security import verify_session_cookie
 from core.utils import format_ars
+from core.config import settings as app_settings
 from services.chatwoot_bot_service import process_chatwoot_command
 import services.receipt_service as receipt_service
 import base64
 
 logger = logging.getLogger("integrations")
+
 
 router = APIRouter()
 
@@ -175,12 +178,33 @@ async def whatsapp_webhook(request: Request):
     Procesa mensajes entrantes de clientes, auto-responde consultas de vencimientos/claves/CBU y
     alerta a Telegram ante el envío de comprobantes de pago.
     """
+    # 0. VERIFICACIÓN DE AUTENTICIDAD DEL WEBHOOK (si WEBHOOK_SECRET está configurado)
+    webhook_secret = (app_settings.WEBHOOK_SECRET or os.getenv("WEBHOOK_SECRET", "")).strip()
+    if webhook_secret:
+        req_token = (
+            request.headers.get("x-webhook-secret") or
+            request.headers.get("apikey") or
+            request.headers.get("x-api-key") or
+            request.query_params.get("secret") or
+            request.query_params.get("token") or
+            ""
+        ).strip()
+        auth_hdr = request.headers.get("authorization", "")
+        if "Bearer " in auth_hdr:
+            req_token = req_token or auth_hdr.split("Bearer ")[-1].strip()
+
+        if not req_token or not secrets.compare_digest(req_token, webhook_secret):
+            client_ip = request.client.host if request.client else "desconocido"
+            logger.warning(f"Intento de webhook WhatsApp no autorizado desde {client_ip}")
+            return JSONResponse({"status": "error", "message": "Unauthorized webhook"}, status_code=401)
+
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"status": "ignored", "reason": "invalid_json"})
 
     event = (body.get("event") or body.get("type", "")).lower()
+
     data = body.get("data", {}) or {}
 
     # 0. EVENTOS DE GRUPOS: Bienvenida, Despedida y Auto-descubrimiento (group-participants.update, groups.update)
@@ -292,7 +316,7 @@ async def whatsapp_webhook(request: Request):
     settings = database.get_whatsapp_api_settings()
     admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
     clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
-    is_owner = from_me or (clean_admin and (sender_phone == clean_admin or sender_phone.endswith(clean_admin[-8:]) or clean_admin.endswith(sender_phone[-8:])))
+    is_owner = from_me or (bool(clean_admin) and (sender_phone == clean_admin or (len(sender_phone) >= 10 and len(clean_admin) >= 10 and sender_phone[-10:] == clean_admin[-10:])))
 
     bot_mode = database.get_bot_mode() # 'public', 'private', 'self'
     if bot_mode == "self" and not is_owner:
@@ -308,9 +332,11 @@ async def whatsapp_webhook(request: Request):
             return JSONResponse({"status": "ignored", "reason": "group_bot_disabled"})
 
 
-        # 4.1 ANTILINK: Detección y borrado de enlaces no autorizados en grupo
+        # 4.1 ANTILINK: Detección y borrado de enlaces no autorizados en grupo (incluyendo evasiones Unicode y dominios cortos)
         if group_cfg.get("antilink_enabled") and not is_owner:
-            has_forbidden_link = bool(re.search(r'(?:chat\.whatsapp\.com\/[a-zA-Z0-9]+|https?:\/\/[^\s]+|wa\.me\/[^\s]+)', text_lower))
+            clean_antilink_text = re.sub(r'[\u200B-\u200D\uFEFF\u202A-\u202E\u00A0]', '', text_lower)
+            antilink_pattern = r'(?:chat\.whatsapp\.com\/[a-zA-Z0-9_-]+|https?:\/\/[^\s]+|wa\.me\/[^\s]+|t\.me\/[a-zA-Z0-9_-]+|telegram\.me\/[a-zA-Z0-9_-]+|discord\.gg\/[a-zA-Z0-9_-]+|(?:[a-zA-Z0-9-]+\.)+(?:com|org|net|xyz|me|info|io|top|club|vip|online|site|store|app|pro|lat|co|tv|cc|link|live)\b)'
+            has_forbidden_link = bool(re.search(antilink_pattern, clean_antilink_text, re.IGNORECASE))
             if has_forbidden_link:
                 participant_jid = key.get("participant") or data.get("participant") or f"{sender_phone}@s.whatsapp.net"
                 await whatsapp_client.delete_message_for_everyone(group_jid, msg_id, participant=participant_jid)
@@ -474,8 +500,7 @@ async def whatsapp_webhook(request: Request):
 
     if (admin_approval_all_match or admin_approval_match or admin_reject_match or admin_partial_pay_match or
         admin_reverse_pay_match or admin_undo_replace_match or admin_baja_match or
-        admin_change_match or admin_wait_match or
-        (admin_fallen_match and (from_me or (settings.get("admin_whatsapp") and sender_phone.endswith(database.clean_whatsapp_phone(settings.get("admin_whatsapp"))[-8:]))))):
+        admin_change_match or admin_wait_match or admin_fallen_match):
         admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
         clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
 
@@ -484,10 +509,10 @@ async def whatsapp_webhook(request: Request):
             # Mensaje emitido desde la propia sesión de WhatsApp vinculada
             is_auth = True
         elif clean_admin:
-            if sender_phone == clean_admin or sender_phone.endswith(clean_admin[-8:]) or clean_admin.endswith(sender_phone[-8:]):
+            if sender_phone == clean_admin or (len(sender_phone) >= 10 and len(clean_admin) >= 10 and sender_phone[-10:] == clean_admin[-10:]):
                 is_auth = True
         else:
-            is_auth = True
+            is_auth = False
 
         if not is_auth:
             logger.warning(f"Intento de comando administrativo no autorizado desde {sender_phone}")
@@ -1680,6 +1705,25 @@ async def chatwoot_webhook(request: Request):
     """Webhook receptor de eventos de Chatwoot (message_created).
     Permite a los agentes ejecutar comandos en el chat como /nc_n_casaextra, /nc_n_full, /stock, /cbu, etc.
     """
+    chatwoot_secret = (app_settings.CHATWOOT_WEBHOOK_SECRET or os.getenv("CHATWOOT_WEBHOOK_SECRET", "")).strip()
+    if chatwoot_secret:
+        req_token = (
+            request.headers.get("x-webhook-secret") or
+            request.headers.get("x-chatwoot-secret") or
+            request.headers.get("api-access-token") or
+            request.query_params.get("secret") or
+            request.query_params.get("token") or
+            ""
+        ).strip()
+        auth_hdr = request.headers.get("authorization", "")
+        if "Bearer " in auth_hdr:
+            req_token = req_token or auth_hdr.split("Bearer ")[-1].strip()
+
+        if not req_token or not secrets.compare_digest(req_token, chatwoot_secret):
+            client_ip = request.client.host if request.client else "desconocido"
+            logger.warning(f"Intento de webhook Chatwoot no autorizado desde {client_ip}")
+            return JSONResponse({"status": "error", "message": "Unauthorized webhook"}, status_code=401)
+
     try:
         body = await request.json()
     except Exception as e:

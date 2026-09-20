@@ -73,13 +73,20 @@ def register_customer_payment(
                 except Exception:
                     pass
 
-            # Si extend_expiry es False o si la cuenta vence en más de 15 días (recién creada a 30d):
-            # Es PAGO INICIAL -> Mantiene la fecha de vencimiento ya otorgada al cliente.
+            # Comprobar si la cuenta ya registra pagos previos en el libro financiero
+            prior_payments = conn.execute("SELECT COUNT(*) as cnt FROM payments WHERE account_id = ?", (acc_id,)).fetchone()
+            has_prior_payments = bool(prior_payments and prior_payments["cnt"] > 0)
+
+            # Es PAGO INICIAL solo si se pide explícitamente (extend_expiry=False)
+            # o si extend_expiry es None, la cuenta NO tiene pagos previos y vence en más de 15 días.
             is_initial = False
             if extend_expiry is False:
                 is_initial = True
-            elif extend_expiry is None and days_left is not None and days_left > 15:
-                is_initial = True
+            elif extend_expiry is True:
+                is_initial = False
+            elif extend_expiry is None:
+                if not has_prior_payments and days_left is not None and days_left > 15:
+                    is_initial = True
 
             if new_expiry_date:
                 final_expiry = new_expiry_date.strip()

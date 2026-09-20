@@ -214,223 +214,258 @@ def approve_pending_payment(
             "payment": item
         }
 
-    from core.utils import clean_whatsapp_phone, format_ars
+    # Bloqueo atómico contra doble aprobación y condiciones de carrera
+    conn_lock = get_connection()
+    try:
+        with conn_lock:
+            cur = conn_lock.execute("""
+                UPDATE pending_payments
+                SET status = 'processing'
+                WHERE id = ? AND status = 'pending'
+            """, (payment_id,))
+            if cur.rowcount == 0:
+                cur_row = conn_lock.execute("SELECT * FROM pending_payments WHERE id = ?", (payment_id,)).fetchone()
+                status_found = cur_row["status"] if cur_row else "desconocido"
+                return {
+                    "success": False,
+                    "error": f"El pago #{payment_id} ya fue procesado o está en curso (Estado: {status_found}).",
+                    "payment": dict(cur_row) if cur_row else item
+                }
+    finally:
+        conn_lock.close()
 
-    amt_val = custom_amount if (custom_amount is not None and custom_amount > 0) else (float(item.get("amount") or 0.0))
-    bank_name = item.get("bank") or "Mercado Pago"
-    op_code = item.get("operation_id") or "-"
-    acc_id = item.get("account_id")
-    client_id = item.get("client_id")
+    try:
+        from core.utils import clean_whatsapp_phone, format_ars
 
-    # 1. Si se especificó monto personalizado o se actualizó, persistirlo en pending_payments
-    if custom_amount is not None and custom_amount > 0:
+        amt_val = custom_amount if (custom_amount is not None and custom_amount > 0) else (float(item.get("amount") or 0.0))
+        bank_name = item.get("bank") or "Mercado Pago"
+        op_code = item.get("operation_id") or "-"
+        acc_id = item.get("account_id")
+        client_id = item.get("client_id")
+
+        # 1. Si se especificó monto personalizado o se actualizó, persistirlo en pending_payments
+        if custom_amount is not None and custom_amount > 0:
+            conn = get_connection()
+            try:
+                with conn:
+                    conn.execute("""
+                        UPDATE pending_payments
+                        SET amount = ?, amount_formatted = ?
+                        WHERE id = ?
+                    """, (amt_val, format_ars(amt_val), payment_id))
+            finally:
+                conn.close()
+
+        # 2. Si no hay cuenta asociada directamente, intentar buscar una cuenta activa del cliente
+        if not acc_id:
+            conn = get_connection()
+            try:
+                found_acc = None
+                if client_id:
+                    row_acc = conn.execute("""
+                        SELECT * FROM streaming_accounts
+                        WHERE client_id = ? AND status = 'ocupada'
+                        ORDER BY expiry_date ASC LIMIT 1
+                    """, (client_id,)).fetchone()
+                    if row_acc:
+                        found_acc = dict(row_acc)
+                elif item.get("sender_phone"):
+                    s_clean = clean_whatsapp_phone(item["sender_phone"])
+                    if s_clean:
+                        suffix = s_clean[-8:]
+                        row_acc = conn.execute("""
+                            SELECT a.* FROM streaming_accounts a
+                            JOIN clients c ON a.client_id = c.id
+                            WHERE a.status = 'ocupada' AND (c.whatsapp LIKE ? OR c.whatsapp LIKE ?)
+                            ORDER BY a.expiry_date ASC LIMIT 1
+                        """, (f"%{suffix}%", f"%{s_clean}%")).fetchone()
+                        if row_acc:
+                            found_acc = dict(row_acc)
+
+                if found_acc:
+                    acc_id = found_acc["id"]
+                    if not client_id and found_acc.get("client_id"):
+                        client_id = found_acc["client_id"]
+                    with conn:
+                        conn.execute("UPDATE pending_payments SET account_id = ?, client_id = ? WHERE id = ?", (acc_id, client_id, payment_id))
+            finally:
+                conn.close()
+
+        finance_res = None
+        renewed_accounts = []
+
+        # 3. Si renew_all está activo, buscar todas las cuentas activas del cliente
+        if renew_all:
+            conn = get_connection()
+            try:
+                all_active = []
+                if client_id:
+                    rows_all = conn.execute("""
+                        SELECT * FROM streaming_accounts
+                        WHERE client_id = ? AND status = 'ocupada'
+                        ORDER BY expiry_date ASC
+                    """, (client_id,)).fetchall()
+                    all_active = [dict(r) for r in rows_all]
+                elif item.get("sender_phone"):
+                    s_clean = clean_whatsapp_phone(item["sender_phone"])
+                    if s_clean:
+                        suffix = s_clean[-8:]
+                        rows_all = conn.execute("""
+                            SELECT a.* FROM streaming_accounts a
+                            JOIN clients c ON a.client_id = c.id
+                            WHERE a.status = 'ocupada' AND (c.whatsapp LIKE ? OR c.whatsapp LIKE ?)
+                            ORDER BY a.expiry_date ASC
+                        """, (f"%{suffix}%", f"%{s_clean}%")).fetchall()
+                        all_active = [dict(r) for r in rows_all]
+            finally:
+                conn.close()
+
+            if all_active:
+                split_amt = (amt_val / len(all_active)) if (amt_val > 0 and len(all_active) > 0) else None
+                for a_item in all_active:
+                    try:
+                        f_item_res = finance_repo.collect_payment(
+                            account_id=a_item["id"],
+                            extend_days=30,
+                            amount=split_amt,
+                            payment_method=bank_name,
+                            notes=f"Aprobación Multi-Servicio #{payment_id} (Op: {op_code})"
+                        )
+                        renewed_accounts.append({
+                            "account_id": a_item["id"],
+                            "platform": a_item["platform"],
+                            "email": a_item["email"],
+                            "profile_name": a_item.get("profile_name"),
+                            "new_expiry_date": f_item_res.get("new_expiry_date")
+                        })
+                    except Exception as e:
+                        logger.error(f"Error renovando cuenta #{a_item['id']} en approve_pending_payment(renew_all=True): {e}")
+
+                finance_res = {
+                    "success": True,
+                    "renew_all": True,
+                    "renewed_count": len(renewed_accounts),
+                    "renewed_accounts": renewed_accounts,
+                    "total_amount": amt_val
+                }
+
+        # 4. Si no es renew_all o no se encontraron cuentas en renew_all:
+        if not renewed_accounts:
+            if acc_id:
+                try:
+                    curr_exp = item.get("account_expiry")
+                    conn_chk = get_connection()
+                    has_prior_payments = False
+                    try:
+                        p_cnt = conn_chk.execute("SELECT COUNT(*) as cnt FROM payments WHERE account_id = ?", (acc_id,)).fetchone()
+                        has_prior_payments = bool(p_cnt and p_cnt["cnt"] > 0)
+                    finally:
+                        conn_chk.close()
+
+                    is_initial = False
+                    if not has_prior_payments and curr_exp:
+                        try:
+                            from datetime import date
+                            exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
+                            days_left = (exp_d - date.today()).days
+                            if days_left > 15:
+                                is_initial = True
+                        except Exception:
+                            pass
+
+                    finance_res = finance_repo.collect_payment(
+                        account_id=acc_id,
+                        extend_days=0 if is_initial else 30,
+                        amount=amt_val if amt_val > 0 else None,
+                        payment_method=bank_name,
+                        notes=f"Aprobado desde Pago #{payment_id} (Op: {op_code})"
+                    )
+                except Exception as e:
+                    logger.error(f"Error al impactar cobro financiero para cuenta #{acc_id}: {e}")
+            else:
+                if amt_val > 0:
+                    conn = get_connection()
+                    try:
+                        with conn:
+                            conn.execute("""
+                                INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
+                                VALUES (NULL, ?, ?, 0.0, ?, ?, ?)
+                            """, (client_id, amt_val, amt_val, bank_name, f"Cobro aprobado #{payment_id} (Cliente: {item.get('client_name')}, Op: {op_code})"))
+                            finance_res = {
+                                "success": True,
+                                "amount": amt_val,
+                                "profit": amt_val,
+                                "payment_method": bank_name,
+                                "action_label": "Cobro sin cuenta vinculada"
+                            }
+                    except Exception as e:
+                        logger.error(f"Error al asentar cobro en payments: {e}")
+                    finally:
+                        conn.close()
+
+        # 5. Marcar el registro como aprobado en pending_payments
+        approve_tag = f" | Aprobado por {admin_user}" + (f" [Multi-Servicio: {len(renewed_accounts)} cuentas]" if renewed_accounts else "")
         conn = get_connection()
         try:
             with conn:
                 conn.execute("""
                     UPDATE pending_payments
-                    SET amount = ?, amount_formatted = ?
+                    SET status = 'approved', resolved_at = CURRENT_TIMESTAMP,
+                        notes = COALESCE(notes, '') || ?
                     WHERE id = ?
-                """, (amt_val, format_ars(amt_val), payment_id))
+                """, (approve_tag, payment_id))
         finally:
             conn.close()
 
-    # 2. Si no hay cuenta asociada directamente, intentar buscar una cuenta activa del cliente
-    if not acc_id:
-        conn = get_connection()
-        try:
-            found_acc = None
-            if client_id:
-                row_acc = conn.execute("""
-                    SELECT * FROM streaming_accounts
-                    WHERE client_id = ? AND status = 'ocupada'
-                    ORDER BY expiry_date ASC LIMIT 1
-                """, (client_id,)).fetchone()
-                if row_acc:
-                    found_acc = dict(row_acc)
-            elif item.get("sender_phone"):
-                s_clean = clean_whatsapp_phone(item["sender_phone"])
-                if s_clean:
-                    suffix = s_clean[-8:]
-                    row_acc = conn.execute("""
-                        SELECT a.* FROM streaming_accounts a
-                        JOIN clients c ON a.client_id = c.id
-                        WHERE a.status = 'ocupada' AND (c.whatsapp LIKE ? OR c.whatsapp LIKE ?)
-                        ORDER BY a.expiry_date ASC LIMIT 1
-                    """, (f"%{suffix}%", f"%{s_clean}%")).fetchone()
-                    if row_acc:
-                        found_acc = dict(row_acc)
-
-            if found_acc:
-                acc_id = found_acc["id"]
-                if not client_id and found_acc.get("client_id"):
-                    client_id = found_acc["client_id"]
-                with conn:
-                    conn.execute("UPDATE pending_payments SET account_id = ?, client_id = ? WHERE id = ?", (acc_id, client_id, payment_id))
-        finally:
-            conn.close()
-
-    finance_res = None
-    renewed_accounts = []
-
-    # 3. Si renew_all está activo, buscar todas las cuentas activas del cliente
-    if renew_all:
-        conn = get_connection()
-        try:
-            all_active = []
-            if client_id:
-                rows_all = conn.execute("""
-                    SELECT * FROM streaming_accounts
-                    WHERE client_id = ? AND status = 'ocupada'
-                    ORDER BY expiry_date ASC
-                """, (client_id,)).fetchall()
-                all_active = [dict(r) for r in rows_all]
-            elif item.get("sender_phone"):
-                s_clean = clean_whatsapp_phone(item["sender_phone"])
-                if s_clean:
-                    suffix = s_clean[-8:]
-                    rows_all = conn.execute("""
-                        SELECT a.* FROM streaming_accounts a
-                        JOIN clients c ON a.client_id = c.id
-                        WHERE a.status = 'ocupada' AND (c.whatsapp LIKE ? OR c.whatsapp LIKE ?)
-                        ORDER BY a.expiry_date ASC
-                    """, (f"%{suffix}%", f"%{s_clean}%")).fetchall()
-                    all_active = [dict(r) for r in rows_all]
-        finally:
-            conn.close()
-
-        if all_active:
-            split_amt = (amt_val / len(all_active)) if (amt_val > 0 and len(all_active) > 0) else None
-            for a_item in all_active:
-                try:
-                    f_item_res = finance_repo.collect_payment(
-                        account_id=a_item["id"],
-                        extend_days=30,
-                        amount=split_amt,
-                        payment_method=bank_name,
-                        notes=f"Aprobación Multi-Servicio #{payment_id} (Op: {op_code})"
-                    )
-                    renewed_accounts.append({
-                        "account_id": a_item["id"],
-                        "platform": a_item["platform"],
-                        "email": a_item["email"],
-                        "profile_name": a_item.get("profile_name"),
-                        "new_expiry_date": f_item_res.get("new_expiry_date")
-                    })
-                except Exception as e:
-                    logger.error(f"Error renovando cuenta #{a_item['id']} en approve_pending_payment(renew_all=True): {e}")
-
-            finance_res = {
-                "success": True,
-                "renew_all": True,
-                "renewed_count": len(renewed_accounts),
-                "renewed_accounts": renewed_accounts,
-                "total_amount": amt_val
-            }
-
-    # 4. Si no es renew_all o no se encontraron cuentas en renew_all:
-    if not renewed_accounts:
-        if acc_id:
-            try:
-                curr_exp = item.get("account_expiry")
-                is_initial = False
-                if curr_exp:
-                    try:
-                        from datetime import date
-                        exp_d = datetime.strptime(curr_exp, "%Y-%m-%d").date()
-                        days_left = (exp_d - date.today()).days
-                        if days_left > 15:
-                            is_initial = True
-                    except Exception:
-                        pass
-
-                finance_res = finance_repo.collect_payment(
-                    account_id=acc_id,
-                    extend_days=0 if is_initial else 30,
-                    amount=amt_val if amt_val > 0 else None,
-                    payment_method=bank_name,
-                    notes=f"Aprobado desde Pago #{payment_id} (Op: {op_code})"
-                )
-            except Exception as e:
-                logger.error(f"Error al impactar cobro financiero para cuenta #{acc_id}: {e}")
-        else:
-            if amt_val > 0:
-                conn = get_connection()
-                try:
-                    with conn:
-                        conn.execute("""
-                            INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
-                            VALUES (NULL, ?, ?, 0.0, ?, ?, ?)
-                        """, (client_id, amt_val, amt_val, bank_name, f"Cobro aprobado #{payment_id} (Cliente: {item.get('client_name')}, Op: {op_code})"))
-                        finance_res = {
-                            "success": True,
-                            "amount": amt_val,
-                            "profit": amt_val,
-                            "payment_method": bank_name,
-                            "action_label": "Cobro sin cuenta vinculada"
-                        }
-                except Exception as e:
-                    logger.error(f"Error al asentar cobro en payments: {e}")
-                finally:
-                    conn.close()
-
-    # 5. Marcar el registro como aprobado en pending_payments
-    approve_tag = f" | Aprobado por {admin_user}" + (f" [Multi-Servicio: {len(renewed_accounts)} cuentas]" if renewed_accounts else "")
-    conn = get_connection()
-    try:
-        with conn:
-            conn.execute("""
-                UPDATE pending_payments
-                SET status = 'approved', resolved_at = CURRENT_TIMESTAMP,
-                    notes = COALESCE(notes, '') || ?
-                WHERE id = ?
-            """, (approve_tag, payment_id))
-    finally:
-        conn.close()
-
-    updated_item = get_pending_payment(payment_id) or item
-    return {
-        "success": True,
-        "payment_id": payment_id,
-        "payment": updated_item,
-        "renewed_accounts": renewed_accounts,
-        "finance_details": finance_res
-    }
-
-
-def reject_pending_payment(payment_id: int, reason: str = "", admin_user: str = "admin") -> Dict[str, Any]:
-    """Rechaza un pago pendiente marcando su estado como 'rejected'."""
-    item = get_pending_payment(payment_id)
-    if not item:
-        return {"success": False, "error": f"Pago #{payment_id} no encontrado."}
-
-    if item["status"] != "pending":
-        return {
-            "success": False,
-            "error": f"El pago #{payment_id} ya fue procesado anteriormente (Estado: {item['status']}).",
-            "payment": item
-        }
-
-    conn = get_connection()
-    try:
-        with conn:
-            rejection_note = f" | Rechazado por {admin_user}: {reason.strip()}" if reason else f" | Rechazado por {admin_user}"
-            conn.execute("""
-                UPDATE pending_payments
-                SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP,
-                    notes = COALESCE(notes, '') || ?
-                WHERE id = ?
-            """, (rejection_note, payment_id))
-
-        updated_item = get_pending_payment(payment_id)
+        updated_item = get_pending_payment(payment_id) or item
         return {
             "success": True,
             "payment_id": payment_id,
             "payment": updated_item,
-            "reason": reason
+            "renewed_accounts": renewed_accounts,
+            "finance_details": finance_res
         }
+    except Exception as e:
+        conn_err = get_connection()
+        try:
+            with conn_err:
+                conn_err.execute("UPDATE pending_payments SET status = 'pending' WHERE id = ? AND status = 'processing'", (payment_id,))
+        except Exception:
+            pass
+        raise e
+
+
+def reject_pending_payment(payment_id: int, reason: str = "", admin_user: str = "admin") -> Dict[str, Any]:
+    """Rechaza un pago pendiente marcando su estado como 'rejected' de forma atómica."""
+    conn = get_connection()
+    try:
+        with conn:
+            rejection_note = f" | Rechazado por {admin_user}: {reason.strip()}" if reason else f" | Rechazado por {admin_user}"
+            cur = conn.execute("""
+                UPDATE pending_payments
+                SET status = 'rejected', resolved_at = CURRENT_TIMESTAMP,
+                    notes = COALESCE(notes, '') || ?
+                WHERE id = ? AND status = 'pending'
+            """, (rejection_note, payment_id))
+            if cur.rowcount == 0:
+                item = conn.execute("SELECT * FROM pending_payments WHERE id = ?", (payment_id,)).fetchone()
+                if not item:
+                    return {"success": False, "error": f"Pago #{payment_id} no encontrado."}
+                return {
+                    "success": False,
+                    "error": f"El pago #{payment_id} ya fue procesado anteriormente (Estado: {item['status']}).",
+                    "payment": dict(item)
+                }
     finally:
         conn.close()
+
+    updated_item = get_pending_payment(payment_id)
+    return {
+        "success": True,
+        "payment_id": payment_id,
+        "payment": updated_item,
+        "reason": reason
+    }
 
 def prune_old_approved_receipts_base64(days_threshold: int = 60) -> int:
     """Purga las cadenas Base64 de comprobantes aprobados o rechazados con más de N días de antigüedad,

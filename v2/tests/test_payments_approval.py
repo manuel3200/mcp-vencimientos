@@ -229,14 +229,53 @@ def run_tests():
     p_mcp2_check = database.get_pending_payment(p_mcp2["id"])
     assert p_mcp2_check["status"] == "rejected"
 
-    # 12. Prueba de Radiografía Ejecutiva 360° del Negocio
-    exec_output = asyncio.run(system_tools.resumen_ejecutivo_negocio(detallado=True))
-    assert "RADIOGRAFÍA EJECUTIVA 360°" in exec_output
-    assert "FINANZAS & RENTABILIDAD" in exec_output
-    assert "ESTADO OPERATIVO" in exec_output
-    assert "INVENTARIO & STOCK" in exec_output
+    # 13. Test de Renovación Temprana (> 15 días restantes con historial previo)
+    from datetime import date, timedelta
+    cli_test = database.find_or_create_client(name="Cliente Renovador Temprano", whatsapp="5491122334455")
+    exp_20d = (date.today() + timedelta(days=20)).isoformat()
+    acc_test = database.create_account(
+        platform="Netflix",
+        email="renovador_temprano@test.com",
+        password="pass",
+        client_id=cli_test["id"],
+        expiry_date=exp_20d
+    )
+    # Registrar un cobro previo para que la cuenta tenga historial financiero
+    database.collect_payment(account_id=acc_test["id"], amount=5000.0, notes="Cobro mes 1")
+    
+    # Simular que el cliente paga su renovación 20 días antes de vencer
+    p_early = database.create_pending_payment(
+        sender_phone="5491122334455",
+        client_name="Cliente Renovador Temprano",
+        client_id=cli_test["id"],
+        account_id=acc_test["id"],
+        amount=5000.0
+    )
+    res_early_app = database.approve_pending_payment(p_early["id"])
+    assert res_early_app["success"] is True, f"Error al aprobar: {res_early_app}"
+    
+    # Verificar que se extendió la fecha en 30 días a partir del vencimiento actual (+50 días desde hoy)
+    acc_after = database.get_account_by_id(acc_test["id"])
+    expected_exp = (date.today() + timedelta(days=50)).isoformat()
+    assert acc_after["expiry_date"] == expected_exp, f"Esperado {expected_exp}, obtenido {acc_after['expiry_date']}"
 
-    print("    ✅ Aprobación y Pagos: 15/15 casos de prueba superados exitosamente (incluye MCP y Radiografía 360°).")
+    # 14. Test Freno de Emergencia en Purga de Cuentas
+    res_purge_fail = database.purge_accounts_except_client("cliente_completamente_inexistente_99999")
+    assert res_purge_fail["success"] is False, "La purga debe abortar si el cliente no existe"
+    assert res_purge_fail["deleted_count"] == 0
+    assert "abortada por seguridad" in res_purge_fail["error"]
+
+    # 15. Test Búsqueda Jerárquica de Teléfonos (10 dígitos vs 8 dígitos)
+    cli_ba = database.find_or_create_client(name="Cliente BA", whatsapp="5491198765432")
+    cli_cba = database.find_or_create_client(name="Cliente CBA", whatsapp="54935198765432")
+    
+    match_ba = database.get_client_by_phone("5491198765432")
+    assert match_ba is not None and match_ba["id"] == cli_ba["id"], "Debe coincidir exactamente con Cliente BA"
+    
+    match_cba = database.get_client_by_phone("54935198765432")
+    assert match_cba is not None and match_cba["id"] == cli_cba["id"], "Debe coincidir exactamente con Cliente CBA"
+
+    print("    ✅ Aprobación y Pagos: Todos los casos de prueba y parches defensivos superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()

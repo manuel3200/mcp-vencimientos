@@ -1,9 +1,12 @@
 import re
+import logging
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List, Union
 
 from db.connection import get_connection
 from core.utils import parse_money, format_ars, clean_whatsapp_phone
+
+logger = logging.getLogger("database.clients")
 
 def find_or_create_client(
     name: str, 
@@ -376,18 +379,53 @@ def get_client_360_profile(query_or_id: Union[str, int]) -> Optional[Dict[str, A
         conn.close()
 
 def get_client_by_phone(phone: str) -> Optional[Dict[str, Any]]:
-    """Busca un cliente por su número de teléfono (comparando los últimos 8 dígitos) e incluye su Ficha 360 y cuentas."""
+    """Busca un cliente por su número de teléfono jerárquicamente:
+    1. Coincidencia exacta completa E.164.
+    2. Coincidencia por últimos 10 dígitos (código de área + número de abonado).
+    3. Fallback a 8 dígitos únicamente si existe un solo candidato unívoco.
+    """
     clean = clean_whatsapp_phone(phone)
     if not clean or len(clean) < 6:
         return None
-    suffix = clean[-8:]
+
     conn = get_connection()
     try:
         clients = conn.execute("SELECT id, whatsapp FROM clients WHERE whatsapp IS NOT NULL AND whatsapp != ''").fetchall()
+
+        # 1. Coincidencia exacta completa
         for c in clients:
             c_clean = clean_whatsapp_phone(c["whatsapp"] or "")
-            if c_clean and (c_clean.endswith(suffix) or clean.endswith(c_clean[-8:])):
+            if c_clean and c_clean == clean:
                 return get_client_360_profile(c["id"])
+
+        # 2. Coincidencia por 10 dígitos (área + abonado nacional)
+        if len(clean) >= 10:
+            target_10 = clean[-10:]
+            matches_10 = []
+            for c in clients:
+                c_clean = clean_whatsapp_phone(c["whatsapp"] or "")
+                if c_clean and len(c_clean) >= 10 and c_clean[-10:] == target_10:
+                    matches_10.append(c["id"])
+            if len(matches_10) == 1:
+                return get_client_360_profile(matches_10[0])
+            elif len(matches_10) > 1:
+                logger.warning(f"Múltiples clientes encontrados para 10 dígitos {target_10}: {matches_10}. Abortando para evitar colisión de credenciales.")
+                return None
+
+        # 3. Fallback unívoco por 8 dígitos
+        if len(clean) >= 8:
+            target_8 = clean[-8:]
+            matches_8 = []
+            for c in clients:
+                c_clean = clean_whatsapp_phone(c["whatsapp"] or "")
+                if c_clean and len(c_clean) >= 8 and (c_clean.endswith(target_8) or clean.endswith(c_clean[-8:])):
+                    matches_8.append(c["id"])
+            if len(matches_8) == 1:
+                return get_client_360_profile(matches_8[0])
+            elif len(matches_8) > 1:
+                logger.warning(f"Colisión de 8 dígitos para {target_8}: {matches_8}. No se puede resolver unívocamente.")
+                return None
+
         return None
     finally:
         conn.close()

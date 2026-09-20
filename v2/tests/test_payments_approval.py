@@ -270,10 +270,10 @@ def run_tests():
     cli_cba = database.find_or_create_client(name="Cliente CBA", whatsapp="54935198765432")
     
     match_ba = database.get_client_by_phone("5491198765432")
-    assert match_ba is not None and match_ba["id"] == cli_ba["id"], "Debe coincidir exactamente con Cliente BA"
+    assert match_ba is not None and match_ba["client"]["id"] == cli_ba["id"], "Debe coincidir exactamente con Cliente BA"
 
     match_cba = database.get_client_by_phone("54935198765432")
-    assert match_cba is not None and match_cba["id"] == cli_cba["id"], "Debe coincidir exactamente con Cliente CBA"
+    assert match_cba is not None and match_cba["client"]["id"] == cli_cba["id"], "Debe coincidir exactamente con Cliente CBA"
 
     # 16. Test Detección de Comprobante Reciclado / Fraude
     p_legit = database.create_pending_payment(

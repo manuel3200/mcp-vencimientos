@@ -46,7 +46,10 @@ def render_msg_banner(msg_raw: str, wa_param: str = "", err_param: str = "") -> 
             "partial_payment_saved": "💵 ¡Pago parcial / seña registrado con éxito!",
             "payment_reversed": "🔄 Cobro revertido exitosamente y vencimiento previo restaurado.",
             "report_rolled_back": "🔄 Reemplazo de cuenta deshecho exitosamente.",
-            "marked_for_baja": "🛑 Cuenta marcada para baja / rotación de clave."
+            "marked_for_baja": "🛑 Cuenta marcada para baja / rotación de clave.",
+            "wa_sent": "✅ Mensaje enviado exitosamente por WhatsApp vía Evolution API.",
+            "referral_wa_sent": "✅ Código y saldo de referidos enviados exitosamente por WhatsApp vía Evolution API.",
+            "combo_sold_auto": "🎉 ¡Combo vendido con éxito! Los accesos y credenciales fueron entregados automáticamente por WhatsApp al cliente."
         }
         text = messages.get(msg_raw, msg_raw)
         return f"""
@@ -132,6 +135,20 @@ def render_active_accounts_rows(active_accounts: List[Dict[str, Any]]) -> str:
         safe_plat = re.sub(r"['\"\\\r\n]", " ", str(a.get('platform') or '')).strip()
         acc_id = a.get('id', '')
 
+        btn_wa_cobro = f'''
+        <div style="display:inline-flex; align-items:center; gap:2px;">
+            <button type="button" id="btn-wa-cobro-{acc_id}" onclick="sendAccountWhatsApp({acc_id}, 'cobro', '{safe_cname}')" class="btn-action" style="background:#15803d;color:white;border:none;cursor:pointer;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Enviar cobro automáticamente por WhatsApp vía Evolution API">💬 Cobro</button>
+            <a href="{wa_link_cobro}" target="_blank" style="color:#86efac;text-decoration:none;font-size:0.7rem;padding:2px 3px;" title="Abrir en WhatsApp Web (manual)">↗</a>
+        </div>
+        ''' if wa_clean else '<span class="btn-action" style="background:#334155;color:#94a3b8;padding:4px 7px;border-radius:5px;font-size:0.75rem;opacity:0.5;" title="Sin WhatsApp">💬 Cobro</span>'
+
+        btn_wa_datos = f'''
+        <div style="display:inline-flex; align-items:center; gap:2px;">
+            <button type="button" id="btn-wa-datos-{acc_id}" onclick="sendAccountWhatsApp({acc_id}, 'entrega', '{safe_cname}')" class="btn-action" style="background:#0284c7;color:white;border:none;cursor:pointer;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Enviar credenciales automáticamente por WhatsApp vía Evolution API">📩 Datos</button>
+            <a href="{wa_link_entrega}" target="_blank" style="color:#7dd3fc;text-decoration:none;font-size:0.7rem;padding:2px 3px;" title="Abrir en WhatsApp Web (manual)">↗</a>
+        </div>
+        ''' if wa_clean else '<span class="btn-action" style="background:#334155;color:#94a3b8;padding:4px 7px;border-radius:5px;font-size:0.75rem;opacity:0.5;" title="Sin WhatsApp">📩 Datos</span>'
+
         btn_rotate = f'<button type="button" onclick="openRotatePasswordModal(\'{safe_email}\', \'{safe_plat}\', {acc_id})" class="btn-action" style="background:#be185d;color:white;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Rotar Contraseña y Notificar Co-Usuarios">🔐 Rotar Clave</button>'
         btn_partial = f'<button type="button" onclick="openPartialPaymentModal({acc_id}, \'{safe_cname}\', \'{safe_plat}\', {debt})" class="btn-action" style="background:#78350f;color:#fde68a;padding:4px 6px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Registrar Pago Parcial">💵 Parcial</button>'
         btn_baja = f'<form action="/api/accounts/mark-baja/{acc_id}" method="POST" style="display:inline;" onsubmit="return confirm(\'¿Marcar cuenta #{acc_id} para baja / cambio de clave? Se detendrán los avisos automáticos diarios.\');"><button type="submit" class="btn-action" style="color:#f43f5e;padding:4px 6px;border-radius:5px;font-size:0.75rem;" title="Marcar para Baja / Detener alertas">🛑</button></form>' if st != 'por_cambiar_clave' else ''
@@ -147,8 +164,8 @@ def render_active_accounts_rows(active_accounts: List[Dict[str, Any]]) -> str:
             <td><strong>{a.get('price') or '-'}</strong></td>
             <td style="white-space: nowrap;">
                 {btn_360}
-                <a href="{wa_link_cobro}" target="_blank" class="btn-action" style="background:#15803d;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con mensaje de cobro listo">💬 Cobro</a>
-                <a href="{wa_link_entrega}" target="_blank" class="btn-action" style="background:#0284c7;color:white;text-decoration:none;display:inline-block;padding:4px 7px;border-radius:5px;font-size:0.75rem;font-weight:600;" title="Abrir chat de WhatsApp con credenciales listas">📩 Datos</a>
+                {btn_wa_cobro}
+                {btn_wa_datos}
                 {btn_pago}
                 {btn_partial}
                 {btn_rotate if st == 'por_cambiar_clave' else ''}
@@ -290,6 +307,8 @@ def render_screens_overview_html(screens_overview: List[Dict[str, Any]]) -> str:
             pin_label = f" (PIN: {p['profile_pin']})" if p.get('profile_pin') else ""
             if st == 'ocupada':
                 c_name = p.get('client_name') or 'Cliente'
+                safe_p_cname = re.sub(r"['\"\\\r\n]", " ", str(c_name)).strip()
+                p_acc_id = p.get('id', '')
                 wa_cobro = database.generate_whatsapp_message(p, "cobro").get("wa_link", "#")
                 wa_datos = database.generate_whatsapp_message(p, "entrega").get("wa_link", "#")
                 chips_html += f"""
@@ -298,9 +317,11 @@ def render_screens_overview_html(screens_overview: List[Dict[str, Any]]) -> str:
                         <strong>{p['profile_name']}</strong>{pin_label}: <span>{c_name}</span>
                         <small style='color:#94a3b8;margin-left:6px;'>(Vence: {p.get('expiry_date')})</small>
                     </div>
-                    <div style="display:flex;gap:4px;">
-                        <a href="{wa_cobro}" target="_blank" class="btn-action" style="background:#15803d;color:white;text-decoration:none;padding:2px 6px;font-size:0.7rem;" title="Cobrar WhatsApp">💬</a>
-                        <a href="{wa_datos}" target="_blank" class="btn-action" style="background:#0284c7;color:white;text-decoration:none;padding:2px 6px;font-size:0.7rem;" title="Datos WhatsApp">📩</a>
+                    <div style="display:flex;gap:3px;align-items:center;">
+                        <button type="button" id="btn-screen-cobro-{p_acc_id}" onclick="sendAccountWhatsApp({p_acc_id}, 'cobro', '{safe_p_cname}')" class="btn-action" style="background:#15803d;color:white;border:none;cursor:pointer;padding:2px 6px;font-size:0.7rem;" title="Enviar cobro automáticamente por WhatsApp vía Evolution API">💬</button>
+                        <a href="{wa_cobro}" target="_blank" style="color:#86efac;text-decoration:none;font-size:0.7rem;" title="Abrir en WhatsApp Web (manual)">↗</a>
+                        <button type="button" id="btn-screen-datos-{p_acc_id}" onclick="sendAccountWhatsApp({p_acc_id}, 'entrega', '{safe_p_cname}')" class="btn-action" style="background:#0284c7;color:white;border:none;cursor:pointer;padding:2px 6px;font-size:0.7rem;" title="Enviar credenciales automáticamente por WhatsApp vía Evolution API">📩</button>
+                        <a href="{wa_datos}" target="_blank" style="color:#7dd3fc;text-decoration:none;font-size:0.7rem;" title="Abrir en WhatsApp Web (manual)">↗</a>
                     </div>
                 </div>
                 """
@@ -841,17 +862,23 @@ def render_referrals_table_rows(referrals: List[Dict[str, Any]]) -> str:
         if len(str(created)) > 10:
             created = str(created)[:10]
 
+        safe_name = client_name.replace("'", "\\'").replace('"', '\\"')
+
         if clean_wa:
             share_msg = f"¡Hola {client_name}! 👋 Te compartimos tu código de recomendación exclusivo de StreamVault: *{code}*\n\nPor cada amigo que contrate su suscripción con tu código, ¡sumas saldo bonificado a favor!\nTu saldo disponible actual es de: *${balance:,.2f} ARS* 🍿".replace(",", "X").replace(".", ",").replace("X", ".")
             encoded_share = urllib.parse.quote(share_msg)
             wa_share_url = f"https://wa.me/{clean_wa}?text={encoded_share}"
             wa_display = f'<a href="https://wa.me/{clean_wa}" target="_blank" style="color:#38bdf8; text-decoration:none; font-family:monospace; font-size:0.85rem;" title="Abrir chat">📲 {raw_wa or clean_wa}</a>'
-            share_btn = f'<a href="{wa_share_url}" target="_blank" class="btn-action" style="background:#065f46; color:#a7f3d0; padding:4px 8px; font-size:0.75rem; text-decoration:none; display:inline-flex; align-items:center; gap:3px;" title="Enviar código y saldo al cliente por WhatsApp">📲 Enviar WA</a>'
+            share_btn = f'''
+            <div style="display:inline-flex; align-items:center; gap:2px;">
+                <button type="button" id="btn-ref-wa-{client_id}" onclick="sendReferralWhatsApp({client_id}, '{safe_name}')" class="btn-action" style="background:#065f46; color:#a7f3d0; border:1px solid #059669; padding:4px 8px; font-size:0.75rem; cursor:pointer;" title="Enviar código y saldo automáticamente por WhatsApp vía Evolution API">📲 Enviar WA</button>
+                <a href="{wa_share_url}" target="_blank" style="color:#6ee7b7; text-decoration:none; font-size:0.75rem; padding:3px 4px;" title="Abrir en WhatsApp Web (manual)">↗️</a>
+            </div>
+            '''
         else:
             wa_display = '<span style="color:#64748b; font-size:0.8rem;">Sin WhatsApp</span>'
             share_btn = '<span style="color:#64748b; font-size:0.75rem;">-</span>'
 
-        safe_name = client_name.replace("'", "\\'")
 
         rows += f"""
         <tr>

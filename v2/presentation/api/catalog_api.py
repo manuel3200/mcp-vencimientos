@@ -124,6 +124,8 @@ async def api_combos_sell(
             f"• Vencimiento: <code>{res['expiry_date']}</code>"
             f"{wa_info_telegram}"
         )
+        if wa_auto_sent:
+            return RedirectResponse(url="/?msg=combo_sold_auto#accounts", status_code=303)
         return RedirectResponse(url=f"/?msg=combo_sold&wa={urllib.parse.quote(wa_url)}#accounts", status_code=303)
     else:
         err = urllib.parse.quote(res.get("error", "Error al vender combo"))

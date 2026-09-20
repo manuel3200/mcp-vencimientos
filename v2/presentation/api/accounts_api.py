@@ -931,5 +931,52 @@ async def free_stock_api(
     return RedirectResponse(url="/?msg=stock_saved#stock", status_code=303)
 
 
+@router.post("/api/accounts/send-whatsapp/{account_id}")
+async def api_send_account_whatsapp(request: Request, account_id: int, type: str = "cobro"):
+    """Envía automáticamente mensaje de cobro o credenciales por WhatsApp vía Evolution API."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    msg_type = (type or "cobro").strip().lower()
+    wa_data = database.generate_whatsapp_message(account_id, message_type=msg_type)
+    if not wa_data or not wa_data.get("success"):
+        raise HTTPException(status_code=404, detail=wa_data.get("error", "Cuenta o servicio no encontrado."))
+
+    clean_phone = wa_data.get("clean_phone")
+    client_name = wa_data.get("client_name") or "Cliente"
+    if not clean_phone or len(clean_phone) < 8:
+        raise HTTPException(status_code=400, detail=f"El cliente '{client_name}' no posee un número de WhatsApp registrado o válido.")
+
+    text_to_send = wa_data.get("message", "")
+    if not text_to_send:
+        raise HTTPException(status_code=400, detail="No se pudo estructurar el mensaje.")
+
+    try:
+        import whatsapp_client
+        res = await whatsapp_client.send_text_message(clean_phone, text_to_send, delay_seconds=1.0)
+    except Exception as e:
+        logger.error(f"Error despachando WhatsApp para cuenta {account_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error conectando con Evolution API: {str(e)}")
+
+    if not res.get("success"):
+        err_msg = res.get("error") or "Evolution API no pudo entregar el mensaje. Verifica que la sesión de WhatsApp esté conectada."
+        raise HTTPException(status_code=502, detail=err_msg)
+
+    type_label = "cobro" if msg_type == "cobro" else "credenciales"
+    msg_ok = f"Mensaje de {type_label} enviado exitosamente por WhatsApp a {client_name}."
+
+    accept_header = request.headers.get("accept", "")
+    if "application/json" not in accept_header and "application/json" not in request.headers.get("content-type", ""):
+        return RedirectResponse(url=f"/?msg={urllib.parse.quote(msg_ok)}#accounts", status_code=303)
+
+    return JSONResponse({
+        "status": "ok",
+        "message": msg_ok,
+        "phone": clean_phone,
+        "message_id": res.get("message_id")
+    })
+
+
 # ==========================================
 # Endpoints de Exportación e Importación (Excel / CSV)

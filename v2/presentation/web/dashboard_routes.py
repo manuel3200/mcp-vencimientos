@@ -1,9 +1,11 @@
+import logging
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 import database
 import system_logger
+logger = logging.getLogger("dashboard.routes")
 from core.security import verify_session_cookie
 from core.templates import render_template
 from presentation.web.view_models import (
@@ -172,3 +174,47 @@ async def api_get_client_360(client_id: str, request: Request):
     if not profile:
         raise HTTPException(status_code=404, detail="Cliente no encontrado")
     return profile
+
+
+@router.post("/api/client/360/{client_id}/send-consolidated-whatsapp")
+async def api_send_consolidated_whatsapp(client_id: str, request: Request):
+    """Envía automáticamente el cobro consolidado de todas las suscripciones del cliente vía Evolution API."""
+    user = verify_session_cookie(request.cookies.get("session_token"))
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    profile = database.get_client_360_profile(client_id)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+    billing = profile.get("consolidated_billing")
+    if not billing or not billing.get("success"):
+        raise HTTPException(status_code=400, detail="El cliente no posee suscripciones activas para cobro unificado.")
+
+    clean_phone = billing.get("clean_phone")
+    client_name = billing.get("client_name") or "Cliente"
+    if not clean_phone or len(clean_phone) < 8:
+        raise HTTPException(status_code=400, detail=f"El cliente '{client_name}' no posee un número de WhatsApp válido.")
+
+    msg_text = billing.get("message")
+    if not msg_text:
+        raise HTTPException(status_code=400, detail="No se pudo estructurar el mensaje consolidado.")
+
+    try:
+        import whatsapp_client
+        res = await whatsapp_client.send_text_message(clean_phone, msg_text, delay_seconds=1.0)
+    except Exception as e:
+        logger.error(f"Error despachando cobro consolidado a cliente {client_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error conectando con Evolution API: {str(e)}")
+
+    if not res.get("success"):
+        err_msg = res.get("error") or "Evolution API no pudo despachar el mensaje."
+        raise HTTPException(status_code=502, detail=err_msg)
+
+    msg_ok = f"Cobro consolidado enviado exitosamente por WhatsApp a {client_name}."
+    return JSONResponse({
+        "status": "ok",
+        "message": msg_ok,
+        "phone": clean_phone,
+        "message_id": res.get("message_id")
+    })

@@ -1853,11 +1853,14 @@
       <div id="m360-consolidated-box" class="hidden bg-tertiary-container/20 border border-tertiary/40 rounded-lg p-3 flex-col gap-2">
         <div class="flex items-center justify-between text-xs text-tertiary font-medium">
           <span>📦 Cobro Unificado Multipantalla:</span>
+          <a id="m360-consolidated-link" href="#" target="_blank" class="text-xs text-emerald-400 hover:underline flex items-center gap-1" title="Abrir en WhatsApp Web (manual)">
+            <span>WhatsApp Web</span> ↗
+          </a>
         </div>
         <p id="m360-consolidated-desc" class="text-xs text-on-surface-variant"></p>
-        <a id="m360-consolidated-btn" href="#" target="_blank" class="w-full h-8 bg-tertiary text-on-tertiary text-xs font-semibold rounded flex items-center justify-center gap-1 hover:bg-tertiary-container">
+        <button type="button" id="m360-consolidated-btn" onclick="sendConsolidatedWhatsApp()" class="w-full h-8 bg-tertiary text-on-tertiary text-xs font-semibold rounded flex items-center justify-center gap-1 hover:bg-tertiary-container cursor-pointer transition-all shadow-sm">
           <span class="material-symbols-outlined text-sm">send</span> Enviar Cobro Consolidado por WhatsApp
-        </a>
+        </button>
       </div>
 
       <!-- Suscripciones Activas del Cliente -->
@@ -2775,9 +2778,15 @@
         // Cobro consolidado
         const consBox = document.getElementById('m360-consolidated-box');
         const consBtn = document.getElementById('m360-consolidated-btn');
-        if (billing && billing.success && billing.wa_link) {
+        const consLink = document.getElementById('m360-consolidated-link');
+        if (billing && billing.success) {
           consBox.style.display = 'flex';
-          consBtn.href = billing.wa_link;
+          consBtn.setAttribute('data-client-id', c.id);
+          consBtn.setAttribute('data-client-name', c.name || '');
+          if (consLink) {
+            consLink.href = billing.wa_link || '#';
+            consLink.style.display = billing.wa_link ? 'inline-flex' : 'none';
+          }
           document.getElementById('m360-consolidated-desc').innerText = 
             'Total a renovar: ' + billing.total_amount_formatted + ' (' + billing.accounts_count + ' suscripciones)';
         } else {
@@ -3802,6 +3811,137 @@
       } catch (err) {
         console.error(err);
         alert('Error de conexión con el servidor.');
+      }
+    }
+
+    // ==========================================
+    // ENVÍO AUTOMÁTICO WHATSAPP VÍA EVOLUTION API & CHATWOOT
+    // ==========================================
+
+    async function sendReferralWhatsApp(clientId, clientName) {
+      const btn = document.getElementById('btn-ref-wa-' + clientId);
+      const originalHtml = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Enviando...';
+      }
+      try {
+        const res = await fetch('/api/referrals/send-whatsapp/' + clientId, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          if (btn) {
+            btn.innerHTML = '✅ ¡Enviado!';
+            btn.style.background = '#047857';
+            setTimeout(() => {
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+              btn.style.background = '#065f46';
+            }, 4000);
+          }
+          alert('✅ ¡Código y saldo de referidos enviados exitosamente por WhatsApp a ' + (clientName || ('Cliente #' + clientId)) + ' vía Evolution API!');
+        } else {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+          }
+          alert('⚠️ ' + (data.detail || data.message || 'Error despachando WhatsApp. Verifica que Evolution API esté conectada.'));
+        }
+      } catch (err) {
+        console.error(err);
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+        alert('Error de conexión al enviar WhatsApp.');
+      }
+    }
+
+    async function sendAccountWhatsApp(accountId, msgType = 'cobro', clientName = '') {
+      const btnId1 = msgType === 'cobro' ? ('btn-wa-cobro-' + accountId) : ('btn-wa-datos-' + accountId);
+      const btnId2 = msgType === 'cobro' ? ('btn-screen-cobro-' + accountId) : ('btn-screen-datos-' + accountId);
+      const btn = document.getElementById(btnId1) || document.getElementById(btnId2);
+      const originalHtml = btn ? btn.innerHTML : '';
+      const typeLabel = msgType === 'cobro' ? 'Cobro' : 'Credenciales';
+
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Enviando...';
+      }
+      try {
+        const res = await fetch('/api/accounts/send-whatsapp/' + accountId + '?type=' + encodeURIComponent(msgType), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          if (btn) {
+            btn.innerHTML = '✅ ¡Enviado!';
+            const origBg = btn.style.background;
+            btn.style.background = '#047857';
+            setTimeout(() => {
+              btn.disabled = false;
+              btn.innerHTML = originalHtml;
+              btn.style.background = origBg;
+            }, 4000);
+          }
+          alert('✅ ¡Mensaje de ' + typeLabel + ' enviado exitosamente por WhatsApp a ' + (clientName || 'cliente') + ' vía Evolution API!');
+        } else {
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+          }
+          alert('⚠️ ' + (data.detail || data.message || 'Error despachando WhatsApp. Verifica que Evolution API esté conectada.'));
+        }
+      } catch (err) {
+        console.error(err);
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+        }
+        alert('Error de conexión al enviar WhatsApp.');
+      }
+    }
+
+    async function sendConsolidatedWhatsApp() {
+      const btn = document.getElementById('m360-consolidated-btn');
+      if (!btn) return;
+      const clientId = btn.getAttribute('data-client-id');
+      const clientName = btn.getAttribute('data-client-name') || 'Cliente';
+      if (!clientId) {
+        alert('No se pudo identificar el cliente.');
+        return;
+      }
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="material-symbols-outlined text-sm animate-spin">autorenew</span> Enviando Cobro Consolidado...';
+      try {
+        const res = await fetch('/api/client/360/' + encodeURIComponent(clientId) + '/send-consolidated-whatsapp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          btn.innerHTML = '<span class="material-symbols-outlined text-sm">check_circle</span> ¡Cobro Consolidado Enviado!';
+          btn.style.background = '#059669';
+          setTimeout(() => {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+            btn.style.background = '';
+          }, 4000);
+          alert('✅ ¡Cobro consolidado enviado con éxito a ' + clientName + ' vía Evolution API!');
+        } else {
+          btn.disabled = false;
+          btn.innerHTML = originalHtml;
+          alert('⚠️ ' + (data.detail || data.message || 'Error despachando cobro consolidado.'));
+        }
+      } catch (err) {
+        console.error(err);
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        alert('Error de conexión al enviar WhatsApp.');
       }
     }
 

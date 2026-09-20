@@ -8,6 +8,8 @@ Permite:
 """
 
 import logging
+import urllib.parse
+import re
 from typing import Optional, Any, Dict
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -155,4 +157,62 @@ async def api_redeem_referral(request: Request):
         "status": "ok",
         "message": message,
         "new_balance": new_balance
+    })
+
+
+@router.post("/api/referrals/send-whatsapp/{client_id}")
+async def api_send_referral_whatsapp(request: Request, client_id: int):
+    """Envía automáticamente el código de referido y saldo acumulado por WhatsApp vía Evolution API."""
+    _check_auth(request)
+
+    conn = database.get_connection()
+    try:
+        cli = conn.execute("SELECT id, name, whatsapp, client_code FROM clients WHERE id = ?", (client_id,)).fetchone()
+    finally:
+        conn.close()
+
+    if not cli:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+
+    client_name = cli["name"] or f"Cliente #{client_id}"
+    raw_wa = cli["whatsapp"] or ""
+    clean_wa = database.clean_whatsapp_phone(raw_wa)
+    if not clean_wa or len(clean_wa) < 8:
+        raise HTTPException(status_code=400, detail=f"El cliente '{client_name}' no posee un número de WhatsApp válido.")
+
+    ref_data = database.get_or_create_client_referral_code(client_id)
+    code = ref_data.get("code", "")
+    balance = float(ref_data.get("reward_balance_ars") or 0.0)
+    balance_str = database.format_ars(balance)
+
+    share_msg = (
+        f"¡Hola {client_name}! 👋 Te compartimos tu código de recomendación exclusivo de StreamVault: *{code}*\n\n"
+        f"🎁 *¿Cómo funciona?*\n"
+        f"Cada vez que un amigo o referido contrate su suscripción usando tu código, ¡sumas saldo bonificado a tu favor para descontar de tus pagos!\n\n"
+        f"💰 *Tu saldo acumulado actual:* *{balance_str}* 🍿\n\n"
+        f"¡Muchas gracias por recomendarnos y formar parte de StreamVault! 🙌✨"
+    )
+
+    try:
+        import whatsapp_client
+        res = await whatsapp_client.send_text_message(clean_wa, share_msg, delay_seconds=1.0)
+    except Exception as e:
+        logger.error(f"Error despachando WhatsApp de referidos a cliente {client_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error conectando con Evolution API: {str(e)}")
+
+    if not res.get("success"):
+        err_msg = res.get("error") or "Evolution API no pudo entregar el mensaje. Verifica que la sesión de WhatsApp esté conectada."
+        raise HTTPException(status_code=502, detail=err_msg)
+
+    msg_ok = f"Código y saldo de referidos enviados exitosamente por WhatsApp a {client_name}."
+
+    accept_header = request.headers.get("accept", "")
+    if "application/json" not in accept_header and "application/json" not in request.headers.get("content-type", ""):
+        return RedirectResponse(url=f"/?msg={urllib.parse.quote(msg_ok)}#referrals", status_code=303)
+
+    return JSONResponse({
+        "status": "ok",
+        "message": msg_ok,
+        "phone": clean_wa,
+        "message_id": res.get("message_id")
     })

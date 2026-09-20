@@ -544,5 +544,42 @@ def init_db():
                 """)
             except Exception:
                 pass
+
+            # 19. Configuración del Modo del Bot de WhatsApp (Atlas-MD: public / private / self)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS whatsapp_bot_settings (
+                    id INTEGER PRIMARY KEY DEFAULT 1,
+                    bot_mode TEXT DEFAULT 'public',
+                    anti_link_global INTEGER DEFAULT 0,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("INSERT OR IGNORE INTO whatsapp_bot_settings (id, bot_mode) VALUES (1, 'public')")
+
+            # 20. Configuración Individual por Grupo de WhatsApp (Whitelist & Automatizaciones)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS whatsapp_groups_config (
+                    group_jid TEXT PRIMARY KEY,
+                    group_name TEXT DEFAULT '',
+                    bot_enabled INTEGER DEFAULT 1,
+                    antilink_enabled INTEGER DEFAULT 0,
+                    antilink_action TEXT DEFAULT 'delete',
+                    welcome_enabled INTEGER DEFAULT 0,
+                    welcome_message TEXT DEFAULT '',
+                    goodbye_enabled INTEGER DEFAULT 0,
+                    goodbye_message TEXT DEFAULT '',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 21. Baneo Silencioso (Silent Ban para usuarios o grupos tóxicos/spammers)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS whatsapp_silent_bans (
+                    target_id TEXT PRIMARY KEY,
+                    target_type TEXT DEFAULT 'user',
+                    reason TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
     finally:
         conn.close()

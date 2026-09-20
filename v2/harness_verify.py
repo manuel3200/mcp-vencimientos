@@ -46,7 +46,8 @@ def main():
         ("HTTP Custom & HWID Rules", "tests.test_http_custom"),
         ("Tarifas Comerciales y Clientes", "tests.test_pricing_and_clients"),
         ("Aprobación de Pagos y Notificaciones", "tests.test_payments_approval"),
-        ("Cuentas, Estados y Vencimientos", "tests.test_accounts_and_alerts")
+        ("Cuentas, Estados y Vencimientos", "tests.test_accounts_and_alerts"),
+        ("Gestión de Grupos y Moderación (Atlas-MD)", "tests.test_groups_and_moderation")
     ]
 
     failed = 0

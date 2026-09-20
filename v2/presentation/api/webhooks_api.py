@@ -181,8 +181,32 @@ async def whatsapp_webhook(request: Request):
         return JSONResponse({"status": "ignored", "reason": "invalid_json"})
 
     event = (body.get("event") or body.get("type", "")).lower()
-    # 0. FILTRO DE EVENTOS: Solo procesar eventos de mensajes entrantes (messages.upsert)
-    # Ignorar mensajes de actualización de estado (messages.update), acuses de entrega/lectura, etc.
+
+    # 0. EVENTOS DE GRUPOS: Bienvenida y Despedida (group-participants.update)
+    if event in ("group-participants.update", "group_participants_update", "groups.update"):
+        group_jid = (data.get("id") or data.get("groupJid") or body.get("id") or "").strip()
+        action = (data.get("action") or body.get("action") or "").lower() # 'add', 'remove'
+        participants = data.get("participants") or body.get("participants") or []
+
+        if group_jid and participants:
+            group_cfg = database.get_group_config(group_jid)
+            if group_cfg:
+                if action == "add" and group_cfg.get("welcome_enabled"):
+                    msg_tpl = group_cfg.get("welcome_message") or (
+                        "👋 *¡Bienvenido/a al grupo!* 🍿\n"
+                        "Disfruta del contenido y respeta las normas de la comunidad. Si deseas contratar servicios de streaming, escribe */catalogo*."
+                    )
+                    await whatsapp_client.send_text_message(group_jid, msg_tpl)
+                    return JSONResponse({"status": "ok", "action": "welcome_sent", "group": group_jid})
+
+                elif action == "remove" and group_cfg.get("goodbye_enabled"):
+                    msg_tpl = group_cfg.get("goodbye_message") or "👋 ¡Hasta luego! Gracias por haber formado parte de la comunidad."
+                    await whatsapp_client.send_text_message(group_jid, msg_tpl)
+                    return JSONResponse({"status": "ok", "action": "goodbye_sent", "group": group_jid})
+
+        return JSONResponse({"status": "ok", "action": "group_event_processed"})
+
+    # 0.1 FILTRO DE EVENTOS: Solo procesar eventos de mensajes entrantes (messages.upsert)
     if event and event not in ("messages.upsert", "messages_upsert"):
         return JSONResponse({"status": "ignored", "reason": f"unhandled_event_{event}"})
 
@@ -192,7 +216,7 @@ async def whatsapp_webhook(request: Request):
     remote_jid = key.get("remoteJid", "")
     msg_id = (key.get("id") or "").strip()
 
-    # 0.1 DEDUPLICACIÓN POR MESSAGE ID (wamid) PARA EVITAR PROCESAR CLONES
+    # 0.2 DEDUPLICACIÓN POR MESSAGE ID (wamid) PARA EVITAR PROCESAR CLONES
     if msg_id:
         now = time.time()
         if len(_PROCESSED_MESSAGE_IDS) > 2000:
@@ -218,15 +242,174 @@ async def whatsapp_webhook(request: Request):
     is_media = bool(msg_obj.get("imageMessage") or msg_obj.get("documentMessage"))
     text_lower = text.lower().strip()
 
-    # Ignorar mensajes de grupos o transmisiones/estados
-    if not remote_jid or "@g.us" in remote_jid or "status@broadcast" in remote_jid:
+    # Ignorar transmisiones o estados
+    if not remote_jid or "status@broadcast" in remote_jid:
         return JSONResponse({"status": "ignored"})
 
-    # Extraer número de teléfono limpio
-    phone_raw = remote_jid.split("@")[0].split(":")[0]
+    is_group = "@g.us" in remote_jid
+    group_jid = remote_jid if is_group else ""
+
+    # Extraer remitente individual
+    if is_group:
+        participant_raw = (key.get("participant") or data.get("participant") or "").strip()
+        phone_raw = participant_raw.split("@")[0].split(":")[0] if participant_raw else remote_jid.split("@")[0].split(":")[0]
+    else:
+        phone_raw = remote_jid.split("@")[0].split(":")[0]
+
     sender_phone = re.sub(r'[^0-9]', '', phone_raw)
     if not sender_phone or len(sender_phone) < 8:
         return JSONResponse({"status": "ignored", "reason": "invalid_phone"})
+
+    # 2. FILTRO DE BANEO SILENCIOSO (Silent Ban - Atlas-MD)
+    if database.is_silent_banned(sender_phone):
+        logger.info(f"Mensaje de {sender_phone} omitido silenciosamente (usuario bajo Silent Ban).")
+        return JSONResponse({"status": "ignored", "reason": "silent_banned_user"})
+
+    if is_group and database.is_silent_banned(group_jid):
+        logger.info(f"Mensaje del grupo {group_jid} omitido silenciosamente (grupo bajo Silent Ban).")
+        return JSONResponse({"status": "ignored", "reason": "silent_banned_group"})
+
+    # 3. FILTRO DE MODO DE OPERACIÓN DEL BOT (Bot Mode - Atlas-MD: public / private / self)
+    settings = database.get_whatsapp_api_settings()
+    admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
+    clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
+    is_owner = from_me or (clean_admin and (sender_phone == clean_admin or sender_phone.endswith(clean_admin[-8:]) or clean_admin.endswith(sender_phone[-8:])))
+
+    bot_mode = database.get_bot_mode() # 'public', 'private', 'self'
+    if bot_mode == "self" and not is_owner:
+        return JSONResponse({"status": "ignored", "reason": "bot_mode_self"})
+
+    if bot_mode == "private" and is_group and not is_owner:
+        return JSONResponse({"status": "ignored", "reason": "bot_mode_private_group_ignored"})
+
+    # 4. CONTROL DE GRUPOS Y WHITELIST (¿Está habilitado el bot en este grupo?)
+    group_cfg = None
+    if is_group:
+        group_cfg = database.get_group_config(group_jid)
+        if not group_cfg:
+            group_cfg = database.upsert_group_config(group_jid=group_jid, group_name="Grupo de WhatsApp", bot_enabled=1)
+
+        is_bot_enabled_in_group = bool(group_cfg.get("bot_enabled", 1))
+        if not is_bot_enabled_in_group and not is_owner:
+            return JSONResponse({"status": "ignored", "reason": "group_bot_disabled"})
+
+        # 4.1 ANTILINK: Detección y borrado de enlaces no autorizados en grupo
+        if group_cfg.get("antilink_enabled") and not is_owner:
+            has_forbidden_link = bool(re.search(r'(?:chat\.whatsapp\.com\/[a-zA-Z0-9]+|https?:\/\/[^\s]+|wa\.me\/[^\s]+)', text_lower))
+            if has_forbidden_link:
+                participant_jid = key.get("participant") or data.get("participant") or f"{sender_phone}@s.whatsapp.net"
+                await whatsapp_client.delete_message_for_everyone(group_jid, msg_id, participant=participant_jid)
+                action_type = group_cfg.get("antilink_action", "delete")
+                if action_type == "kick":
+                    await whatsapp_client.update_group_participant(group_jid, "remove", [sender_phone])
+                    await whatsapp_client.send_text_message(group_jid, f"🛡️ *ANTILINK:* El usuario @{sender_phone} fue expulsado por enviar enlaces.")
+                else:
+                    await whatsapp_client.send_text_message(group_jid, f"⚠️ *ANTILINK:* @{sender_phone}, los enlaces no están permitidos en este grupo.")
+                return JSONResponse({"status": "antilink_action_taken", "action": action_type})
+
+        # 4.2 COMANDOS DE GRUPO (Atlas-MD Baileys)
+        # /tagall, /todos, @everyone
+        if re.search(r'^/(?:tagall|todos|mencionartodos)\b|^@everyone\b', text_lower):
+            if is_owner:
+                tag_msg = re.sub(r'^/(?:tagall|todos|mencionartodos)\s*|^@everyone\s*', '', text, flags=re.IGNORECASE).strip()
+                res_tag = await whatsapp_client.send_group_tagall(group_jid, message=tag_msg, sender_name=data.get("pushName", "Admin"))
+                return JSONResponse({"status": "ok", "action": "group_tagall", "details": res_tag})
+            else:
+                await whatsapp_client.send_text_message(group_jid, "⚠️ Solo los administradores pueden utilizar /tagall.")
+                return JSONResponse({"status": "ignored", "reason": "unauthorized_tagall"})
+
+        # /mute o /cerrar
+        if re.search(r'^/(?:mute|cerrar|cerrargrupo)\b', text_lower):
+            if is_owner:
+                await whatsapp_client.update_group_setting(group_jid, "announcement")
+                await whatsapp_client.send_text_message(group_jid, "🔒 *GRUPO CERRADO:* Solo administradores pueden enviar mensajes.")
+                return JSONResponse({"status": "ok", "action": "group_muted"})
+            return JSONResponse({"status": "ignored", "reason": "unauthorized_group_command"})
+
+        # /unmute o /abrir
+        if re.search(r'^/(?:unmute|abrir|abrirgrupo)\b', text_lower):
+            if is_owner:
+                await whatsapp_client.update_group_setting(group_jid, "not_announcement")
+                await whatsapp_client.send_text_message(group_jid, "📢 *GRUPO ABIERTO:* Todos los integrantes pueden enviar mensajes.")
+                return JSONResponse({"status": "ok", "action": "group_unmuted"})
+            return JSONResponse({"status": "ignored", "reason": "unauthorized_group_command"})
+
+        # /antilink on / off
+        if re.search(r'^/antilink\b', text_lower):
+            if is_owner:
+                turn_on = "on" in text_lower or "activar" in text_lower or "1" in text_lower
+                database.set_group_antilink(group_jid, enabled=turn_on)
+                st_str = "ACTIVADA 🛡️ (Enlaces prohibidos serán borrados)" if turn_on else "DESACTIVADA ⚪"
+                await whatsapp_client.send_text_message(group_jid, f"🛡️ *MODERACIÓN:* Protección Antilink {st_str}.")
+                return JSONResponse({"status": "ok", "action": "antilink_toggled", "enabled": turn_on})
+            return JSONResponse({"status": "ignored", "reason": "unauthorized_group_command"})
+
+        # /link o /enlace
+        if re.search(r'^/(?:link|enlace|invitacion)\b', text_lower):
+            link_val = await whatsapp_client.get_group_invite_code(group_jid)
+            if link_val:
+                await whatsapp_client.send_text_message(group_jid, f"🔗 *Enlace de invitación del grupo:*\n{link_val}")
+            else:
+                await whatsapp_client.send_text_message(group_jid, "⚠️ No se pudo obtener el enlace (verifica que el bot sea admin del grupo).")
+            return JSONResponse({"status": "ok", "action": "group_link_sent"})
+
+        # /infogrupo o /groupinfo
+        if re.search(r'^/(?:infogrupo|groupinfo|grupo)\b', text_lower):
+            info = await whatsapp_client.find_group_info(group_jid)
+            if info:
+                g_name = info.get("subject", "Grupo")
+                g_parts = info.get("participants", [])
+                admins_count = sum(1 for p in g_parts if p.get("admin"))
+                await whatsapp_client.send_text_message(
+                    group_jid,
+                    f"ℹ️ *INFORMACIÓN DEL GRUPO:*\n\n"
+                    f"• *Nombre:* {g_name}\n"
+                    f"• *Integrantes:* {len(g_parts)}\n"
+                    f"• *Administradores:* {admins_count}\n"
+                    f"• *Antilink:* {'Activado 🛡️' if group_cfg.get('antilink_enabled') else 'Desactivado ⚪'}\n"
+                    f"• *ID:* `{group_jid}`"
+                )
+            else:
+                await whatsapp_client.send_text_message(group_jid, f"ℹ️ Grupo: `{group_jid}`")
+            return JSONResponse({"status": "ok", "action": "group_info_sent"})
+
+        # /kick o /expulsar
+        kick_match = re.search(r'^/(?:kick|expulsar)\s+([0-9\+\s\-]+)', text_lower)
+        if kick_match:
+            if is_owner:
+                target_digits = re.sub(r'[^0-9]', '', kick_match.group(1))
+                if target_digits:
+                    await whatsapp_client.update_group_participant(group_jid, "remove", [target_digits])
+                    await whatsapp_client.send_text_message(group_jid, f"👢 Usuario @{target_digits} expulsado del grupo.")
+                    return JSONResponse({"status": "ok", "action": "group_participant_removed"})
+            return JSONResponse({"status": "ignored", "reason": "unauthorized_group_command"})
+
+        # /promote o /promover
+        promote_match = re.search(r'^/(?:promote|promover|admin)\s+([0-9\+\s\-]+)', text_lower)
+        if promote_match:
+            if is_owner:
+                target_digits = re.sub(r'[^0-9]', '', promote_match.group(1))
+                if target_digits:
+                    await whatsapp_client.update_group_participant(group_jid, "promote", [target_digits])
+                    await whatsapp_client.send_text_message(group_jid, f"⭐ Usuario @{target_digits} promovido a Administrador.")
+                    return JSONResponse({"status": "ok", "action": "group_participant_promoted"})
+            return JSONResponse({"status": "ignored", "reason": "unauthorized_group_command"})
+
+        # /demote o /degradar
+        demote_match = re.search(r'^/(?:demote|degradar|quitaradmin)\s+([0-9\+\s\-]+)', text_lower)
+        if demote_match:
+            if is_owner:
+                target_digits = re.sub(r'[^0-9]', '', demote_match.group(1))
+                if target_digits:
+                    await whatsapp_client.update_group_participant(group_jid, "demote", [target_digits])
+                    await whatsapp_client.send_text_message(group_jid, f"🔻 Usuario @{target_digits} degradado a miembro común.")
+                    return JSONResponse({"status": "ok", "action": "group_participant_demoted"})
+            return JSONResponse({"status": "ignored", "reason": "unauthorized_group_command"})
+
+        # En grupos, omitir auto-atención de cobros personales o credenciales para proteger la privacidad
+        # Solo permitir catálogo público si lo solicitan expresamente
+        if not any(cmd in text_lower for cmd in ("/catalogo", "/precios", "precios", "planes")):
+            return JSONResponse({"status": "ignored", "reason": "group_message_non_catalog"})
 
     # Verificar si es un comando administrativo o comando de caída/autorización
     is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|pagoparcial|parcial|revertir_pago|revertirpago|anularpago|deshacer_cambio|deshacercambio|baja|cortar|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer)', text_lower))

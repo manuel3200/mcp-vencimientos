@@ -692,3 +692,115 @@ def render_http_custom_rows(custom_accounts: List[Dict[str, Any]]) -> str:
         """
     return rows or "<tr><td colspan='6' style='text-align:center;color:#94a3b8;padding:24px;'>No hay servidores HTTP Custom registrados aún. Registra ventas por WhatsApp o envía el formato estándar.</td></tr>"
 
+
+def render_groups_table_rows(groups: List[Dict[str, Any]]) -> str:
+    """Renderiza las filas interactivas para la gestión de grupos de WhatsApp."""
+    if not groups:
+        return """
+        <tr>
+            <td colspan="6" style="text-align:center; color:#94a3b8; padding:32px;">
+                <div style="font-size:2rem; margin-bottom:8px;">👥</div>
+                <strong>No hay grupos registrados o sincronizados aún.</strong><br>
+                <small>Haz clic en <b>'🔄 Sincronizar Grupos'</b> para escanear y cargar automáticamente los grupos donde está el bot.</small>
+            </td>
+        </tr>
+        """
+    rows = ""
+    for g in groups:
+        jid = g.get("group_jid", "")
+        name = g.get("group_name") or jid
+        bot_on = bool(g.get("bot_enabled", 1))
+        anti_on = bool(g.get("antilink_enabled", 0))
+        anti_act = g.get("antilink_action", "delete")
+        wel_on = bool(g.get("welcome_enabled", 0))
+        wel_msg = (g.get("welcome_message") or "").replace('"', '&quot;').replace("'", "&#39;").replace("\n", "\\n")
+        good_msg = (g.get("goodbye_message") or "").replace('"', '&quot;').replace("'", "&#39;").replace("\n", "\\n")
+        safe_name = name.replace('"', '&quot;').replace("'", "&#39;")
+
+        bot_chk = "checked" if bot_on else ""
+        anti_chk = "checked" if anti_on else ""
+        wel_chk = "checked" if wel_on else ""
+
+        bot_badge = '<span class="badge badge-ok" id="badge-bot-' + jid + '">🟢 Responde</span>' if bot_on else '<span class="badge badge-neutral" id="badge-bot-' + jid + '">⚪ Ignorado</span>'
+
+        rows += f"""
+        <tr id="group-row-{jid}">
+            <td>
+                <strong style="color:#f1f5f9; font-size:0.95rem;">{name}</strong><br>
+                <code style="font-size:0.75rem; color:#64748b;">{jid}</code>
+            </td>
+            <td style="text-align:center;">
+                <div style="display:flex; align-items:center; justify-content:center; gap:8px;">
+                    <label class="switch">
+                        <input type="checkbox" {bot_chk} onchange="toggleGroupBot('{jid}', this.checked)">
+                        <span class="slider round"></span>
+                    </label>
+                    {bot_badge}
+                </div>
+            </td>
+            <td style="text-align:center;">
+                <div style="display:flex; align-items:center; justify-content:center; gap:8px;">
+                    <label class="switch">
+                        <input type="checkbox" {anti_chk} onchange="toggleGroupAntilink('{jid}', this.checked)">
+                        <span class="slider round"></span>
+                    </label>
+                    <small style="color:#94a3b8; font-size:0.75rem;">({anti_act})</small>
+                </div>
+            </td>
+            <td style="text-align:center;">
+                <div style="display:flex; align-items:center; justify-content:center; gap:8px;">
+                    <label class="switch">
+                        <input type="checkbox" {wel_chk} onchange="toggleGroupWelcome('{jid}', this.checked)">
+                        <span class="slider round"></span>
+                    </label>
+                    <button type="button" onclick="openGroupTemplatesModal('{jid}', '{safe_name}', '{wel_msg}', '{good_msg}')" 
+                            class="btn-action" style="padding:2px 6px; font-size:0.75rem; background:#1e293b; color:#38bdf8; border:1px solid #334155;" title="Editar texto de bienvenida">
+                        ✏️ Texto
+                    </button>
+                </div>
+            </td>
+            <td style="white-space:nowrap; text-align:center;">
+                <button type="button" onclick="executeGroupAction('{jid}', 'mute')" class="btn-action" style="background:#334155; color:#cbd5e1; padding:4px 7px; font-size:0.75rem;" title="Cerrar grupo (solo admins)">🔒 Mute</button>
+                <button type="button" onclick="executeGroupAction('{jid}', 'unmute')" class="btn-action" style="background:#1e293b; color:#38bdf8; border:1px solid #38bdf8; padding:4px 7px; font-size:0.75rem;" title="Abrir grupo a todos">📢 Abrir</button>
+                <button type="button" onclick="fetchGroupLink('{jid}')" class="btn-action" style="background:#065f46; color:#a7f3d0; padding:4px 7px; font-size:0.75rem;" title="Copiar enlace de invitación">🔗 Link</button>
+            </td>
+        </tr>
+        """
+    return rows
+
+
+def render_silent_bans_rows(bans: List[Dict[str, Any]]) -> str:
+    """Renderiza las filas de la tabla de baneo silencioso."""
+    if not bans:
+        return """
+        <tr>
+            <td colspan="5" style="text-align:center; color:#94a3b8; padding:20px;">
+                🛡️ No hay números ni grupos con baneo silencioso activo.
+            </td>
+        </tr>
+        """
+    rows = ""
+    for b in bans:
+        target = b.get("target_id", "")
+        t_type = b.get("target_type", "user")
+        reason = b.get("reason") or "Sin motivo especificado"
+        created = b.get("created_at") or "-"
+
+        type_badge = '<span class="badge" style="background:#3b0764; color:#d8b4fe;">👥 Grupo</span>' if t_type == "group" else '<span class="badge" style="background:#450a0a; color:#fca5a5;">👤 Usuario</span>'
+
+        rows += f"""
+        <tr>
+            <td><strong style="color:#f87171; font-family:monospace; font-size:0.95rem;">{target}</strong></td>
+            <td>{type_badge}</td>
+            <td style="color:#cbd5e1; font-size:0.85rem;">{reason}</td>
+            <td style="color:#94a3b8; font-size:0.8rem;">{created}</td>
+            <td style="text-align:center;">
+                <button type="button" onclick="removeSilentBan('{target}')" class="btn-action" style="background:#dc2626; color:white; border:none; padding:4px 8px; font-size:0.75rem; border-radius:5px; cursor:pointer;" title="Levantar silencio">
+                    🗑️ Desbanear
+                </button>
+            </td>
+        </tr>
+        """
+    return rows
+
+

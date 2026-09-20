@@ -126,6 +126,14 @@
     .btn-replace { background: rgba(0, 136, 93, 0.3); color: #4edea3; border: 1px solid rgba(78, 222, 163, 0.4); }
     .btn-replace:hover { background: #00885d; color: #fff; }
 
+    /* Switch toggle */
+    .switch { position: relative; display: inline-block; width: 38px; height: 20px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #353437; transition: .2s; border-radius: 20px; border: 1px solid #464554; }
+    .slider:before { position: absolute; content: ""; height: 14px; width: 14px; left: 2px; bottom: 2px; background-color: white; transition: .2s; border-radius: 50%; }
+    input:checked + .slider { background-color: #00885d; border-color: #4edea3; }
+    input:checked + .slider:before { transform: translateX(18px); }
+
     /* Touch optimizations para celular */
     @media (max-width: 1024px) {
       .btn-action, button, select, input { min-height: 38px; }
@@ -265,6 +273,15 @@
             <span class="text-sm font-medium">WhatsApp & Integraciones</span>
           </div>
           <span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span>
+        </a>
+
+        <!-- Grupos & Moderación Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="groups" href="#groups">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg text-emerald-400">group_work</span>
+            <span class="text-sm font-medium">Grupos & Moderación</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded">{{GROUPS_COUNT}}</span>
         </a>
 
         <!-- Tools & Backup -->
@@ -1426,6 +1443,178 @@
         </div>
       </div>
 
+      <!-- ========================================================================= -->
+      <!-- VIEW 11: GRUPOS & MODERACIÓN (#view-groups - Atlas-MD / Evolution API) -->
+      <!-- ========================================================================= -->
+      <div id="view-groups" class="view-panel hidden flex flex-col w-full gap-5">
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h1 class="text-xl sm:text-2xl font-bold text-on-surface tracking-tight">Gestión de Grupos y Moderación</h1>
+              <div class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/30 text-emerald-400 font-label-code text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_#34d399]"></span>
+                <span>Baileys Engine Activo</span>
+              </div>
+            </div>
+            <p class="text-xs sm:text-sm text-on-surface-variant">Selecciona qué grupos puede responder el bot, activa antilink automático, bienvenidas y gestiona baneos silenciosos.</p>
+          </div>
+
+          <!-- Acciones Principales -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <button onclick="syncGroupsFromEvolution()" id="btn-sync-groups" class="h-9 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded flex items-center gap-1 transition-all shadow-sm">
+              <span class="material-symbols-outlined text-sm">sync</span>
+              <span>Sincronizar Grupos desde WhatsApp</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Modo de Operación del Bot Card -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 sm:p-5 flex flex-col gap-3">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h3 class="text-base font-bold text-on-surface flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary">security</span>
+                Modo Operativo del Bot (Bot Mode)
+              </h3>
+              <p class="text-xs text-on-surface-variant">Define el alcance global de atención de respuestas automáticas y comandos de WhatsApp.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-on-surface-variant font-label-code">Modo actual:</span>
+              <span id="current-bot-mode-badge" class="badge badge-ok uppercase font-mono">{{BOT_MODE}}</span>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+            <!-- Modo Public -->
+            <div class="p-3 rounded-lg border border-surface-container-highest bg-surface-container flex flex-col justify-between gap-3">
+              <div>
+                <div class="flex items-center justify-between">
+                  <strong class="text-sm text-on-surface">🌐 Público (Public)</strong>
+                  <span class="badge badge-ok text-[10px]">Predeterminado</span>
+                </div>
+                <p class="text-xs text-on-surface-variant mt-1.5">Responde a clientes en chats privados (DMs) y a los grupos autorizados de la lista blanca.</p>
+              </div>
+              <button onclick="changeBotMode('public')" class="w-full h-8 px-2 rounded text-xs font-semibold bg-surface-container-high hover:bg-surface-container-highest text-on-surface border border-outline-variant/30 flex items-center justify-center gap-1">
+                Activar Público
+              </button>
+            </div>
+
+            <!-- Modo Private -->
+            <div class="p-3 rounded-lg border border-surface-container-highest bg-surface-container flex flex-col justify-between gap-3">
+              <div>
+                <div class="flex items-center justify-between">
+                  <strong class="text-sm text-on-surface">🔒 Privado (Private)</strong>
+                  <span class="badge badge-warn text-[10px]">Solo DMs</span>
+                </div>
+                <p class="text-xs text-on-surface-variant mt-1.5">Atiende únicamente chats directos de clientes. Ignora de forma silenciosa el 100% de los grupos.</p>
+              </div>
+              <button onclick="changeBotMode('private')" class="w-full h-8 px-2 rounded text-xs font-semibold bg-surface-container-high hover:bg-surface-container-highest text-on-surface border border-outline-variant/30 flex items-center justify-center gap-1">
+                Activar Privado
+              </button>
+            </div>
+
+            <!-- Modo Self -->
+            <div class="p-3 rounded-lg border border-surface-container-highest bg-surface-container flex flex-col justify-between gap-3">
+              <div>
+                <div class="flex items-center justify-between">
+                  <strong class="text-sm text-on-surface">🛡️ Modo Self (Dueño)</strong>
+                  <span class="badge badge-danger text-[10px]">Admin Only</span>
+                </div>
+                <p class="text-xs text-on-surface-variant mt-1.5">El bot no responde a ningún cliente ni grupo. Solo ejecuta comandos provenientes de tu número administrador.</p>
+              </div>
+              <button onclick="changeBotMode('self')" class="w-full h-8 px-2 rounded text-xs font-semibold bg-surface-container-high hover:bg-surface-container-highest text-on-surface border border-outline-variant/30 flex items-center justify-center gap-1">
+                Activar Self
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Whitelist de Grupos Card -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 sm:p-5 flex flex-col gap-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 class="text-base font-bold text-on-surface flex items-center gap-2">
+                <span class="material-symbols-outlined text-emerald-400">checklist</span>
+                Lista Blanca de Grupos de WhatsApp
+              </h3>
+              <p class="text-xs text-on-surface-variant">Activa o apaga la atención del bot en cada grupo, y aplica protecciones antilink y de bienvenida.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="text" id="groups-search-box" oninput="searchTableRows('groups-table', this.value)" placeholder="Buscar grupo o JID..." class="h-8 px-3 bg-surface-container text-xs rounded border border-surface-container-highest w-48 sm:w-64">
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-surface-container rounded-lg">
+            <table id="groups-table" class="w-full text-left">
+              <thead>
+                <tr class="bg-surface-container-high/60">
+                  <th class="py-2.5 px-3">Grupo & JID</th>
+                  <th class="py-2.5 px-3 text-center">🤖 Bot Activo</th>
+                  <th class="py-2.5 px-3 text-center">🛡️ Antilink</th>
+                  <th class="py-2.5 px-3 text-center">👋 Bienvenida</th>
+                  <th class="py-2.5 px-3 text-center">Acciones Rápidas</th>
+                </tr>
+              </thead>
+              <tbody id="groups-table-body">
+                {{GROUPS_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Baneo Silencioso (Silent Ban) Card -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 sm:p-5 flex flex-col gap-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 class="text-base font-bold text-on-surface flex items-center gap-2">
+                <span class="material-symbols-outlined text-rose-400">voice_over_off</span>
+                Baneo Silencioso (Silent Ban - Atlas-MD)
+              </h3>
+              <p class="text-xs text-on-surface-variant">Los usuarios o grupos en esta lista serán ignorados silenciosamente por el bot sin emitir avisos (ideal contra spammers).</p>
+            </div>
+            <span class="font-data-tabular text-xs bg-rose-500/20 text-rose-300 font-bold px-2 py-1 rounded">
+              <span id="silent-bans-count-badge">{{SILENT_BANS_COUNT}}</span> Silenciados
+            </span>
+          </div>
+
+          <!-- Formulario Agregar Baneo -->
+          <form id="form-add-silent-ban" onsubmit="submitAddSilentBan(event)" class="bg-surface-container p-3 rounded-lg border border-surface-container-highest grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end">
+            <div class="sm:col-span-2">
+              <label class="font-label-code text-xs text-on-surface-variant">Teléfono (ej: 54911...) o JID de Grupo (@g.us):</label>
+              <input type="text" id="ban-target-input" required placeholder="5491122334455 o 120363...@g.us" class="w-full h-8 px-2 bg-surface-container-low text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <label class="font-label-code text-xs text-on-surface-variant">Motivo (Opcional):</label>
+              <input type="text" id="ban-reason-input" placeholder="Spam, insultos, publicidad" class="w-full h-8 px-2 bg-surface-container-low text-xs rounded border border-surface-container-highest">
+            </div>
+            <div>
+              <button type="submit" class="w-full h-8 px-3 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded flex items-center justify-center gap-1 transition-all">
+                <span class="material-symbols-outlined text-sm">block</span> Silenciar
+              </button>
+            </div>
+          </form>
+
+          <!-- Tabla de Baneos Activos -->
+          <div class="overflow-x-auto border border-surface-container rounded-lg">
+            <table id="silent-bans-table" class="w-full text-left">
+              <thead>
+                <tr class="bg-surface-container-high/60">
+                  <th class="py-2.5 px-3">Objetivo Silenciado</th>
+                  <th class="py-2.5 px-3">Tipo</th>
+                  <th class="py-2.5 px-3">Motivo</th>
+                  <th class="py-2.5 px-3">Fecha de Registro</th>
+                  <th class="py-2.5 px-3 text-center">Acción</th>
+                </tr>
+              </thead>
+              <tbody id="silent-bans-table-body">
+                {{SILENT_BANS_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </main>
 
     <!-- Mobile Bottom Navigation Bar (Visible only on < lg screens) -->
@@ -2022,6 +2211,39 @@
     </div>
   </div>
 
+  <!-- Modal: Plantillas de Bienvenida y Despedida de Grupo -->
+  <div id="modal-group-templates" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeGroupTemplatesModal()">
+    <div class="bg-surface-container-low border border-emerald-500/40 rounded-xl w-full max-w-lg p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-emerald-400">waving_hand</span>
+          Plantillas de Mensajes del Grupo
+        </h3>
+        <button type="button" onclick="closeGroupTemplatesModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="form-group-templates" onsubmit="submitGroupTemplates(event)" class="flex flex-col gap-3">
+        <input type="hidden" id="gtpl-jid-input" name="group_jid">
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Grupo:</label>
+          <div id="gtpl-group-name" class="font-bold text-sm text-primary"></div>
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Mensaje de Bienvenida:</label>
+          <textarea id="gtpl-welcome-input" name="welcome_message" rows="3" placeholder="👋 ¡Bienvenido @user al grupo @group! Revisa las reglas fijadas." class="w-full p-2 bg-surface-container text-xs rounded border border-surface-container-highest"></textarea>
+          <small class="text-[11px] text-on-surface-variant">Variables disponibles: <code>@user</code> (mención del nuevo miembro), <code>@group</code> (nombre del grupo).</small>
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant">Mensaje de Despedida:</label>
+          <textarea id="gtpl-goodbye-input" name="goodbye_message" rows="2" placeholder="👋 Adiós @user, gracias por haber sido parte de @group." class="w-full p-2 bg-surface-container text-xs rounded border border-surface-container-highest"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeGroupTemplatesModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" class="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded cursor-pointer">Guardar Mensajes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Vanilla JavaScript: View Switcher, Ficha 360, Filtros y Modales -->
   <script>
     // 1. Tabbed Multi-View Switcher Logic con Persistencia y Soporte de Hash
@@ -2053,6 +2275,10 @@
         'tab-finance': 'finance',
         'tab-templates': 'integrations',
         'tab-integrations': 'integrations',
+        'tab-groups': 'groups',
+        'groups': 'groups',
+        'moderation': 'groups',
+        'grupos': 'groups',
         'tab-tools': 'tools',
         'tab-logs': 'logs'
       };
@@ -2697,6 +2923,251 @@
       }
     }
 
+    // 8. Control y Moderación de Grupos de WhatsApp (Atlas-MD)
+    async function syncGroupsFromEvolution() {
+      const btn = document.getElementById('btn-sync-groups');
+      const origText = btn ? btn.innerHTML : '';
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="material-symbols-outlined text-sm animate-spin">sync</span> Sincronizando...';
+      }
+      try {
+        const res = await fetch('/api/groups/sync', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          alert('✅ ¡Sincronización exitosa! Se detectaron y cargaron ' + data.count + ' grupos.');
+          location.reload();
+        } else {
+          alert('⚠️ Error al sincronizar: ' + (data.message || data.detail || 'Fallo desconocido'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error de red al conectar con el servidor.');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = origText;
+        }
+      }
+    }
+
+    async function toggleGroupBot(jid, enabled) {
+      try {
+        const res = await fetch('/api/groups/toggle-bot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_jid: jid, enabled: enabled })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          const badge = document.getElementById('badge-bot-' + jid);
+          if (badge) {
+            badge.className = enabled ? 'badge badge-ok' : 'badge badge-neutral';
+            badge.innerText = enabled ? '🟢 Responde' : '⚪ Ignorado';
+          }
+        } else {
+          alert('Error actualizando permiso del bot: ' + (data.detail || 'Error'));
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Error de conexión al actualizar estado del bot.');
+      }
+    }
+
+    async function toggleGroupAntilink(jid, enabled) {
+      try {
+        const res = await fetch('/api/groups/toggle-antilink', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_jid: jid, enabled: enabled, action: 'delete' })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert('Error actualizando antilink: ' + (data.detail || 'Error'));
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Error de conexión al actualizar antilink.');
+      }
+    }
+
+    async function toggleGroupWelcome(jid, enabled) {
+      try {
+        const res = await fetch('/api/groups/toggle-welcome', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_jid: jid, enabled: enabled })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          alert('Error actualizando bienvenida: ' + (data.detail || 'Error'));
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Error de conexión al actualizar bienvenida.');
+      }
+    }
+
+    function openGroupTemplatesModal(jid, name, welcome, goodbye) {
+      const modal = document.getElementById('modal-group-templates');
+      if (!modal) return;
+      document.getElementById('gtpl-jid-input').value = jid;
+      document.getElementById('gtpl-group-name').innerText = name || jid;
+      document.getElementById('gtpl-welcome-input').value = welcome ? welcome.replace(/\\n/g, '\n') : '';
+      document.getElementById('gtpl-goodbye-input').value = goodbye ? goodbye.replace(/\\n/g, '\n') : '';
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeGroupTemplatesModal() {
+      const modal = document.getElementById('modal-group-templates');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    async function submitGroupTemplates(e) {
+      e.preventDefault();
+      const jid = document.getElementById('gtpl-jid-input').value;
+      const wel = document.getElementById('gtpl-welcome-input').value;
+      const good = document.getElementById('gtpl-goodbye-input').value;
+      try {
+        const res = await fetch('/api/groups/save-templates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_jid: jid, welcome_message: wel, goodbye_message: good })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          closeGroupTemplatesModal();
+          alert('✅ Mensajes guardados con éxito.');
+        } else {
+          alert('Error guardando mensajes: ' + (data.detail || 'Error'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error de red al guardar plantillas.');
+      }
+    }
+
+    async function executeGroupAction(jid, action) {
+      const actionLabels = { 'mute': 'silenciar (cerrar)', 'unmute': 'abrir', 'kick': 'expulsar' };
+      const confirmMsg = `¿Deseas ${actionLabels[action] || action} este grupo en WhatsApp?`;
+      if (!confirm(confirmMsg)) return;
+
+      try {
+        const res = await fetch('/api/groups/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_jid: jid, action: action })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          alert('✅ Acción ' + action + ' ejecutada exitosamente.');
+        } else {
+          alert('⚠️ Error ejecutando acción: ' + (data.detail || data.message || 'Error'));
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Error de conexión con el servidor.');
+      }
+    }
+
+    async function fetchGroupLink(jid) {
+      try {
+        const res = await fetch('/api/groups/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ group_jid: jid, action: 'link' })
+        });
+        const data = await res.json();
+        if (res.ok && data.link) {
+          navigator.clipboard.writeText(data.link);
+          alert('🔗 Enlace copiado al portapapeles:\n' + data.link);
+        } else {
+          alert('⚠️ No se pudo obtener el enlace (verifica que el bot sea admin del grupo).');
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Error de red al consultar el enlace.');
+      }
+    }
+
+    async function changeBotMode(mode) {
+      if (!confirm('¿Cambiar el modo operativo del bot a "' + mode.toUpperCase() + '"?')) return;
+      try {
+        const res = await fetch('/api/moderation/bot-mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: mode })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          const badge = document.getElementById('current-bot-mode-badge');
+          if (badge) badge.innerText = data.bot_mode;
+          alert('✅ Modo de operación cambiado a: ' + data.bot_mode.toUpperCase());
+        } else {
+          alert('Error cambiando modo: ' + (data.detail || 'Error'));
+        }
+      } catch (e) {
+        console.error(e);
+        alert('Error de red al actualizar modo del bot.');
+      }
+    }
+
+    async function submitAddSilentBan(e) {
+      e.preventDefault();
+      const targetInput = document.getElementById('ban-target-input');
+      const reasonInput = document.getElementById('ban-reason-input');
+      const target = targetInput.value.trim();
+      const reason = reasonInput.value.trim();
+      if (!target) return;
+
+      try {
+        const res = await fetch('/api/moderation/silent-ban', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_id: target, reason: reason })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          targetInput.value = '';
+          reasonInput.value = '';
+          alert('🛡️ Silencio activado para ' + target);
+          location.reload();
+        } else {
+          alert('Error al aplicar silencio: ' + (data.detail || 'Error'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error de red al procesar baneo silencioso.');
+      }
+    }
+
+    async function removeSilentBan(targetId) {
+      if (!confirm('¿Remover silencio a ' + targetId + '? El bot volverá a procesar sus mensajes.')) return;
+      try {
+        const res = await fetch('/api/moderation/unban', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ target_id: targetId })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          alert('✅ Silencio removido para ' + targetId);
+          location.reload();
+        } else {
+          alert('Error removiendo silencio: ' + (data.detail || 'Error'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error de red al remover baneo.');
+      }
+    }
+
     // Tecla Escape para cerrar modales
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -2713,6 +3184,7 @@
         closeRejectPaymentModal();
         closeRotatePasswordModal();
         closePartialPaymentModal();
+        closeGroupTemplatesModal();
         closeMobileSidebar();
       }
     });

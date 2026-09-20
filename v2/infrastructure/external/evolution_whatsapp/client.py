@@ -1148,4 +1148,203 @@ async def get_media_base64(message_key: Dict[str, Any]) -> Optional[Dict[str, An
     return None
 
 
+# ==========================================
+# GESTIÓN Y MODERACIÓN DE GRUPOS (Atlas-MD / Baileys)
+# ==========================================
+
+async def fetch_all_groups(get_participants: bool = False) -> List[Dict[str, Any]]:
+    """Obtiene la lista completa de grupos en los que participa la instancia en WhatsApp."""
+    cfg = get_evolution_config()
+    url = f"{cfg['api_url']}/group/fetchAllGroups/{cfg['instance_name']}?getParticipants={str(get_participants).lower()}"
+    headers = get_headers(cfg["api_key"])
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                if isinstance(data, list):
+                    return data
+                elif isinstance(data, dict):
+                    return data.get("groups", []) or data.get("data", []) or []
+    except Exception as e:
+        logger.warning(f"Error consultando fetchAllGroups en Evolution API: {e}")
+    return []
+
+
+async def find_group_info(group_jid: str) -> Optional[Dict[str, Any]]:
+    """Obtiene metadatos detallados de un grupo (participantes, administradores, descripción, foto)."""
+    cfg = get_evolution_config()
+    clean_jid = group_jid.strip()
+    url = f"{cfg['api_url']}/group/findGroupInfos/{cfg['instance_name']}?groupJid={clean_jid}"
+    headers = get_headers(cfg["api_key"])
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (200, 201):
+                return resp.json()
+    except Exception as e:
+        logger.warning(f"Error consultando findGroupInfos para {clean_jid}: {e}")
+    return None
+
+
+async def get_group_invite_code(group_jid: str) -> Optional[str]:
+    """Obtiene el enlace de invitación de un grupo de WhatsApp."""
+    cfg = get_evolution_config()
+    clean_jid = group_jid.strip()
+    url = f"{cfg['api_url']}/group/inviteCode/{cfg['instance_name']}?groupJid={clean_jid}"
+    headers = get_headers(cfg["api_key"])
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                code = data.get("inviteCode") or data.get("code")
+                link = data.get("link") or data.get("invitationUrl")
+                if link:
+                    return link
+                if code:
+                    return f"https://chat.whatsapp.com/{code}"
+    except Exception as e:
+        logger.warning(f"Error consultando inviteCode para {clean_jid}: {e}")
+    return None
+
+
+async def update_group_setting(group_jid: str, action: str) -> Dict[str, Any]:
+    """Modifica configuraciones del grupo:
+    - action='announcement': Cierra el grupo (mute / solo administradores pueden enviar mensajes).
+    - action='not_announcement': Abre el grupo (unmute / todos los miembros pueden enviar mensajes).
+    """
+    cfg = get_evolution_config()
+    clean_jid = group_jid.strip()
+    clean_act = action.strip().lower()
+    if clean_act in ("mute", "cerrar", "close", "announcement"):
+        setting_val = "announcement"
+    else:
+        setting_val = "not_announcement"
+
+    url = f"{cfg['api_url']}/group/updateSetting/{cfg['instance_name']}?groupJid={clean_jid}"
+    headers = get_headers(cfg["api_key"])
+    payload = {"action": setting_val}
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                return {"success": True, "action": setting_val, "data": resp.json()}
+            return {"success": False, "error": f"Evolution status {resp.status_code}: {resp.text}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def update_group_participant(group_jid: str, action: str, participants: List[str]) -> Dict[str, Any]:
+    """Gestiona participantes en un grupo:
+    - action: 'add', 'remove' (kick), 'promote', 'demote'
+    - participants: lista de números telefónicos o JIDs (ej: ['5491100001111@s.whatsapp.net'])
+    """
+    cfg = get_evolution_config()
+    clean_jid = group_jid.strip()
+    clean_act = action.strip().lower()
+    if clean_act in ("kick", "expulsar", "eliminar"):
+        clean_act = "remove"
+
+    formatted_parts = []
+    for p in participants:
+        p_clean = str(p).strip()
+        if "@" not in p_clean:
+            p_clean = f"{re.sub(r'[^0-9]', '', p_clean)}@s.whatsapp.net"
+        formatted_parts.append(p_clean)
+
+    url = f"{cfg['api_url']}/group/updateParticipant/{cfg['instance_name']}?groupJid={clean_jid}"
+    headers = get_headers(cfg["api_key"])
+    payload = {
+        "action": clean_act,
+        "participants": formatted_parts
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                return {"success": True, "action": clean_act, "participants": formatted_parts, "data": resp.json()}
+            return {"success": False, "error": f"Evolution status {resp.status_code}: {resp.text}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def delete_message_for_everyone(remote_jid: str, message_id: str, participant: str = "") -> Dict[str, Any]:
+    """Elimina un mensaje para todos en el chat o grupo (Antilink / Moderación)."""
+    cfg = get_evolution_config()
+    clean_jid = remote_jid.strip()
+    url = f"{cfg['api_url']}/chat/deleteMessageForEveryone/{cfg['instance_name']}"
+    headers = get_headers(cfg["api_key"])
+    key_dict: Dict[str, Any] = {
+        "remoteJid": clean_jid,
+        "fromMe": False,
+        "id": message_id
+    }
+    if participant:
+        key_dict["participant"] = participant
+
+    payload = {
+        "id": message_id,
+        "key": key_dict
+    }
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                return {"success": True, "deleted_id": message_id}
+            return {"success": False, "error": f"Status {resp.status_code}: {resp.text}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def send_group_tagall(group_jid: str, message: str = "", sender_name: str = "") -> Dict[str, Any]:
+    """Menciona a todos los integrantes de un grupo (tagall / @everyone) en WhatsApp."""
+    clean_jid = group_jid.strip()
+    info = await find_group_info(clean_jid)
+    participants = []
+    if info:
+        participants_data = info.get("participants", [])
+        for p in participants_data:
+            p_id = p.get("id") or p.get("user") or ""
+            if p_id:
+                p_digits = re.sub(r'[^0-9]', '', p_id.split("@")[0])
+                if p_digits:
+                    participants.append(p_digits)
+
+    sender_tag = f" <i>(por {sender_name})</i>" if sender_name else ""
+    tag_lines = [f"📢 <b>AVISO GENERAL (@everyone){sender_tag}</b>\n"]
+    if message:
+        tag_lines.append(f"{message.strip()}\n")
+    tag_lines.append("👥 <b>Integrantes:</b>")
+
+    for p_num in participants:
+        tag_lines.append(f"• @{p_num}")
+
+    full_text = "\n".join(tag_lines)
+
+    cfg = get_evolution_config()
+    url = f"{cfg['api_url']}/message/sendText/{cfg['instance_name']}"
+    headers = get_headers(cfg["api_key"])
+    payload = {
+        "number": clean_jid,
+        "text": full_text,
+        "options": {
+            "delay": 1200,
+            "presence": "composing",
+            "linkPreview": False,
+            "mentionsEveryOne": True,
+            "mentioned": [f"{num}@s.whatsapp.net" for num in participants]
+        }
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                return {"success": True, "tagged_count": len(participants), "data": resp.json()}
+            return {"success": False, "error": f"Evolution status {resp.status_code}: {resp.text}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+
 

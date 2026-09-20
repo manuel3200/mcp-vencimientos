@@ -8,12 +8,14 @@ from presentation.api.catalog_api import router as catalog_router
 from presentation.api.suppliers_api import router as suppliers_router
 from presentation.api.tools_api import router as tools_router
 from presentation.api.webhooks_api import router as integrations_router
+from presentation.api.groups_api import router as groups_router
 
 __all__ = [
     "accounts_router",
     "auth_router",
     "catalog_router",
     "dashboard_router",
+    "groups_router",
     "integrations_router",
     "oauth_router",
     "suppliers_router",
@@ -31,3 +33,4 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(suppliers_router)
     app.include_router(integrations_router)
     app.include_router(tools_router)
+    app.include_router(groups_router)

@@ -23,6 +23,8 @@ from presentation.web.view_models import (
     render_fallen_reports_rows,
     render_client_select_options,
     render_http_custom_rows,
+    render_groups_table_rows,
+    render_silent_bans_rows,
 )
 
 router = APIRouter()
@@ -55,6 +57,9 @@ async def dashboard(request: Request):
     pending_payments = database.list_pending_payments(status="pending")
     fallen_reports = database.list_fallen_reports(limit=50)
     fallen_reports_count = database.count_pending_fallen_reports()
+    groups_list = database.list_groups_config()
+    silent_bans = database.list_silent_bans()
+    bot_mode = database.get_bot_mode()
 
     # 2. Renderizar view-models desacoplados
     msg_raw = request.query_params.get("msg", "")
@@ -138,7 +143,15 @@ async def dashboard(request: Request):
         "OAUTH_CLIENT_ID": oauth_cfg.get("client_id", "gemini-spark-joif"),
         "OAUTH_CLIENT_SECRET": oauth_cfg.get("client_secret", ""),
         "OAUTH_REDIRECT_URIS": oauth_cfg.get("redirect_uris", "https://gemini.google.com"),
-        "OAUTH_CHECKED": 'checked' if oauth_enabled else ''
+        "OAUTH_CHECKED": 'checked' if oauth_enabled else '',
+        "GROUPS_COUNT": len(groups_list),
+        "GROUPS_ROWS": render_groups_table_rows(groups_list),
+        "SILENT_BANS_COUNT": len(silent_bans),
+        "SILENT_BANS_ROWS": render_silent_bans_rows(silent_bans),
+        "BOT_MODE": bot_mode,
+        "BOT_MODE_PUBLIC_SEL": 'selected' if bot_mode == 'public' else '',
+        "BOT_MODE_PRIVATE_SEL": 'selected' if bot_mode == 'private' else '',
+        "BOT_MODE_SELF_SEL": 'selected' if bot_mode == 'self' else ''
     }
 
     return HTMLResponse(render_template("dashboard.html", context))

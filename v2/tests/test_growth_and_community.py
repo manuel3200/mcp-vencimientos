@@ -84,7 +84,18 @@ def test_referral_program():
     assert code1 in summary
     assert "$350.00 ARS" in summary
 
-    print("    ✅ Generación de códigos, comisiones, no-auto-referido y canjes de saldo validados.")
+    # 5. Listar códigos y estadísticas para el panel web
+    all_codes = database.list_all_referral_codes()
+    assert len(all_codes) >= 1
+    found_c1 = any(r["client_id"] == c1_id and r["code"] == code1 for r in all_codes)
+    assert found_c1, "El cliente Carlos debe figurar en la lista del dashboard de referidos"
+
+    stats = database.get_referrals_overview_stats()
+    assert stats["total_codes"] >= 1
+    assert stats["total_balance_ars"] >= 350.0
+    assert stats["total_referred_clients"] >= 1
+
+    print("    ✅ Generación de códigos, comisiones, no-auto-referido, canjes y listado web validados.")
 
 
 def test_coupon_engine():

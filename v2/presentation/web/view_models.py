@@ -1,4 +1,5 @@
 import re
+import urllib.parse
 from datetime import datetime, date
 from typing import List, Dict, Any, Optional
 import database
@@ -799,6 +800,82 @@ def render_silent_bans_rows(bans: List[Dict[str, Any]]) -> str:
                 <button type="button" onclick="removeSilentBan('{target}')" class="btn-action" style="background:#dc2626; color:white; border:none; padding:4px 8px; font-size:0.75rem; border-radius:5px; cursor:pointer;" title="Levantar silencio">
                     🗑️ Desbanear
                 </button>
+            </td>
+        </tr>
+        """
+    return rows
+
+
+def render_referrals_table_rows(referrals: List[Dict[str, Any]]) -> str:
+    """Renderiza las filas de la tabla de gestión de referidos y saldo a favor."""
+    if not referrals:
+        return """
+        <tr>
+            <td colspan="7" style="text-align:center; color:#94a3b8; padding:32px 16px;">
+                <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+                    <span style="font-size:2rem;">🎁</span>
+                    <span style="font-size:0.95rem; font-weight:600; color:#e5e1e4;">No hay códigos de referidos creados todavía</span>
+                    <span style="font-size:0.8rem; color:#94a3b8;">Haz clic en <b>"+ Nuevo Código de Referido"</b> para comenzar a fidelizar clientes.</span>
+                </div>
+            </td>
+        </tr>
+        """
+
+    rows = ""
+    for r in referrals:
+        client_id = r.get("client_id", 0)
+        client_name = r.get("client_name") or f"Cliente #{client_id}"
+        client_code = r.get("client_code") or ""
+        raw_wa = r.get("client_whatsapp") or ""
+        clean_wa = re.sub(r'[^0-9]', '', raw_wa)
+        code = r.get("code") or ""
+        total_ref = r.get("total_referred", 0)
+        balance = float(r.get("reward_balance_ars") or 0.0)
+        balance_str = database.format_ars(balance)
+        created = r.get("created_at") or "-"
+        if len(str(created)) > 10:
+            created = str(created)[:10]
+
+        if clean_wa:
+            share_msg = f"¡Hola {client_name}! 👋 Te compartimos tu código de recomendación exclusivo de StreamVault: *{code}*\n\nPor cada amigo que contrate su suscripción con tu código, ¡sumas saldo bonificado a favor!\nTu saldo disponible actual es de: *${balance:,.2f} ARS* 🍿".replace(",", "X").replace(".", ",").replace("X", ".")
+            encoded_share = urllib.parse.quote(share_msg)
+            wa_share_url = f"https://wa.me/{clean_wa}?text={encoded_share}"
+            wa_display = f'<a href="https://wa.me/{clean_wa}" target="_blank" style="color:#38bdf8; text-decoration:none; font-family:monospace; font-size:0.85rem;" title="Abrir chat">📲 {raw_wa or clean_wa}</a>'
+            share_btn = f'<a href="{wa_share_url}" target="_blank" class="btn-action" style="background:#065f46; color:#a7f3d0; padding:4px 8px; font-size:0.75rem; text-decoration:none; display:inline-flex; align-items:center; gap:3px;" title="Enviar código y saldo al cliente por WhatsApp">📲 Enviar WA</a>'
+        else:
+            wa_display = '<span style="color:#64748b; font-size:0.8rem;">Sin WhatsApp</span>'
+            share_btn = '<span style="color:#64748b; font-size:0.75rem;">-</span>'
+
+        safe_name = client_name.replace("'", "\\'")
+
+        rows += f"""
+        <tr>
+            <td>
+                <div style="display:flex; flex-direction:column;">
+                    <span style="font-weight:600; color:#e5e1e4; font-size:0.9rem;">{client_name}</span>
+                    <small style="color:#94a3b8; font-family:monospace; font-size:0.75rem;">{client_code}</small>
+                </div>
+            </td>
+            <td>{wa_display}</td>
+            <td>
+                <div style="display:flex; align-items:center; gap:6px;">
+                    <span class="badge" style="background:#2e1065; color:#d8b4fe; border:1px solid #7c3aed; font-family:monospace; font-size:0.85rem; padding:4px 8px;">{code}</span>
+                    <button type="button" onclick="copyReferralCode('{code}')" class="btn-action" style="padding:2px 6px; font-size:0.75rem;" title="Copiar código">📋</button>
+                </div>
+            </td>
+            <td style="text-align:center;">
+                <span class="badge" style="background:#1e293b; color:#cbd5e1; border:1px solid #475569; font-size:0.8rem; font-weight:700;">{total_ref} amigos</span>
+            </td>
+            <td style="text-align:right;">
+                <span style="font-family:'JetBrains Mono', monospace; font-size:0.95rem; font-weight:700; color:#4edea3;">{balance_str}</span>
+            </td>
+            <td style="white-space:nowrap; text-align:center; color:#94a3b8; font-size:0.8rem;">{created}</td>
+            <td style="white-space:nowrap; text-align:center;">
+                <div style="display:inline-flex; align-items:center; gap:4px;">
+                    <button type="button" onclick="openCreditReferralModal({client_id}, '{safe_name}')" class="btn-action" style="background:#1e293b; color:#38bdf8; border:1px solid #38bdf8; padding:4px 8px; font-size:0.75rem;" title="Acreditar comisión de referido">🎁 Bonificar</button>
+                    <button type="button" onclick="openRedeemReferralModal({client_id}, '{safe_name}', {balance})" class="btn-action" style="background:#451a03; color:#fde047; border:1px solid #b45309; padding:4px 8px; font-size:0.75rem;" title="Canjear saldo del cliente">💸 Canjear</button>
+                    {share_btn}
+                </div>
             </td>
         </tr>
         """

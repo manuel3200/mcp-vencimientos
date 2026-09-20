@@ -284,6 +284,15 @@
           <span class="font-data-tabular text-xs bg-emerald-500/20 text-emerald-300 font-bold px-2 py-0.5 rounded">{{GROUPS_COUNT}}</span>
         </a>
 
+        <!-- Programa de Referidos Tab -->
+        <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="referrals" href="#referrals">
+          <div class="flex items-center gap-2.5">
+            <span class="material-symbols-outlined text-lg text-purple-400">group_add</span>
+            <span class="text-sm font-medium">Referidos & Saldo</span>
+          </div>
+          <span class="font-data-tabular text-xs bg-purple-500/20 text-purple-300 font-bold px-2 py-0.5 rounded">{{REFERRALS_COUNT}}</span>
+        </a>
+
         <!-- Tools & Backup -->
         <a class="nav-item flex items-center justify-between px-3 py-2 rounded text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors" data-nav-target="tools" href="#tools">
           <div class="flex items-center gap-2.5">
@@ -1619,6 +1628,143 @@
         </div>
       </div>
 
+      <!-- ========================================================================= -->
+      <!-- VIEW 12: PROGRAMA DE REFERIDOS Y FIDELIZACIÓN (#view-referrals) -->
+      <!-- ========================================================================= -->
+      <div id="view-referrals" class="view-panel hidden flex flex-col w-full gap-5">
+        <!-- Header -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex flex-col gap-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h1 class="text-xl sm:text-2xl font-bold text-on-surface tracking-tight">Programa de Referidos y Fidelización</h1>
+              <div class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-surface-container-high border border-outline-variant/30 text-purple-300 font-label-code text-xs">
+                <span class="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse shadow-[0_0_8px_#c084fc]"></span>
+                <span>Fidelización Activa</span>
+              </div>
+            </div>
+            <p class="text-xs sm:text-sm text-on-surface-variant">Genera códigos personalizados, acredita comisiones por recomendación y administra el canje de saldo a favor de tus clientes.</p>
+          </div>
+
+          <!-- Acciones Principales -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <button onclick="openCreateReferralModal()" class="h-9 px-3 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded flex items-center gap-1 transition-all shadow-sm">
+              <span class="material-symbols-outlined text-sm">person_add</span>
+              <span>➕ Nuevo Código de Referido</span>
+            </button>
+            <button onclick="openCreditReferralModal()" class="h-9 px-3 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded flex items-center gap-1 transition-all shadow-sm">
+              <span class="material-symbols-outlined text-sm">card_giftcard</span>
+              <span>🎁 Bonificar Comisión</span>
+            </button>
+            <button onclick="openRedeemReferralModal()" class="h-9 px-3 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded flex items-center gap-1 transition-all shadow-sm">
+              <span class="material-symbols-outlined text-sm">payments</span>
+              <span>💸 Canjear Saldo</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 4 Quick KPI Metric Cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <!-- Card 1: Códigos Activos -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-purple-500/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-purple-500 to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-on-surface-variant">Códigos Activos</span>
+              <span class="material-symbols-outlined text-purple-400 text-lg">badge</span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-on-surface font-data-tabular">{{REFERRALS_COUNT}}</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Clientes con enlace de invitación</div>
+            </div>
+            <div class="text-purple-300 font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              Canal de Adquisición Orgánico
+            </div>
+          </div>
+
+          <!-- Card 2: Saldo Total Bonificado -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-tertiary/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-tertiary to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-on-surface-variant">Saldo Acumulado en Billeteras</span>
+              <span class="material-symbols-outlined text-tertiary text-lg">account_balance_wallet</span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-on-surface font-data-tabular">{{REFERRALS_TOTAL_BALANCE}}</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Saldo a favor listo para canje</div>
+            </div>
+            <div class="text-tertiary font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              Disponible para renovaciones
+            </div>
+          </div>
+
+          <!-- Card 3: Clientes Invitados -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-sky-500/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-sky-500 to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-on-surface-variant">Amigos e Invitados</span>
+              <span class="material-symbols-outlined text-sky-400 text-lg">group</span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-on-surface font-data-tabular">{{REFERRALS_TOTAL_INVITED}}</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Nuevos compradores recomendados</div>
+            </div>
+            <div class="text-sky-300 font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              Crecimiento viral boca a boca
+            </div>
+          </div>
+
+          <!-- Card 4: Regla del Programa -->
+          <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 flex flex-col justify-between shadow-sm relative overflow-hidden group hover:border-amber-500/40 transition-all">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-amber-500 to-transparent"></div>
+            <div class="flex items-start justify-between mb-1">
+              <span class="font-label-code text-[11px] uppercase tracking-wider text-on-surface-variant">Regla de Bonificación</span>
+              <span class="material-symbols-outlined text-amber-400 text-lg">military_tech</span>
+            </div>
+            <div class="my-2">
+              <div class="text-xl sm:text-2xl font-bold tracking-tight text-on-surface font-data-tabular">10% / $500</div>
+              <div class="text-xs text-on-surface-variant mt-0.5">Por cada nueva cuenta vendida</div>
+            </div>
+            <div class="text-amber-300 font-label-code text-[11px] pt-2 border-t border-surface-container/60">
+              Anti-auto-referido protegido 🛡️
+            </div>
+          </div>
+        </div>
+
+        <!-- Tabla de Códigos de Referidos Card -->
+        <div class="bg-surface-container-low border border-surface-container rounded-xl p-4 sm:p-5 flex flex-col gap-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <h3 class="text-base font-bold text-on-surface flex items-center gap-2">
+                <span class="material-symbols-outlined text-purple-400">group_work</span>
+                Cartera de Códigos de Referidos y Billeteras
+              </h3>
+              <p class="text-xs text-on-surface-variant">Consulta el saldo a favor, copia los enlaces de recomendación y gestiona bonificaciones o canjes individuales.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="text" id="referrals-search-box" oninput="searchTableRows('referrals-table', this.value)" placeholder="Buscar cliente, código o teléfono..." class="h-8 px-3 bg-surface-container text-xs rounded border border-surface-container-highest w-48 sm:w-64">
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-surface-container rounded-lg">
+            <table id="referrals-table" class="w-full text-left">
+              <thead>
+                <tr class="bg-surface-container-high/60">
+                  <th class="py-2.5 px-3">Cliente Recomendador</th>
+                  <th class="py-2.5 px-3">WhatsApp</th>
+                  <th class="py-2.5 px-3">Código Único</th>
+                  <th class="py-2.5 px-3 text-center">Amigos Referidos</th>
+                  <th class="py-2.5 px-3 text-right">Saldo a Favor ($ ARS)</th>
+                  <th class="py-2.5 px-3 text-center">Alta</th>
+                  <th class="py-2.5 px-3 text-center">Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="referrals-table-body">
+                {{REFERRALS_TABLE_ROWS}}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
     </main>
 
     <!-- Mobile Bottom Navigation Bar (Visible only on < lg screens) -->
@@ -2289,6 +2435,121 @@
     </div>
   </div>
 
+  <!-- Modal: Crear / Asignar Código de Referido -->
+  <div id="modal-create-referral" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeCreateReferralModal()">
+    <div class="bg-surface-container-low border border-purple-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-purple-400">person_add</span>
+          Asignar Código de Referido a Cliente
+        </h3>
+        <button type="button" onclick="closeCreateReferralModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="form-create-referral" onsubmit="submitCreateReferral(event)" class="flex flex-col gap-3">
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant font-bold">Seleccionar Cliente: *</label>
+          <select id="create-referral-client-id" name="client_id" required class="w-full h-9 px-2 bg-surface-container text-xs rounded border border-surface-container-highest mt-1">
+            <option value="">-- Seleccionar Cliente --</option>
+            {{CLIENT_SELECT_OPTIONS}}
+          </select>
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant font-bold">Código Personalizado (Opcional):</label>
+          <input type="text" id="create-referral-custom-code" name="custom_code" placeholder="Ej: REF-JUAN (Auto si se deja vacío)" class="w-full h-9 px-3 bg-surface-container text-xs rounded border border-surface-container-highest uppercase mt-1 font-mono">
+          <small class="text-[11px] text-on-surface-variant mt-1 block">Si lo dejas en blanco, el sistema generará un slug único basado en el nombre del cliente.</small>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeCreateReferralModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" id="btn-submit-create-referral" class="h-8 px-4 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded cursor-pointer flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">save</span>
+            <span>Generar Código</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Bonificar Comisión Manual a Recomendador -->
+  <div id="modal-credit-referral" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeCreditReferralModal()">
+    <div class="bg-surface-container-low border border-emerald-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-emerald-400 flex items-center gap-2">
+          <span class="material-symbols-outlined text-emerald-400">card_giftcard</span>
+          Bonificar Comisión por Recomendación
+        </h3>
+        <button type="button" onclick="closeCreditReferralModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="form-credit-referral" onsubmit="submitCreditReferral(event)" class="flex flex-col gap-3">
+        <input type="hidden" id="credit-referral-id" name="referrer_client_id" value="">
+        <div id="credit-client-select-wrap">
+          <label class="font-label-code text-xs text-on-surface-variant font-bold">Cliente Recomendador: *</label>
+          <select id="credit-referral-client-select" class="w-full h-9 px-2 bg-surface-container text-xs rounded border border-surface-container-highest mt-1">
+            <option value="">-- Seleccionar Cliente Recomendador --</option>
+            {{CLIENT_SELECT_OPTIONS}}
+          </select>
+        </div>
+        <div id="credit-client-fixed-wrap" class="hidden">
+          <span class="text-xs text-on-surface-variant font-label-code">Recomendador:</span>
+          <div id="credit-client-fixed-name" class="font-bold text-sm text-primary"></div>
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant font-bold">Monto de Comisión a Bonificar ($ ARS): *</label>
+          <input type="number" step="any" id="credit-referral-amount" name="amount" required placeholder="Ej: 500" class="w-full h-9 px-3 bg-surface-container text-xs rounded border border-surface-container-highest mt-1 font-mono text-emerald-400 font-bold">
+          <small class="text-[11px] text-on-surface-variant mt-1 block">Este importe se sumará inmediatamente a la billetera virtual del cliente.</small>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeCreditReferralModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" id="btn-submit-credit-referral" class="h-8 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded cursor-pointer flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">savings</span>
+            <span>Acreditar Saldo</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Canjear Saldo de Referido -->
+  <div id="modal-redeem-referral" class="fixed inset-0 bg-black/75 backdrop-blur-sm hidden items-center justify-center p-3" style="z-index: 9999;" onclick="if(event.target===this)closeRedeemReferralModal()">
+    <div class="bg-surface-container-low border border-amber-500/40 rounded-xl w-full max-w-md p-5 flex flex-col gap-4 shadow-2xl">
+      <div class="flex items-center justify-between pb-2 border-b border-surface-container">
+        <h3 class="text-base font-bold text-amber-400 flex items-center gap-2">
+          <span class="material-symbols-outlined text-amber-400">payments</span>
+          Canjear Saldo a Favor del Cliente
+        </h3>
+        <button type="button" onclick="closeRedeemReferralModal()" class="text-on-surface-variant hover:text-on-surface cursor-pointer">✕</button>
+      </div>
+      <form id="form-redeem-referral" onsubmit="submitRedeemReferral(event)" class="flex flex-col gap-3">
+        <input type="hidden" id="redeem-referral-client-id" name="client_id" value="">
+        <div id="redeem-client-select-wrap">
+          <label class="font-label-code text-xs text-on-surface-variant font-bold">Cliente: *</label>
+          <select id="redeem-referral-client-select" class="w-full h-9 px-2 bg-surface-container text-xs rounded border border-surface-container-highest mt-1">
+            <option value="">-- Seleccionar Cliente --</option>
+            {{CLIENT_SELECT_OPTIONS}}
+          </select>
+        </div>
+        <div id="redeem-client-fixed-wrap" class="hidden">
+          <span class="text-xs text-on-surface-variant font-label-code">Cliente:</span>
+          <div id="redeem-client-fixed-name" class="font-bold text-sm text-primary"></div>
+        </div>
+        <div class="bg-surface-container p-2.5 rounded border border-surface-container-highest flex items-center justify-between">
+          <span class="text-xs text-on-surface-variant">Saldo Disponible:</span>
+          <span id="redeem-available-balance-label" class="font-mono text-sm font-bold text-emerald-400">$ 0 ARS</span>
+        </div>
+        <div>
+          <label class="font-label-code text-xs text-on-surface-variant font-bold">Monto a Canjear / Descontar ($ ARS): *</label>
+          <input type="number" step="any" id="redeem-referral-amount" name="amount" required placeholder="Ej: 800" class="w-full h-9 px-3 bg-surface-container text-xs rounded border border-surface-container-highest mt-1 font-mono text-amber-300 font-bold">
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-surface-container">
+          <button type="button" onclick="closeRedeemReferralModal()" class="h-8 px-3 bg-surface-container text-xs rounded cursor-pointer">Cancelar</button>
+          <button type="submit" id="btn-submit-redeem-referral" class="h-8 px-4 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold rounded cursor-pointer flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">redeem</span>
+            <span>Confirmar Canje</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Vanilla JavaScript: View Switcher, Ficha 360, Filtros y Modales -->
   <script>
     // 1. Tabbed Multi-View Switcher Logic con Persistencia y Soporte de Hash
@@ -2324,6 +2585,9 @@
         'groups': 'groups',
         'moderation': 'groups',
         'grupos': 'groups',
+        'tab-referrals': 'referrals',
+        'referrals': 'referrals',
+        'referidos': 'referrals',
         'tab-tools': 'tools',
         'tab-logs': 'logs'
       };
@@ -3331,6 +3595,216 @@
       }
     }
 
+    // ==========================================
+    // GESTIÓN DEL PROGRAMA DE REFERIDOS
+    // ==========================================
+    function copyReferralCode(code) {
+      if (!code) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(code).then(() => {
+          alert('📋 Código copiado al portapapeles: ' + code);
+        }).catch(() => {
+          prompt('Copia el código de referido:', code);
+        });
+      } else {
+        prompt('Copia el código de referido:', code);
+      }
+    }
+
+    function openCreateReferralModal() {
+      const modal = document.getElementById('modal-create-referral');
+      if (!modal) return;
+      document.getElementById('create-referral-custom-code').value = '';
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeCreateReferralModal() {
+      const modal = document.getElementById('modal-create-referral');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    async function submitCreateReferral(e) {
+      e.preventDefault();
+      const clientId = document.getElementById('create-referral-client-id').value;
+      const customCode = document.getElementById('create-referral-custom-code').value.trim();
+      if (!clientId) {
+        alert('Por favor selecciona un cliente.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/referrals/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, custom_code: customCode })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          alert('✅ ' + (data.message || 'Código generado con éxito.'));
+          closeCreateReferralModal();
+          location.reload();
+        } else {
+          alert('⚠️ ' + (data.detail || data.message || 'Error al generar código.'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error de conexión con el servidor.');
+      }
+    }
+
+    function openCreditReferralModal(clientId = null, clientName = '') {
+      const modal = document.getElementById('modal-credit-referral');
+      if (!modal) return;
+      document.getElementById('credit-referral-amount').value = '';
+
+      const selectWrap = document.getElementById('credit-client-select-wrap');
+      const fixedWrap = document.getElementById('credit-client-fixed-wrap');
+      const hiddenId = document.getElementById('credit-referral-id');
+
+      if (clientId) {
+        hiddenId.value = clientId;
+        document.getElementById('credit-client-fixed-name').innerText = clientName || ('Cliente #' + clientId);
+        selectWrap.classList.add('hidden');
+        fixedWrap.classList.remove('hidden');
+      } else {
+        hiddenId.value = '';
+        selectWrap.classList.remove('hidden');
+        fixedWrap.classList.add('hidden');
+        document.getElementById('credit-referral-client-select').value = '';
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeCreditReferralModal() {
+      const modal = document.getElementById('modal-credit-referral');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    async function submitCreditReferral(e) {
+      e.preventDefault();
+      let clientId = document.getElementById('credit-referral-id').value;
+      if (!clientId) {
+        clientId = document.getElementById('credit-referral-client-select').value;
+      }
+      const amount = parseFloat(document.getElementById('credit-referral-amount').value || 0);
+
+      if (!clientId) {
+        alert('Por favor selecciona un cliente recomendador.');
+        return;
+      }
+      if (amount <= 0) {
+        alert('El monto debe ser mayor a cero.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/referrals/credit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ referrer_client_id: clientId, amount: amount })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          alert('✅ ' + (data.message || 'Bonificación acreditada.'));
+          closeCreditReferralModal();
+          location.reload();
+        } else {
+          alert('⚠️ ' + (data.detail || data.message || 'Error al acreditar comisión.'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error de conexión con el servidor.');
+      }
+    }
+
+    function openRedeemReferralModal(clientId = null, clientName = '', currentBalance = 0) {
+      const modal = document.getElementById('modal-redeem-referral');
+      if (!modal) return;
+      document.getElementById('redeem-referral-amount').value = '';
+
+      const selectWrap = document.getElementById('redeem-client-select-wrap');
+      const fixedWrap = document.getElementById('redeem-client-fixed-wrap');
+      const hiddenId = document.getElementById('redeem-referral-client-id');
+      const balanceLabel = document.getElementById('redeem-available-balance-label');
+
+      balanceLabel.innerText = '$ ' + Number(currentBalance).toLocaleString('es-AR', {minimumFractionDigits: 2}) + ' ARS';
+
+      if (clientId) {
+        hiddenId.value = clientId;
+        document.getElementById('redeem-client-fixed-name').innerText = clientName || ('Cliente #' + clientId);
+        selectWrap.classList.add('hidden');
+        fixedWrap.classList.remove('hidden');
+      } else {
+        hiddenId.value = '';
+        selectWrap.classList.remove('hidden');
+        fixedWrap.classList.add('hidden');
+        document.getElementById('redeem-referral-client-select').value = '';
+      }
+
+      modal.classList.remove('hidden');
+      modal.classList.add('flex');
+      modal.style.display = 'flex';
+    }
+
+    function closeRedeemReferralModal() {
+      const modal = document.getElementById('modal-redeem-referral');
+      if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+        modal.style.display = 'none';
+      }
+    }
+
+    async function submitRedeemReferral(e) {
+      e.preventDefault();
+      let clientId = document.getElementById('redeem-referral-client-id').value;
+      if (!clientId) {
+        clientId = document.getElementById('redeem-referral-client-select').value;
+      }
+      const amount = parseFloat(document.getElementById('redeem-referral-amount').value || 0);
+
+      if (!clientId) {
+        alert('Por favor selecciona un cliente para el canje.');
+        return;
+      }
+      if (amount <= 0) {
+        alert('El monto a canjear debe ser mayor a cero.');
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/referrals/redeem', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, amount: amount })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          alert('✅ ' + (data.message || 'Canje realizado con éxito.'));
+          closeRedeemReferralModal();
+          location.reload();
+        } else {
+          alert('⚠️ ' + (data.detail || data.message || 'Error al canjear saldo.'));
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Error de conexión con el servidor.');
+      }
+    }
+
     // Tecla Escape para cerrar modales
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
@@ -3349,6 +3823,9 @@
         closePartialPaymentModal();
         closeGroupTemplatesModal();
         closeAddGroupModal();
+        closeCreateReferralModal();
+        closeCreditReferralModal();
+        closeRedeemReferralModal();
         closeMobileSidebar();
       }
     });

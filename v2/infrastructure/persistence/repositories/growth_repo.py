@@ -149,6 +149,52 @@ def redeem_referral_balance(client_id: int, amount: float) -> Tuple[bool, str, f
         conn.close()
 
 
+def list_all_referral_codes() -> List[Dict[str, Any]]:
+    """Lista todos los códigos de referidos con los datos del cliente asociado."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("""
+            SELECT rc.id, rc.client_id, rc.code, rc.reward_balance_ars, rc.total_referred, rc.created_at,
+                   c.name as client_name, c.whatsapp as client_whatsapp, c.client_code, c.client_type
+            FROM referral_codes rc
+            JOIN clients c ON c.id = rc.client_id
+            ORDER BY rc.reward_balance_ars DESC, rc.total_referred DESC, rc.created_at DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        logger.error(f"Error listando códigos de referidos: {e}")
+        return []
+    finally:
+        conn.close()
+
+
+def get_referrals_overview_stats() -> Dict[str, Any]:
+    """Retorna métricas globales del programa de referidos para el dashboard."""
+    conn = get_connection()
+    try:
+        row = conn.execute("""
+            SELECT 
+                COUNT(*) as total_codes,
+                COALESCE(SUM(reward_balance_ars), 0.0) as total_balance_ars,
+                COALESCE(SUM(total_referred), 0) as total_referred_clients
+            FROM referral_codes
+        """).fetchone()
+        if not row:
+            return {"total_codes": 0, "total_balance_ars": 0.0, "total_referred_clients": 0}
+        return {
+            "total_codes": row["total_codes"] or 0,
+            "total_balance_ars": float(row["total_balance_ars"] or 0.0),
+            "total_referred_clients": row["total_referred_clients"] or 0
+        }
+    except Exception as e:
+        logger.error(f"Error obteniendo estadísticas de referidos: {e}")
+        return {"total_codes": 0, "total_balance_ars": 0.0, "total_referred_clients": 0}
+    finally:
+        conn.close()
+
+
+
+
 # ==========================================
 # 2. MOTOR DE CUPONES DE DESCUENTO
 # ==========================================

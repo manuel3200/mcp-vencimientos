@@ -25,6 +25,7 @@ from presentation.web.view_models import (
     render_http_custom_rows,
     render_groups_table_rows,
     render_silent_bans_rows,
+    render_referrals_table_rows,
 )
 
 router = APIRouter()
@@ -60,6 +61,8 @@ async def dashboard(request: Request):
     groups_list = database.list_groups_config()
     silent_bans = database.list_silent_bans()
     bot_mode = database.get_bot_mode()
+    referrals_list = database.list_all_referral_codes()
+    referrals_stats = database.get_referrals_overview_stats()
 
     # 2. Renderizar view-models desacoplados
     msg_raw = request.query_params.get("msg", "")
@@ -151,7 +154,11 @@ async def dashboard(request: Request):
         "BOT_MODE": bot_mode,
         "BOT_MODE_PUBLIC_SEL": 'selected' if bot_mode == 'public' else '',
         "BOT_MODE_PRIVATE_SEL": 'selected' if bot_mode == 'private' else '',
-        "BOT_MODE_SELF_SEL": 'selected' if bot_mode == 'self' else ''
+        "BOT_MODE_SELF_SEL": 'selected' if bot_mode == 'self' else '',
+        "REFERRALS_COUNT": referrals_stats["total_codes"],
+        "REFERRALS_TABLE_ROWS": render_referrals_table_rows(referrals_list),
+        "REFERRALS_TOTAL_BALANCE": database.format_ars(referrals_stats["total_balance_ars"]),
+        "REFERRALS_TOTAL_INVITED": referrals_stats["total_referred_clients"]
     }
 
     return HTMLResponse(render_template("dashboard.html", context))

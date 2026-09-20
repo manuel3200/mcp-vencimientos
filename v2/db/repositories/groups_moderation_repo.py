@@ -289,3 +289,18 @@ def is_silent_banned(target_id: str) -> bool:
         return False
     finally:
         conn.close()
+
+
+def delete_group_config(group_jid: str) -> bool:
+    """Elimina la configuración y registro de un grupo de la base de datos."""
+    clean_jid = group_jid.strip()
+    if not clean_jid:
+        return False
+    conn = get_connection()
+    try:
+        with conn:
+            cursor = conn.execute("DELETE FROM whatsapp_groups_config WHERE group_jid = ?", (clean_jid,))
+            return cursor.rowcount > 0
+    finally:
+        conn.close()
+

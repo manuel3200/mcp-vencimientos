@@ -701,7 +701,7 @@ def render_groups_table_rows(groups: List[Dict[str, Any]]) -> str:
             <td colspan="6" style="text-align:center; color:#94a3b8; padding:32px;">
                 <div style="font-size:2rem; margin-bottom:8px;">👥</div>
                 <strong>No hay grupos registrados o sincronizados aún.</strong><br>
-                <small>Haz clic en <b>'🔄 Sincronizar Grupos'</b> para escanear y cargar automáticamente los grupos donde está el bot.</small>
+                <small>Haz clic en <b>'➕ Agregar Grupo Manual'</b> para pegar tu enlace de invitación/JID o en <b>'🔄 Sincronizar Grupos'</b> para escanear WhatsApp.</small>
             </td>
         </tr>
         """
@@ -763,6 +763,7 @@ def render_groups_table_rows(groups: List[Dict[str, Any]]) -> str:
                 <button type="button" onclick="executeGroupAction('{jid}', 'mute')" class="btn-action" style="background:#334155; color:#cbd5e1; padding:4px 7px; font-size:0.75rem;" title="Cerrar grupo (solo admins)">🔒 Mute</button>
                 <button type="button" onclick="executeGroupAction('{jid}', 'unmute')" class="btn-action" style="background:#1e293b; color:#38bdf8; border:1px solid #38bdf8; padding:4px 7px; font-size:0.75rem;" title="Abrir grupo a todos">📢 Abrir</button>
                 <button type="button" onclick="fetchGroupLink('{jid}')" class="btn-action" style="background:#065f46; color:#a7f3d0; padding:4px 7px; font-size:0.75rem;" title="Copiar enlace de invitación">🔗 Link</button>
+                <button type="button" onclick="deleteGroupConfig('{jid}', '{safe_name}')" class="btn-action" style="background:#450a0a; color:#fca5a5; padding:4px 7px; font-size:0.75rem;" title="Eliminar de la lista">🗑️</button>
             </td>
         </tr>
         """

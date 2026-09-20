@@ -182,7 +182,9 @@ from db.repositories.groups_moderation_repo import (
     list_silent_bans,
     add_silent_ban,
     remove_silent_ban,
-    is_silent_banned
+    is_silent_banned,
+    delete_group_config
 )
+
 
 

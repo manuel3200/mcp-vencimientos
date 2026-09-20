@@ -80,6 +80,19 @@ def run_tests():
     assert len(all_groups) >= 1
     assert any(g["group_jid"] == group_jid for g in all_groups)
 
+    # Eliminar grupo
+    assert database.delete_group_config("nonexistent@g.us") is False
+    assert database.delete_group_config(group_jid) is True
+    assert database.get_group_config(group_jid) is None
+
+    # Volver a insertar para pruebas subsecuentes de renderizado
+    g_info = database.upsert_group_config(
+        group_jid=group_jid,
+        group_name="Comunidad Clientes Streaming",
+        bot_enabled=1,
+        antilink_enabled=1
+    )
+
     # ==========================================
     # 3. Pruebas de Baneo Silencioso (Silent Ban - Atlas-MD)
     # ==========================================
@@ -146,6 +159,7 @@ def run_tests():
     assert 'toggleGroupBot' in html_groups
     assert 'toggleGroupAntilink' in html_groups
     assert 'toggleGroupWelcome' in html_groups
+    assert 'deleteGroupConfig' in html_groups
 
     # Renderizado vacío de grupos
     html_empty_groups = render_groups_table_rows([])

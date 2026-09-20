@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional, Any, Dict
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -47,13 +48,19 @@ async def api_sync_groups(request: Request):
         raw_groups = await whatsapp_client.fetch_all_groups(get_participants=False)
         synced = []
         for g in raw_groups:
-            jid = g.get("id") or g.get("jid")
-            if not jid or "@g.us" not in jid:
+            jid = g.get("id") or g.get("jid") or g.get("remoteJid") or g.get("groupJid")
+            if not jid:
                 continue
-            name = g.get("subject") or g.get("name") or jid
+            jid_str = str(jid).strip()
+            if "@g.us" not in jid_str:
+                if jid_str.isdigit() and len(jid_str) >= 10:
+                    jid_str = f"{jid_str}@g.us"
+                else:
+                    continue
+            name = g.get("subject") or g.get("name") or g.get("pushName") or g.get("notify") or jid_str
             saved = database.upsert_group_config(
-                group_jid=jid,
-                group_name=name
+                group_jid=jid_str,
+                group_name=str(name).strip()
             )
             synced.append(saved)
 
@@ -66,6 +73,106 @@ async def api_sync_groups(request: Request):
     except Exception as e:
         logger.error(f"Error sincronizando grupos: {e}")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+@router.post("/api/groups/add-manual")
+async def api_add_group_manual(request: Request):
+    """Agrega manualmente un grupo a la lista blanca usando un enlace de invitación o JID."""
+    _check_auth(request)
+    payload = await _extract_payload(request)
+    target = str(payload.get("target", "")).strip()
+    custom_name = str(payload.get("group_name", "")).strip()
+    bot_enabled_raw = payload.get("bot_enabled", True)
+    bot_enabled = 1 if (bot_enabled_raw is True or bot_enabled_raw in (1, "1", "true", "True", "on")) else 0
+    antilink_raw = payload.get("antilink_enabled", False)
+    antilink_enabled = 1 if (antilink_raw is True or antilink_raw in (1, "1", "true", "True", "on")) else 0
+
+    if not target:
+        raise HTTPException(status_code=400, detail="Debes ingresar un enlace de invitación o JID del grupo.")
+
+    resolved_jid = ""
+    resolved_name = custom_name
+
+    # 1. Si es un enlace de invitación o código (ej: chat.whatsapp.com/...)
+    invite_code_match = re.search(r'(?:chat\.whatsapp\.com\/)([a-zA-Z0-9_-]+)', target)
+    if invite_code_match or (not "@" in target and len(target) in (20, 21, 22, 23, 24, 25)):
+        code = invite_code_match.group(1) if invite_code_match else target
+        logger.info(f"Intentando resolver grupo por código de invitación: {code}")
+
+        # Consultar metadatos del código de invitación en Evolution API
+        info = await whatsapp_client.find_group_info_from_invite_code(code)
+        if info:
+            resolved_jid = info.get("id") or info.get("jid") or info.get("groupJid") or ""
+            if not resolved_name:
+                resolved_name = info.get("subject") or info.get("name") or ""
+
+        # Si aún no se resolvió el JID, intentar unirse al grupo para obtener el JID
+        if not resolved_jid:
+            join_res = await whatsapp_client.accept_group_invite_code(code)
+            if join_res and isinstance(join_res, dict):
+                resolved_jid = join_res.get("id") or join_res.get("jid") or join_res.get("groupJid") or ""
+                if not resolved_name:
+                    resolved_name = join_res.get("subject") or join_res.get("name") or ""
+
+    # 2. Si es un JID directo o numérico
+    if not resolved_jid:
+        clean_target = target.strip()
+        if "@g.us" in clean_target:
+            resolved_jid = clean_target
+        elif clean_target.isdigit() and len(clean_target) >= 10:
+            resolved_jid = f"{clean_target}@g.us"
+
+    if not resolved_jid or "@g.us" not in resolved_jid:
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo resolver el JID del grupo desde el enlace. Ingresa el JID directamente (ej: 120363...@g.us) o envía un mensaje en el grupo para detección automática."
+        )
+
+    # 3. Si no tenemos nombre, consultar a Evolution API por find_group_info
+    if not resolved_name:
+        try:
+            grp_meta = await whatsapp_client.find_group_info(resolved_jid)
+            if grp_meta and isinstance(grp_meta, dict):
+                resolved_name = grp_meta.get("subject") or grp_meta.get("name") or ""
+        except Exception as e:
+            logger.warning(f"No se pudo consultar nombre para {resolved_jid}: {e}")
+
+    if not resolved_name:
+        resolved_name = f"Grupo {resolved_jid.split('@')[0]}"
+
+    saved = database.upsert_group_config(
+        group_jid=resolved_jid,
+        group_name=resolved_name,
+        bot_enabled=bot_enabled,
+        antilink_enabled=antilink_enabled
+    )
+
+    logger.info(f"Grupo agregado manualmente: {resolved_jid} ({resolved_name})")
+    return JSONResponse({
+        "status": "ok",
+        "message": f"Grupo '{resolved_name}' agregado correctamente.",
+        "group": saved,
+        "groups": database.list_groups_config()
+    })
+
+
+@router.post("/api/groups/delete")
+async def api_delete_group(request: Request):
+    """Elimina un grupo de la lista de configuración."""
+    _check_auth(request)
+    payload = await _extract_payload(request)
+    group_jid = str(payload.get("group_jid", "")).strip()
+    if not group_jid:
+        raise HTTPException(status_code=400, detail="group_jid requerido")
+
+    deleted = database.delete_group_config(group_jid)
+    return JSONResponse({
+        "status": "ok",
+        "group_jid": group_jid,
+        "deleted": deleted,
+        "groups": database.list_groups_config()
+    })
+
 
 
 @router.post("/api/groups/toggle-bot")

@@ -181,16 +181,22 @@ async def whatsapp_webhook(request: Request):
         return JSONResponse({"status": "ignored", "reason": "invalid_json"})
 
     event = (body.get("event") or body.get("type", "")).lower()
+    data = body.get("data", {}) or {}
 
-    # 0. EVENTOS DE GRUPOS: Bienvenida y Despedida (group-participants.update)
+    # 0. EVENTOS DE GRUPOS: Bienvenida, Despedida y Auto-descubrimiento (group-participants.update, groups.update)
     if event in ("group-participants.update", "group_participants_update", "groups.update"):
         group_jid = (data.get("id") or data.get("groupJid") or body.get("id") or "").strip()
         action = (data.get("action") or body.get("action") or "").lower() # 'add', 'remove'
         participants = data.get("participants") or body.get("participants") or []
 
-        if group_jid and participants:
+        if group_jid:
             group_cfg = database.get_group_config(group_jid)
-            if group_cfg:
+            if not group_cfg:
+                grp_name = data.get("chatName") or data.get("subject") or f"Grupo {group_jid.split('@')[0]}"
+                group_cfg = database.upsert_group_config(group_jid=group_jid, group_name=grp_name, bot_enabled=1)
+                logger.info(f"✨ Grupo registrado automáticamente por evento de grupo: {group_jid}")
+
+            if participants:
                 if action == "add" and group_cfg.get("welcome_enabled"):
                     msg_tpl = group_cfg.get("welcome_message") or (
                         "👋 *¡Bienvenido/a al grupo!* 🍿\n"
@@ -210,7 +216,6 @@ async def whatsapp_webhook(request: Request):
     if event and event not in ("messages.upsert", "messages_upsert"):
         return JSONResponse({"status": "ignored", "reason": f"unhandled_event_{event}"})
 
-    data = body.get("data", {}) or {}
     key = data.get("key", {}) or body.get("key", {})
     from_me = key.get("fromMe", False)
     remote_jid = key.get("remoteJid", "")
@@ -249,6 +254,20 @@ async def whatsapp_webhook(request: Request):
     is_group = "@g.us" in remote_jid
     group_jid = remote_jid if is_group else ""
 
+    # AUTO-DESCUBRIMIENTO INMEDIATO DE GRUPOS
+    group_cfg = None
+    if is_group:
+        group_cfg = database.get_group_config(group_jid)
+        if not group_cfg:
+            grp_name = (
+                data.get("chatName") or 
+                data.get("subject") or 
+                body.get("chatName") or 
+                f"Grupo {group_jid.split('@')[0]}"
+            )
+            group_cfg = database.upsert_group_config(group_jid=group_jid, group_name=grp_name, bot_enabled=1)
+            logger.info(f"✨ Nuevo grupo detectado automáticamente por mensaje entrante: {group_jid} ({grp_name})")
+
     # Extraer remitente individual
     if is_group:
         participant_raw = (key.get("participant") or data.get("participant") or "").strip()
@@ -283,15 +302,11 @@ async def whatsapp_webhook(request: Request):
         return JSONResponse({"status": "ignored", "reason": "bot_mode_private_group_ignored"})
 
     # 4. CONTROL DE GRUPOS Y WHITELIST (¿Está habilitado el bot en este grupo?)
-    group_cfg = None
     if is_group:
-        group_cfg = database.get_group_config(group_jid)
-        if not group_cfg:
-            group_cfg = database.upsert_group_config(group_jid=group_jid, group_name="Grupo de WhatsApp", bot_enabled=1)
-
         is_bot_enabled_in_group = bool(group_cfg.get("bot_enabled", 1))
         if not is_bot_enabled_in_group and not is_owner:
             return JSONResponse({"status": "ignored", "reason": "group_bot_disabled"})
+
 
         # 4.1 ANTILINK: Detección y borrado de enlaces no autorizados en grupo
         if group_cfg.get("antilink_enabled") and not is_owner:

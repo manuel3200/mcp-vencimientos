@@ -35,16 +35,23 @@ async def sincronizar_grupos_whatsapp() -> str:
         raw_groups = await whatsapp_client.fetch_all_groups(get_participants=False)
         count = 0
         for g in raw_groups:
-            jid = g.get("id") or g.get("jid")
-            if not jid or "@g.us" not in jid:
+            jid = g.get("id") or g.get("jid") or g.get("remoteJid") or g.get("groupJid")
+            if not jid:
                 continue
-            name = g.get("subject") or g.get("name") or jid
-            database.upsert_group_config(group_jid=jid, group_name=name)
+            jid_str = str(jid).strip()
+            if "@g.us" not in jid_str:
+                if jid_str.isdigit() and len(jid_str) >= 10:
+                    jid_str = f"{jid_str}@g.us"
+                else:
+                    continue
+            name = g.get("subject") or g.get("name") or g.get("pushName") or g.get("notify") or jid_str
+            database.upsert_group_config(group_jid=jid_str, group_name=str(name).strip())
             count += 1
         return f"✅ Sincronización exitosa: Se escanearon y registraron {count} grupos desde WhatsApp."
     except Exception as e:
         logger.error(f"Error sincronizando grupos MCP: {e}")
         return f"❌ Error al sincronizar grupos desde Evolution API: {str(e)}"
+
 
 
 @mcp.tool()
@@ -207,3 +214,75 @@ def listar_baneos_silenciosos() -> str:
     for b in bans:
         out.append(f"• *{b.get('target_id')}* ({b.get('target_type')}) - Motivo: {b.get('reason') or 'N/A'} (Desde: {b.get('created_at')})")
     return "\n".join(out)
+
+
+@mcp.tool()
+async def agregar_grupo_whatsapp(
+    enlace_o_jid: str,
+    nombre_grupo: str = "",
+    bot_habilitado: bool = True,
+    antilink_habilitado: bool = False
+) -> str:
+    """Registra manualmente un grupo de WhatsApp en el sistema usando su enlace de invitación (https://chat.whatsapp.com/...) o JID (@g.us)."""
+    target = enlace_o_jid.strip()
+    if not target:
+        return "❌ Error: Debes ingresar un enlace de invitación o JID de grupo."
+
+    resolved_jid = ""
+    resolved_name = nombre_grupo.strip()
+
+    invite_code_match = re.search(r'(?:chat\.whatsapp\.com\/)([a-zA-Z0-9_-]+)', target)
+    if invite_code_match or (not "@" in target and len(target) in (20, 21, 22, 23, 24, 25)):
+        code = invite_code_match.group(1) if invite_code_match else target
+        info = await whatsapp_client.find_group_info_from_invite_code(code)
+        if info:
+            resolved_jid = info.get("id") or info.get("jid") or info.get("groupJid") or ""
+            if not resolved_name:
+                resolved_name = info.get("subject") or info.get("name") or ""
+        if not resolved_jid:
+            join_res = await whatsapp_client.accept_group_invite_code(code)
+            if join_res and isinstance(join_res, dict):
+                resolved_jid = join_res.get("id") or join_res.get("jid") or join_res.get("groupJid") or ""
+                if not resolved_name:
+                    resolved_name = join_res.get("subject") or join_res.get("name") or ""
+
+    if not resolved_jid:
+        if "@g.us" in target:
+            resolved_jid = target
+        elif target.isdigit() and len(target) >= 10:
+            resolved_jid = f"{target}@g.us"
+
+    if not resolved_jid or "@g.us" not in resolved_jid:
+        return "❌ Error: No se pudo resolver el JID del grupo. Ingresa el JID directamente (ej: 120363...@g.us)."
+
+    if not resolved_name:
+        try:
+            grp_meta = await whatsapp_client.find_group_info(resolved_jid)
+            if grp_meta and isinstance(grp_meta, dict):
+                resolved_name = grp_meta.get("subject") or grp_meta.get("name") or ""
+        except Exception:
+            pass
+
+    if not resolved_name:
+        resolved_name = f"Grupo {resolved_jid.split('@')[0]}"
+
+    saved = database.upsert_group_config(
+        group_jid=resolved_jid,
+        group_name=resolved_name,
+        bot_enabled=1 if bot_habilitado else 0,
+        antilink_enabled=1 if antilink_habilitado else 0
+    )
+    return f"✅ Grupo registrado exitosamente:\n• Nombre: *{resolved_name}*\n• ID: `{resolved_jid}`\n• Bot Activo: {bot_habilitado}\n• Antilink: {antilink_habilitado}"
+
+
+@mcp.tool()
+def eliminar_grupo_whatsapp(group_jid: str) -> str:
+    """Elimina un grupo de WhatsApp de la lista de configuración y whitelist del bot."""
+    clean_jid = group_jid.strip()
+    if not clean_jid:
+        return "❌ Error: Debes ingresar el JID del grupo a eliminar."
+    deleted = database.delete_group_config(clean_jid)
+    if deleted:
+        return f"🗑️ Grupo `{clean_jid}` eliminado de la base de datos."
+    return f"ℹ️ El grupo `{clean_jid}` no estaba registrado."
+

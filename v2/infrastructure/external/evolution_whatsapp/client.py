@@ -1153,22 +1153,144 @@ async def get_media_base64(message_key: Dict[str, Any]) -> Optional[Dict[str, An
 # ==========================================
 
 async def fetch_all_groups(get_participants: bool = False) -> List[Dict[str, Any]]:
-    """Obtiene la lista completa de grupos en los que participa la instancia en WhatsApp."""
+    """Obtiene la lista completa de grupos en los que participa la instancia en WhatsApp.
+    Implementa estrategia en cascada (Cascade Fallback) con timeouts extendidos:
+    1. GET /group/fetchAllGroups/{instance}?getParticipants=false
+    2. GET /group/fetchAllGroups/{instance}?getParticipants=true
+    3. POST /chat/findChats/{instance} (Lectura de base de datos local de Evolution API)
+    4. GET /chat/findChats/{instance}
+    """
     cfg = get_evolution_config()
-    url = f"{cfg['api_url']}/group/fetchAllGroups/{cfg['instance_name']}?getParticipants={str(get_participants).lower()}"
+    api_url = cfg["api_url"]
+    instance = cfg["instance_name"]
     headers = get_headers(cfg["api_key"])
+
+    found_groups_by_jid: Dict[str, Dict[str, Any]] = {}
+
+    def _extract_items(payload: Any) -> List[Dict[str, Any]]:
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            for k in ("response", "groups", "data", "chats", "result", "value"):
+                v = payload.get(k)
+                if isinstance(v, list):
+                    return v
+                if isinstance(v, dict):
+                    return list(v.values())
+        return []
+
+    def _process_candidate(item: Any):
+        if not isinstance(item, dict):
+            return
+        raw_jid = (
+            item.get("id") or 
+            item.get("jid") or 
+            item.get("remoteJid") or 
+            item.get("groupJid") or 
+            item.get("chatJid") or 
+            ""
+        )
+        if not isinstance(raw_jid, str):
+            raw_jid = str(raw_jid)
+        raw_jid = raw_jid.strip()
+
+        is_grp = ("@g.us" in raw_jid) or bool(item.get("isGroup"))
+        if not is_grp or not raw_jid:
+            return
+
+        if "@g.us" not in raw_jid:
+            raw_jid = f"{raw_jid}@g.us"
+
+        raw_name = (
+            item.get("subject") or 
+            item.get("name") or 
+            item.get("pushName") or 
+            item.get("notify") or 
+            item.get("description") or 
+            ""
+        )
+        if not isinstance(raw_name, str) or not raw_name.strip():
+            raw_name = raw_jid
+
+        existing = found_groups_by_jid.get(raw_jid)
+        if not existing or (existing.get("subject") == raw_jid and raw_name != raw_jid):
+            found_groups_by_jid[raw_jid] = {
+                "id": raw_jid,
+                "jid": raw_jid,
+                "subject": raw_name.strip(),
+                "name": raw_name.strip(),
+                "participants": item.get("participants", []),
+                "isGroup": True
+            }
+
+    # 1. GET /group/fetchAllGroups con getParticipants=false
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, headers=headers)
-            if resp.status_code in (200, 201):
-                data = resp.json()
-                if isinstance(data, list):
-                    return data
-                elif isinstance(data, dict):
-                    return data.get("groups", []) or data.get("data", []) or []
+        url1 = f"{api_url}/group/fetchAllGroups/{instance}?getParticipants=false"
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            resp1 = await client.get(url1, headers=headers)
+            if resp1.status_code in (200, 201):
+                items1 = _extract_items(resp1.json())
+                for it in items1:
+                    _process_candidate(it)
+                if found_groups_by_jid:
+                    logger.info(f"fetchAllGroups(false) detectó {len(found_groups_by_jid)} grupos.")
+            else:
+                logger.warning(f"fetchAllGroups(false) devolvió status {resp1.status_code}: {resp1.text[:200]}")
     except Exception as e:
-        logger.warning(f"Error consultando fetchAllGroups en Evolution API: {e}")
-    return []
+        logger.warning(f"Excepción en fetchAllGroups(false): {e}")
+
+    # 2. Si no hubo grupos, intentar con getParticipants=true (fuerza a Baileys a cargar grupos en memoria)
+    if not found_groups_by_jid:
+        try:
+            url2 = f"{api_url}/group/fetchAllGroups/{instance}?getParticipants=true"
+            async with httpx.AsyncClient(timeout=35.0) as client:
+                resp2 = await client.get(url2, headers=headers)
+                if resp2.status_code in (200, 201):
+                    items2 = _extract_items(resp2.json())
+                    for it in items2:
+                        _process_candidate(it)
+                    if found_groups_by_jid:
+                        logger.info(f"fetchAllGroups(true) detectó {len(found_groups_by_jid)} grupos.")
+                else:
+                    logger.warning(f"fetchAllGroups(true) devolvió status {resp2.status_code}: {resp2.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Excepción en fetchAllGroups(true): {e}")
+
+    # 3. POST /chat/findChats (Base de datos local PostgreSQL de Evolution API)
+    if not found_groups_by_jid:
+        try:
+            url3 = f"{api_url}/chat/findChats/{instance}"
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp3 = await client.post(url3, headers=headers, json={})
+                if resp3.status_code in (200, 201):
+                    items3 = _extract_items(resp3.json())
+                    for it in items3:
+                        _process_candidate(it)
+                    if found_groups_by_jid:
+                        logger.info(f"POST findChats detectó {len(found_groups_by_jid)} grupos.")
+                else:
+                    logger.warning(f"POST findChats devolvió status {resp3.status_code}: {resp3.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Excepción en POST findChats: {e}")
+
+    # 4. GET /chat/findChats (Fallback para versiones que usan GET)
+    if not found_groups_by_jid:
+        try:
+            url4 = f"{api_url}/chat/findChats/{instance}"
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp4 = await client.get(url4, headers=headers)
+                if resp4.status_code in (200, 201):
+                    items4 = _extract_items(resp4.json())
+                    for it in items4:
+                        _process_candidate(it)
+                    if found_groups_by_jid:
+                        logger.info(f"GET findChats detectó {len(found_groups_by_jid)} grupos.")
+                else:
+                    logger.warning(f"GET findChats devolvió status {resp4.status_code}: {resp4.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Excepción en GET findChats: {e}")
+
+    return list(found_groups_by_jid.values())
 
 
 async def find_group_info(group_jid: str) -> Optional[Dict[str, Any]]:
@@ -1185,6 +1307,62 @@ async def find_group_info(group_jid: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.warning(f"Error consultando findGroupInfos para {clean_jid}: {e}")
     return None
+
+
+async def find_group_info_from_invite_code(invite_code: str) -> Optional[Dict[str, Any]]:
+    """Obtiene información de un grupo a partir del código o enlace de invitación de WhatsApp."""
+    cfg = get_evolution_config()
+    code = invite_code.strip()
+    if "/" in code:
+        code = code.split("/")[-1].split("?")[0].strip()
+
+    headers = get_headers(cfg["api_key"])
+
+    # 1. Estrategia: findGroupInfosFromInviteCode
+    try:
+        url1 = f"{cfg['api_url']}/group/findGroupInfosFromInviteCode/{cfg['instance_name']}?inviteCode={code}"
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp1 = await client.get(url1, headers=headers)
+            if resp1.status_code in (200, 201):
+                data = resp1.json()
+                if isinstance(data, dict) and (data.get("id") or data.get("jid") or data.get("groupJid")):
+                    return data
+    except Exception as e:
+        logger.warning(f"Error consultando findGroupInfosFromInviteCode para {code}: {e}")
+
+    # 2. Estrategia fallback: inviteInfo
+    try:
+        url2 = f"{cfg['api_url']}/group/inviteInfo/{cfg['instance_name']}?inviteCode={code}"
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp2 = await client.get(url2, headers=headers)
+            if resp2.status_code in (200, 201):
+                data = resp2.json()
+                if isinstance(data, dict) and (data.get("id") or data.get("jid") or data.get("groupJid")):
+                    return data
+    except Exception as e:
+        logger.warning(f"Error consultando inviteInfo para {code}: {e}")
+
+    return None
+
+
+async def accept_group_invite_code(invite_code: str) -> Optional[Dict[str, Any]]:
+    """Une la instancia de WhatsApp al grupo mediante su código de invitación."""
+    cfg = get_evolution_config()
+    code = invite_code.strip()
+    if "/" in code:
+        code = code.split("/")[-1].split("?")[0].strip()
+
+    headers = get_headers(cfg["api_key"])
+    url = f"{cfg['api_url']}/group/acceptInviteCode/{cfg['instance_name']}?inviteCode={code}"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json={})
+            if resp.status_code in (200, 201):
+                return resp.json()
+    except Exception as e:
+        logger.warning(f"Error uniendo al grupo mediante inviteCode {code}: {e}")
+    return None
+
 
 
 async def get_group_invite_code(group_jid: str) -> Optional[str]:

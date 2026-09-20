@@ -9,6 +9,8 @@ from datetime import datetime
 
 import httpx
 
+from core.rate_limiter import receipt_quota_manager
+
 logger = logging.getLogger("receipt_service")
 
 # Bancos y billeteras comunes en Argentina
@@ -436,6 +438,65 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
     if not clean_b64:
         return None
 
+    # Pre-filtro de decodificación y tamaño (> 8 MB)
+    try:
+        raw_bytes = base64.b64decode(clean_b64)
+    except Exception as b64_err:
+        logger.debug(f"Error decodificando base64 de imagen: {b64_err}")
+        return None
+
+    if len(raw_bytes) > 8 * 1024 * 1024:
+        logger.info(f"Imagen rechazada por tamaño excesivo ({len(raw_bytes) / 1024 / 1024:.2f} MB > 8 MB).")
+        return {
+            "is_receipt": False,
+            "bank": None,
+            "amount": None,
+            "amount_formatted": None,
+            "operation_id": None,
+            "date": None,
+            "recipient": None,
+            "summary": "Imagen rechazada por tamaño excesivo (> 8MB)"
+        }
+
+    # Pre-filtro de dimensiones mínimas (< 200x200)
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            width, height = img.size
+            if width < 200 or height < 200:
+                logger.info(f"Imagen rechazada por resolución insuficiente ({width}x{height} < 200x200).")
+                return {
+                    "is_receipt": False,
+                    "bank": None,
+                    "amount": None,
+                    "amount_formatted": None,
+                    "operation_id": None,
+                    "date": None,
+                    "recipient": None,
+                    "summary": "Imagen rechazada por resolución insuficiente (< 200x200)"
+                }
+    except Exception as img_err:
+        logger.debug(f"Error comprobando dimensiones de imagen: {img_err}")
+
+    # Pre-filtro de percepción negativa (dHash contra historial no-comprobante)
+    p_hash = ""
+    try:
+        p_hash = compute_perceptual_hash(raw_bytes)
+        if p_hash and receipt_quota_manager.is_known_non_receipt(p_hash):
+            logger.info(f"Descarte instantáneo por similitud con imagen no-comprobante previa (pHash: {p_hash}).")
+            return {
+                "is_receipt": False,
+                "bank": None,
+                "amount": None,
+                "amount_formatted": None,
+                "operation_id": None,
+                "date": None,
+                "recipient": None,
+                "summary": "Descarte instantáneo por similitud con imagen no-comprobante previa"
+            }
+    except Exception as ph_err:
+        logger.debug(f"Error verificando percepción negativa: {ph_err}")
+
     prompt_text = (
         "Eres un auditor y clasificador experto de comprobantes de pago y transferencias bancarias en Argentina.\n"
         "Analiza la imagen adjunta para determinar con precisión si es un COMPROBANTE DE PAGO BANCARIO o TRANSFERENCIA REAL.\n\n"
@@ -509,6 +570,8 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
 
                     # Si Gemini determinó que NO es un comprobante
                     if not parsed.get("is_receipt"):
+                        if p_hash:
+                            receipt_quota_manager.record_non_receipt(p_hash)
                         return {
                             "is_receipt": False,
                             "bank": None,
@@ -527,14 +590,8 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
                         except Exception:
                             parsed["amount_formatted"] = f"${parsed['amount']}"
 
-                    # Calcular perceptual hash de la imagen del comprobante
-                    try:
-                        raw_bytes = base64.b64decode(clean_b64)
-                        p_hash = compute_perceptual_hash(raw_bytes)
-                        if p_hash:
-                            parsed["phash"] = p_hash
-                    except Exception as ph_err:
-                        logger.debug(f"Error calculando pHash en analyze_image_with_gemini: {ph_err}")
+                    if p_hash:
+                        parsed["phash"] = p_hash
 
                     res_parts = []
                     if parsed.get("bank"):

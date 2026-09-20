@@ -1,6 +1,7 @@
 import os
 import secrets
 import pyotp
+import urllib.parse
 from typing import Optional
 
 from fastapi import APIRouter, Request, Form
@@ -13,6 +14,7 @@ from core.security import (
     create_preauth_cookie,
     verify_preauth_cookie
 )
+from core.rate_limiter import auth_rate_limiter
 from core.templates import render_template
 from telegram_bot import send_telegram_message
 
@@ -23,6 +25,12 @@ async def login_page(request: Request, error: Optional[str] = None, msg: Optiona
     session_user = verify_session_cookie(request.cookies.get("session_token"))
     if session_user:
         return RedirectResponse(url="/", status_code=302)
+
+    client_ip = request.client.host if request.client else "unknown"
+    is_locked, remaining_seconds = auth_rate_limiter.is_locked_out(client_ip)
+    if is_locked:
+        minutos = max(1, (remaining_seconds + 59) // 60)
+        error = f"Demasiados intentos fallidos. Bloqueado temporalmente ({minutos} min)."
         
     message_html = ""
     if error:
@@ -33,11 +41,24 @@ async def login_page(request: Request, error: Optional[str] = None, msg: Optiona
     return render_template("login.html", {"MESSAGE_HTML": message_html})
 
 @router.post("/login")
-async def login_submit(username: str = Form(...), password: str = Form(...)):
+async def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    client_ip = request.client.host if request.client else "unknown"
+    is_locked, remaining_seconds = auth_rate_limiter.is_locked_out(client_ip)
+    if is_locked:
+        minutos = max(1, (remaining_seconds + 59) // 60)
+        err_msg = urllib.parse.quote(f"Demasiados intentos fallidos. Bloqueado temporalmente ({minutos} min).")
+        return RedirectResponse(url=f"/login?error={err_msg}", status_code=302)
+
     user = username.strip().lower()
     passw = password.strip()
     
     if not database.verify_admin_credentials(user, passw):
+        auth_rate_limiter.record_failed_attempt(client_ip)
+        is_locked_now, remaining_sec_now = auth_rate_limiter.is_locked_out(client_ip)
+        if is_locked_now:
+            minutos = max(1, (remaining_sec_now + 59) // 60)
+            err_msg = urllib.parse.quote(f"Demasiados intentos fallidos. Bloqueado temporalmente ({minutos} min).")
+            return RedirectResponse(url=f"/login?error={err_msg}", status_code=302)
         return RedirectResponse(url="/login?error=Usuario+o+contrase%C3%B1a+incorrectos", status_code=302)
 
     otp = f"{secrets.randbelow(900000) + 100000}"
@@ -85,6 +106,13 @@ async def recover_password():
 
 @router.get("/2fa", response_class=HTMLResponse)
 async def twofa_page(request: Request, error: Optional[str] = None):
+    client_ip = request.client.host if request.client else "unknown"
+    is_locked, remaining_seconds = auth_rate_limiter.is_locked_out(client_ip)
+    if is_locked:
+        minutos = max(1, (remaining_seconds + 59) // 60)
+        err_msg = urllib.parse.quote(f"Demasiados intentos fallidos. Bloqueado temporalmente ({minutos} min).")
+        return RedirectResponse(url=f"/login?error={err_msg}", status_code=302)
+
     preauth_user = verify_preauth_cookie(request.cookies.get("preauth_token"))
     if not preauth_user:
         return RedirectResponse(url="/login", status_code=302)
@@ -94,6 +122,13 @@ async def twofa_page(request: Request, error: Optional[str] = None):
 
 @router.post("/2fa")
 async def twofa_submit(request: Request, otp_code: str = Form(...)):
+    client_ip = request.client.host if request.client else "unknown"
+    is_locked, remaining_seconds = auth_rate_limiter.is_locked_out(client_ip)
+    if is_locked:
+        minutos = max(1, (remaining_seconds + 59) // 60)
+        err_msg = urllib.parse.quote(f"Demasiados intentos fallidos. Bloqueado temporalmente ({minutos} min).")
+        return RedirectResponse(url=f"/login?error={err_msg}", status_code=302)
+
     preauth_user = verify_preauth_cookie(request.cookies.get("preauth_token"))
     if not preauth_user:
         return RedirectResponse(url="/login?error=Sesi%C3%B3n+expirada.+Intenta+nuevamente.", status_code=302)
@@ -111,8 +146,15 @@ async def twofa_submit(request: Request, otp_code: str = Form(...)):
                 is_valid = True
 
     if not is_valid:
+        auth_rate_limiter.record_failed_attempt(client_ip)
+        is_locked_now, remaining_sec_now = auth_rate_limiter.is_locked_out(client_ip)
+        if is_locked_now:
+            minutos = max(1, (remaining_sec_now + 59) // 60)
+            err_msg = urllib.parse.quote(f"Demasiados intentos fallidos. Bloqueado temporalmente ({minutos} min).")
+            return RedirectResponse(url=f"/login?error={err_msg}", status_code=302)
         return RedirectResponse(url="/2fa?error=C%C3%B3digo+inv%C3%A1lido+o+expirado", status_code=302)
 
+    auth_rate_limiter.reset_attempts(client_ip)
     session = create_session_cookie(preauth_user)
     response = RedirectResponse(url="/", status_code=302)
     response.set_cookie(

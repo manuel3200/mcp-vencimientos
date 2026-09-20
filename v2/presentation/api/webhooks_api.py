@@ -17,6 +17,7 @@ from core.utils import format_ars
 from core.config import settings as app_settings
 from services.chatwoot_bot_service import process_chatwoot_command
 import services.receipt_service as receipt_service
+from core.rate_limiter import rate_limiter, receipt_quota_manager, gemini_circuit_breaker
 import base64
 
 logger = logging.getLogger("integrations")
@@ -325,6 +326,15 @@ async def whatsapp_webhook(request: Request):
     if bot_mode == "private" and is_group and not is_owner:
         return JSONResponse({"status": "ignored", "reason": "bot_mode_private_group_ignored"})
 
+    # 3.1 RATE LIMITING PERIMETRAL (Anti-Spam / Anti-DDoS)
+    if is_group and not rate_limiter.check_group_rate_limit(group_jid)[0]:
+        logger.warning(f"Rate limit de grupo excedido para {group_jid}")
+        return JSONResponse({"status": "ignored", "reason": "group_rate_limit_exceeded"})
+
+    if not is_group and not is_owner and not rate_limiter.check_user_rate_limit(sender_phone)[0]:
+        logger.warning(f"Rate limit de usuario excedido para {sender_phone}")
+        return JSONResponse({"status": "ignored", "reason": "user_rate_limit_exceeded"})
+
     # 4. CONTROL DE GRUPOS Y WHITELIST (¿Está habilitado el bot en este grupo?)
     if is_group:
         # 4.0 BLOQUEO TEMPRANO Y ESTRICTO DE SEGURIDAD EN GRUPOS: Comandos administrativos o confidenciales
@@ -358,6 +368,9 @@ async def whatsapp_webhook(request: Request):
         # /tagall, /todos, @everyone
         if re.search(r'^/(?:tagall|todos|mencionartodos)\b|^@everyone\b', text_lower):
             if is_owner:
+                if not rate_limiter.check_tagall_throttle(group_jid)[0]:
+                    await whatsapp_client.send_text_message(group_jid, "⏳ Por favor espera antes de usar /tagall nuevamente.")
+                    return JSONResponse({"status": "ignored", "reason": "tagall_throttled"})
                 tag_msg = re.sub(r'^/(?:tagall|todos|mencionartodos)\s*|^@everyone\s*', '', text, flags=re.IGNORECASE).strip()
                 res_tag = await whatsapp_client.send_group_tagall(group_jid, message=tag_msg, sender_name=data.get("pushName", "Admin"))
                 return JSONResponse({"status": "ok", "action": "group_tagall", "details": res_tag})
@@ -1015,6 +1028,12 @@ async def whatsapp_webhook(request: Request):
     detected_info = None
     computed_phash = ""
 
+    # Control de cuota horaria de comprobantes (máx 5 comprobantes/hora por teléfono)
+    if is_media or has_receipt_intent:
+        if not receipt_quota_manager.check_receipt_quota(sender_phone)[0]:
+            logger.warning(f"Cuota horaria de comprobantes excedida para {sender_phone}")
+            return JSONResponse({"status": "ignored", "reason": "receipt_hourly_quota_exceeded"})
+
     # 4. Análisis profundo de media si está presente
     if is_media and key.get("id"):
         try:
@@ -1049,14 +1068,26 @@ async def whatsapp_webhook(request: Request):
                             if not is_confirmed_receipt and pdf_img_bytes:
                                 try:
                                     pdf_img_b64 = base64.b64encode(pdf_img_bytes).decode("utf-8")
-                                    gemini_res = await receipt_service.analyze_image_with_gemini(pdf_img_b64, mime_type="image/png")
-                                    if gemini_res and gemini_res.get("is_receipt"):
-                                        detected_info = gemini_res
-                                        is_confirmed_receipt = True
-                                        if gemini_res.get("phash"):
-                                            computed_phash = gemini_res["phash"]
+                                    if gemini_circuit_breaker.can_execute():
+                                        try:
+                                            gemini_res = await receipt_service.analyze_image_with_gemini(pdf_img_b64, mime_type="image/png")
+                                            if gemini_res is not None:
+                                                gemini_circuit_breaker.record_success()
+                                            else:
+                                                gemini_circuit_breaker.record_failure()
+
+                                            if gemini_res and gemini_res.get("is_receipt"):
+                                                detected_info = gemini_res
+                                                is_confirmed_receipt = True
+                                                if gemini_res.get("phash"):
+                                                    computed_phash = gemini_res["phash"]
+                                        except Exception as g_err:
+                                            gemini_circuit_breaker.record_failure()
+                                            logger.debug(f"Error analizando imagen incrustada de PDF con Gemini: {g_err}")
+                                    else:
+                                        logger.warning("CircuitBreaker de Gemini Vision en estado OPEN. Omitiendo Gemini para imagen de PDF.")
                                 except Exception as g_err:
-                                    logger.debug(f"Error analizando imagen incrustada de PDF con Gemini: {g_err}")
+                                    logger.debug(f"Error preparando imagen incrustada de PDF: {g_err}")
 
                             # Si el cliente escribió palabras explícitas de pago en el caption y contiene datos bancarios
                             if not is_confirmed_receipt and has_receipt_intent:
@@ -1079,23 +1110,34 @@ async def whatsapp_webhook(request: Request):
                     except Exception:
                         pass
 
-                    # 1. Probar Google Gemini Vision con criterio estricto de clasificación
-                    try:
-                        detected_info = await receipt_service.analyze_image_with_gemini(
-                            b64_str,
-                            mime_type=mime or "image/jpeg"
-                        )
-                        if detected_info and detected_info.get("is_receipt"):
-                            is_confirmed_receipt = True
-                            logger.info(f"Gemini confirmó comprobante de pago de {client_name} ({sender_phone}): {detected_info.get('summary')}")
-                        elif detected_info and detected_info.get("is_receipt") is False:
-                            logger.info(f"Gemini descartó imagen de {client_name} ({sender_phone}): NO es comprobante de pago.")
-                            is_confirmed_receipt = False
-                    except Exception as e:
-                        logger.debug(f"Error analizando imagen con Gemini: {e}")
+                    # 1. Probar Google Gemini Vision con criterio estricto protegido por CircuitBreaker
+                    if gemini_circuit_breaker.can_execute():
+                        try:
+                            detected_info = await receipt_service.analyze_image_with_gemini(
+                                b64_str,
+                                mime_type=mime or "image/jpeg"
+                            )
+                            if detected_info is not None:
+                                gemini_circuit_breaker.record_success()
+                            else:
+                                gemini_circuit_breaker.record_failure()
 
-                    # 2. Respaldo OCR Local con Tesseract si la IA no confirmó el comprobante (ej: si hay anuncios publicitarios al pie de página)
-                    if not is_confirmed_receipt and img_bytes:
+                            if detected_info and detected_info.get("is_receipt"):
+                                is_confirmed_receipt = True
+                                logger.info(f"Gemini confirmó comprobante de pago de {client_name} ({sender_phone}): {detected_info.get('summary')}")
+                            elif detected_info and detected_info.get("is_receipt") is False:
+                                logger.info(f"Gemini descartó imagen de {client_name} ({sender_phone}): NO es comprobante de pago.")
+                                is_confirmed_receipt = False
+                        except Exception as e:
+                            gemini_circuit_breaker.record_failure()
+                            logger.debug(f"Error analizando imagen con Gemini: {e}")
+                    else:
+                        logger.warning("CircuitBreaker de Gemini Vision en estado OPEN. Fallback directo a OCR local Tesseract.")
+
+                    # 2. Respaldo OCR Local con Tesseract únicamente si la IA no respondió o hubo error, pero NO si fue descartada explícitamente
+                    if detected_info and detected_info.get("is_receipt") is False:
+                        logger.info(f"Omitiendo OCR local: imagen descartada por pre-filtro o IA ({detected_info.get('summary')})")
+                    elif not is_confirmed_receipt and img_bytes:
                         try:
                             ocr_text = receipt_service.extract_text_from_image(img_bytes)
                             if ocr_text:

@@ -412,24 +412,39 @@ def approve_pending_payment(
                     has_prior_payments = False
                     recent_auto_p = None
                     try:
-                        # Buscar si ya existe un cobro registrado en las últimas 48 horas para esta cuenta o cliente
-                        # (por ejemplo, creado automáticamente por WhatsApp al enviar las credenciales)
+                        # Buscar si ya existe un cobro registrado automáticamente en las últimas 48 horas
+                        # (por ejemplo, generado como 'WhatsApp Auto' o con notas automáticas al enviar las credenciales)
                         if amt_val > 0:
-                            recent_auto_p = conn_chk.execute("""
+                            row_auto = conn_chk.execute("""
                                 SELECT * FROM payments
                                 WHERE account_id = ?
                                   AND (status IS NULL OR status != 'reversed')
+                                  AND (
+                                      payment_method IN ('WhatsApp Auto', 'Detección Auto', 'Auto')
+                                      OR notes LIKE '%WhatsApp Auto%'
+                                      OR notes LIKE '%Renovación HTTP Custom%'
+                                      OR notes LIKE '%Venta HTTP Custom%'
+                                  )
                                   AND datetime(created_at) >= datetime('now', '-48 hours')
                                 ORDER BY id DESC LIMIT 1
                             """, (acc_id,)).fetchone()
-                            if not recent_auto_p and client_id:
-                                recent_auto_p = conn_chk.execute("""
+                            if not row_auto and client_id:
+                                row_auto = conn_chk.execute("""
                                     SELECT * FROM payments
                                     WHERE client_id = ? AND amount = ?
                                       AND (status IS NULL OR status != 'reversed')
+                                      AND (
+                                          payment_method IN ('WhatsApp Auto', 'Detección Auto', 'Auto')
+                                          OR notes LIKE '%WhatsApp Auto%'
+                                          OR notes LIKE '%Renovación HTTP Custom%'
+                                          OR notes LIKE '%Venta HTTP Custom%'
+                                      )
                                       AND datetime(created_at) >= datetime('now', '-48 hours')
                                     ORDER BY id DESC LIMIT 1
                                 """, (client_id, amt_val)).fetchone()
+
+                            if row_auto:
+                                recent_auto_p = dict(row_auto)
 
                         p_cnt = conn_chk.execute("SELECT COUNT(*) as cnt FROM payments WHERE account_id = ?", (acc_id,)).fetchone()
                         has_prior_payments = bool(p_cnt and p_cnt["cnt"] > 0)
@@ -505,13 +520,21 @@ def approve_pending_payment(
                         with conn:
                             recent_orphan_p = None
                             if client_id:
-                                recent_orphan_p = conn.execute("""
+                                row_orphan = conn.execute("""
                                     SELECT * FROM payments
                                     WHERE client_id = ? AND amount = ?
                                       AND (status IS NULL OR status != 'reversed')
+                                      AND (
+                                          payment_method IN ('WhatsApp Auto', 'Detección Auto', 'Auto')
+                                          OR notes LIKE '%WhatsApp Auto%'
+                                          OR notes LIKE '%Renovación HTTP Custom%'
+                                          OR notes LIKE '%Venta HTTP Custom%'
+                                      )
                                       AND datetime(created_at) >= datetime('now', '-48 hours')
                                     ORDER BY id DESC LIMIT 1
                                 """, (client_id, amt_val)).fetchone()
+                                if row_orphan:
+                                    recent_orphan_p = dict(row_orphan)
 
                             if recent_orphan_p:
                                 existing_p_id = recent_orphan_p["id"]

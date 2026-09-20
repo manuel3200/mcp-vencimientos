@@ -180,7 +180,64 @@ def run_tests():
     finally:
         conn.close()
 
-    print("    ✅ Aprobación y Pagos: 12/12 casos de prueba superados exitosamente.")
+    # 11. Prueba de Herramientas MCP para Gestión de Comprobantes
+    import asyncio
+    from mcp_server.tools import finance_tools, system_tools
+
+    p_mcp1 = database.create_pending_payment(
+        sender_phone="5491144445555",
+        client_name="Cliente MCP Aprobación",
+        amount=6500.0,
+        bank="Mercado Pago",
+        operation_id="OP-MCP-101"
+    )
+    assert p_mcp1["id"] > 0
+
+    # Test listar_comprobantes_pendientes
+    list_output = finance_tools.listar_comprobantes_pendientes(estado="pending")
+    assert "Cliente MCP Aprobación" in list_output
+    assert "#P" in list_output
+    assert "6.500" in list_output
+
+    # Test aprobar_comprobante_pago
+    app_output = asyncio.run(finance_tools.aprobar_comprobante_pago(
+        pago_id=p_mcp1["id"],
+        notificar_cliente=False
+    ))
+    assert "APROBADO EXITOSAMENTE" in app_output
+    assert str(p_mcp1["id"]) in app_output
+
+    p_mcp1_check = database.get_pending_payment(p_mcp1["id"])
+    assert p_mcp1_check["status"] == "approved"
+
+    # Test rechazar_comprobante_pago
+    p_mcp2 = database.create_pending_payment(
+        sender_phone="5491166667777",
+        client_name="Cliente MCP Rechazo",
+        amount=3000.0,
+        bank="Brubank",
+        operation_id="OP-MCP-102"
+    )
+    rej_output = asyncio.run(finance_tools.rechazar_comprobante_pago(
+        pago_id=p_mcp2["id"],
+        motivo="Ticket borroso",
+        notificar_cliente=False
+    ))
+    assert "RECHAZADO" in rej_output
+    assert "Ticket borroso" in rej_output
+
+    p_mcp2_check = database.get_pending_payment(p_mcp2["id"])
+    assert p_mcp2_check["status"] == "rejected"
+
+    # 12. Prueba de Radiografía Ejecutiva 360° del Negocio
+    exec_output = asyncio.run(system_tools.resumen_ejecutivo_negocio(detallado=True))
+    assert "RADIOGRAFÍA EJECUTIVA 360°" in exec_output
+    assert "FINANZAS & RENTABILIDAD" in exec_output
+    assert "ESTADO OPERATIVO" in exec_output
+    assert "INVENTARIO & STOCK" in exec_output
+
+    print("    ✅ Aprobación y Pagos: 15/15 casos de prueba superados exitosamente (incluye MCP y Radiografía 360°).")
 
 if __name__ == "__main__":
     run_tests()
+

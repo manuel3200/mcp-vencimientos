@@ -433,3 +433,112 @@ def configurar_automatizacion_whatsapp(
         f"• Bot Auto-Respuesta: {'Activado' if new_reply else 'Desactivado'}"
     )
 
+
+@mcp.tool()
+async def resumen_ejecutivo_negocio(detallado: bool = False) -> str:
+    """Genera una RADIOGRAFÍA EJECUTIVA 360° integral del negocio en tiempo real:
+    - 💰 Finanzas: Ingresos cobrados este mes, costos, ganancias netas y dinero a cobrar en los próximos 7 días.
+    - 🧾 Comprobantes: Cantidad de comprobantes pendientes de aprobación por OCR/WhatsApp.
+    - ⏳ Vencimientos Críticos: Cuentas que vencen hoy o están vencidas sin cobrar.
+    - 🚨 Cuentas Caídas: Casilleros o cuentas caídas que requieren reemplazo urgente.
+    - 📦 Stock & Inventario: Salud del inventario, cuentas libres y alertas de plataformas en nivel bajo/crítico.
+    - 🟢 Conectividad WhatsApp: Estado de la sesión de Evolution API.
+    - detallado: Si es True, lista los nombres de clientes y correos de las cuentas críticas.
+    """
+    # 1. Finanzas
+    try:
+        b = database.get_financial_balance(period="mes_actual")
+        inc_str = database.format_ars(b.get("collected_income", 0.0))
+        cost_str = database.format_ars(b.get("collected_costs", 0.0))
+        prof_str = database.format_ars(b.get("collected_profit", 0.0))
+        pend_7d = database.format_ars(b.get("pending_receivables_7d", 0.0))
+        proj_prof = database.format_ars(b.get("projected_monthly_profit", 0.0))
+        active_subs = b.get("active_subscriptions_total", 0)
+    except Exception as e:
+        logger.warning(f"Error consultando balance financiero: {e}")
+        inc_str = cost_str = prof_str = pend_7d = proj_prof = "Error"
+        active_subs = 0
+
+    # 2. Comprobantes pendientes
+    try:
+        pending_receipts = database.count_pending_payments()
+    except Exception:
+        pending_receipts = 0
+
+    # 3. Vencimientos de hoy / impagas
+    try:
+        due_today_accs = database.get_due_today_unpaid_accounts()
+    except Exception:
+        due_today_accs = []
+
+    # 4. Cuentas caídas
+    try:
+        fallen_accs = database.get_fallen_accounts()
+    except Exception:
+        fallen_accs = []
+
+    # 5. Salud de Stock
+    try:
+        stock_health = database.get_stock_health_summary()
+        total_free_accs = stock_health.get("total_free_accounts", 0)
+        total_free_profiles = stock_health.get("total_free_profiles", 0)
+        low_stock_platforms = stock_health.get("low_stock_platforms", [])
+    except Exception:
+        total_free_accs = total_free_profiles = 0
+        low_stock_platforms = []
+
+    # 6. Conectividad WhatsApp
+    try:
+        wa_status = await whatsapp_client.check_connection_status()
+        wa_connected = bool(wa_status.get("connected"))
+        wa_label = "🟢 Conectado (En línea)" if wa_connected else "🔴 Desconectado (Requiere QR)"
+    except Exception:
+        wa_label = "⚠️ No consultable"
+
+    # Construcción del informe ejecutivo
+    lines = [
+        "🏢 <b>RADIOGRAFÍA EJECUTIVA 360° DE STREAMVAULT:</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"💰 <b>FINANZAS & RENTABILIDAD (Mes Actual):</b>",
+        f"• Ingresos Cobrados: <b>{inc_str}</b>",
+        f"• Costos de Proveedores: {cost_str}",
+        f"• 💵 <b>GANANCIA NETA REAL: {prof_str}</b>",
+        f"• ⏳ A cobrar en próximos 7 días: <b>{pend_7d}</b>",
+        f"• 🎯 Proyección de ganancia mensual: <b>{proj_prof}</b>",
+        f"• Suscripciones activas totales: <b>{active_subs}</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"🚨 <b>ESTADO OPERATIVO & ALERTAS CRÍTICAS:</b>",
+        f"• 🧾 Comprobantes pendientes de revisión: <b>{pending_receipts}</b>" + (" ⚠️ <i>(Revisar con listar_comprobantes_pendientes)</i>" if pending_receipts > 0 else " ✅ (Al día)"),
+        f"• ⏳ Cuentas que vencen HOY sin pagar: <b>{len(due_today_accs)}</b>",
+        f"• ⚡ Cuentas caídas que requieren cambio: <b>{len(fallen_accs)}</b>" + (" 🚨 <i>(Reemplazar urgente)</i>" if fallen_accs else " ✅ (Cero caídas)"),
+        f"• 💬 WhatsApp Evolution API: <b>{wa_label}</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        f"📦 <b>INVENTARIO & STOCK DISPONIBLE:</b>",
+        f"• Cuentas completas libres: <b>{total_free_accs}</b>",
+        f"• Perfiles de pantalla libres: <b>{total_free_profiles}</b>"
+    ]
+
+    if low_stock_platforms:
+        lsp_str = ", ".join([f"{p['platform']} ({p['available']} disp.)" for p in low_stock_platforms])
+        lines.append(f"• ⚠️ <b>Alerta de stock bajo en:</b> {lsp_str}")
+    else:
+        lines.append("• ✨ Stock en niveles saludables en todas las plataformas.")
+
+    # Detalle expandido opcional
+    if detallado:
+        if due_today_accs:
+            lines.append("\n📋 <b>Cuentas que vencen HOY:</b>")
+            for a in due_today_accs[:5]:
+                lines.append(f"  • {a.get('client_name') or 'Cliente'} - {a.get('platform')}: <code>{a.get('email')}</code> ({database.format_ars(a.get('price'))})")
+            if len(due_today_accs) > 5:
+                lines.append(f"  <i>... y {len(due_today_accs) - 5} cuentas más.</i>")
+
+        if fallen_accs:
+            lines.append("\n🚨 <b>Cuentas caídas pendientes:</b>")
+            for f_acc in fallen_accs[:5]:
+                lines.append(f"  • ID #{f_acc['id']} - {f_acc.get('platform')}: <code>{f_acc.get('email')}</code> (Cliente: {f_acc.get('client_name') or '-'})")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
+
+

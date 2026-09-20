@@ -151,3 +151,217 @@ def configurar_datos_pago(
         f"🎉 Ya están disponibles e integrados en todas las plantillas de WhatsApp mediante la etiqueta {{metodos_pago}}."
     )
 
+
+@mcp.tool()
+def listar_comprobantes_pendientes(
+    estado: str = "pending",
+    limite: int = 10
+) -> str:
+    """Lista los comprobantes de pago registrados por OCR o recibidos en el sistema según su estado:
+    - estado: 'pending' (pendientes de aprobación, por defecto), 'approved' (aprobados), 'rejected' (rechazados) o 'all' (todos).
+    - limite: Cantidad máxima de comprobantes a mostrar (por defecto 10).
+    Muestra el ID (#P<id>), cliente, contacto, monto, entidad bancaria, número de operación y fecha detectada.
+    """
+    clean_status = estado.strip().lower()
+    items = database.list_pending_payments(status=clean_status, limit=limite)
+    if not items:
+        if clean_status == "pending":
+            return "🎉 ¡Excelente! No hay comprobantes de pago pendientes de revisión en este momento."
+        return f"📋 No se encontraron comprobantes con estado '{clean_status}'."
+
+    count_pending = database.count_pending_payments()
+    lines = [
+        f"🧾 <b>COMPROBANTES DE PAGO REGISTRADOS (Estado: {clean_status.upper()} - {len(items)} items):</b>",
+        f"<i>Total pendientes de revisión en el sistema: {count_pending}</i>\n"
+    ]
+    for p in items:
+        pid = p["id"]
+        c_name = p.get("client_name") or "Cliente no identificado"
+        c_phone = p.get("sender_phone") or p.get("client_whatsapp") or "-"
+        monto_str = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+        banco = p.get("bank") or "No identificado"
+        op_id = p.get("operation_id") or "-"
+        fecha = p.get("date_detected") or p.get("created_at") or "-"
+        st = p.get("status", "pending").upper()
+        st_ico = "⏳" if st == "PENDING" else ("✅" if st == "APPROVED" else "❌")
+
+        svc_part = ""
+        if p.get("platform"):
+            acc_mail = f" ({p.get('account_email')})" if p.get("account_email") else ""
+            svc_part = f"\n  📺 Servicio: <b>{p.get('platform')}</b>{acc_mail}"
+
+        notes_part = f"\n  📝 Notas: {p['notes']}" if p.get("notes") else ""
+
+        lines.append(
+            f"{st_ico} <b>Comprobante #P{pid}</b> [{st}]\n"
+            f"  👤 Cliente: <b>{c_name}</b> (WhatsApp: <code>{c_phone}</code>)\n"
+            f"  💰 Monto: <b>{monto_str}</b> | Banco: <b>{banco}</b> | Op: <code>{op_id}</code>\n"
+            f"  📅 Fecha: {fecha}"
+            f"{svc_part}"
+            f"{notes_part}"
+        )
+
+    lines.append("\n💡 <i>Para aprobar un comprobante usa:</i> <code>aprobar_comprobante_pago(pago_id=...)</code>")
+    lines.append("💡 <i>Para rechazarlo usa:</i> <code>rechazar_comprobante_pago(pago_id=..., motivo=...)</code>")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+async def aprobar_comprobante_pago(
+    pago_id: int,
+    renovar_todas: bool = False,
+    monto_personalizado: Optional[float] = None,
+    notificar_cliente: bool = True
+) -> str:
+    """Aprueba un comprobante de pago (#P<id>):
+    - Asienta el dinero en el balance financiero de ingresos cobrados.
+    - Extiende 30 días el vencimiento de la suscripción vinculada (o de todas las cuentas activas del cliente si renovar_todas=True).
+    - Marca el comprobante como 'approved'.
+    - Notifica al cliente por WhatsApp con confirmación oficial si notificar_cliente=True.
+    - Envía alerta de confirmación al bot de Telegram del administrador.
+    
+    Parámetros:
+    - pago_id: Número ID del comprobante a aprobar (ej: 12 para #P12).
+    - renovar_todas: Si es True, renueva todas las cuentas activas del cliente en lugar de solo una.
+    - monto_personalizado: (Opcional) Si el OCR leyó un monto incorrecto, puedes indicar el monto real en ARS.
+    - notificar_cliente: Si es True (por defecto), envía mensaje de confirmación y agradecimiento al cliente por WhatsApp.
+    """
+    res = database.approve_pending_payment(
+        payment_id=pago_id,
+        admin_user="Gemini Spark (MCP)",
+        custom_amount=monto_personalizado,
+        renew_all=renovar_todas
+    )
+    if not res.get("success"):
+        return f"❌ Error al aprobar comprobante #P{pago_id}: {res.get('error')}"
+
+    p = res.get("payment", {})
+    c_name = p.get("client_name") or "Cliente"
+    amt_fmt = p.get("amount_formatted") or database.format_ars(p.get("amount") or 0.0)
+    bank_name = p.get("bank") or "Transferencia"
+    c_phone = p.get("sender_phone") or p.get("client_whatsapp") or ""
+    renewed = res.get("renewed_accounts", [])
+
+    # 1. Notificación por WhatsApp al cliente si corresponde
+    wa_notif_status = "⏸️ Notificación al cliente omitida (notificar_cliente=False)"
+    if notificar_cliente and c_phone:
+        c_clean = database.clean_whatsapp_phone(c_phone)
+        if c_clean:
+            if renewed and len(renewed) > 1:
+                lines_ren = "\n".join([f"• *{r['platform']}*: `{r['email']}` (Vence: {r.get('new_expiry_date')})" for r in renewed])
+                c_msg = (
+                    f"🎉 ¡Hola {c_name}! Confirmamos la recepción de tu pago de *{amt_fmt}* ({bank_name})"
+                    f" y la renovación exitosa de tus servicios activos:\n\n{lines_ren}\n\n"
+                    f"¡Tus suscripciones quedaron al día! Muchas gracias por tu pago y preferencia. 🙌✨"
+                )
+            else:
+                svc_desc = p.get("platform") or (renewed[0]["platform"] if renewed else "Suscripción")
+                new_exp = (renewed[0]["new_expiry_date"] if renewed else p.get("account_expiry")) or "extendido (+30 días)"
+                c_msg = (
+                    f"🎉 ¡Hola {c_name}! Confirmamos la recepción de tu pago de *{amt_fmt}* ({bank_name}).\n\n"
+                    f"Tu servicio de *{svc_desc}* quedó renovado con éxito hasta el *{new_exp}*. "
+                    f"¡Muchas gracias por tu pago y confianza! 🙌✨"
+                )
+            try:
+                wa_res = await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+                if wa_res.get("success"):
+                    wa_notif_status = f"📲 Confirmación enviada al WhatsApp del cliente ({c_clean})"
+                else:
+                    wa_notif_status = f"⚠️ Falló envío de WhatsApp al cliente: {wa_res.get('error')}"
+            except Exception as e:
+                wa_notif_status = f"⚠️ Excepción al enviar WhatsApp: {e}"
+
+    # 2. Notificación en Telegram para auditoría
+    try:
+        tg_text = (
+            f"✅ <b>COMPROBANTE #P{pago_id} APROBADO (GEMINI MCP)</b>\n\n"
+            f"• Cliente: <b>{c_name}</b>\n"
+            f"• Monto Acreditado: <b>{amt_fmt}</b> ({bank_name})\n"
+            f"• Cuentas Renovadas: <b>{len(renewed) if renewed else 1}</b>\n"
+            f"• Impactado en Balance Financiero & CRM."
+        )
+        await send_telegram_message(tg_text)
+    except Exception as e:
+        logger.warning(f"Error enviando notificación a Telegram: {e}")
+
+    # Resumen estructurado para Gemini
+    out = [
+        f"✅ <b>COMPROBANTE #P{pago_id} APROBADO EXITOSAMENTE:</b>",
+        f"• Cliente: <b>{c_name}</b> (WhatsApp: {c_phone})",
+        f"• Monto Ingresado: <b>{amt_fmt}</b> ({bank_name})",
+        f"• Estado: <b>Aprobado (Impactado en Finanzas)</b>",
+        f"• Notificación: {wa_notif_status}"
+    ]
+    if renewed:
+        out.append(f"• Servicios renovados (+30 días):")
+        for r in renewed:
+            out.append(f"  - <b>{r['platform']}</b> ({r['email']}) ➔ Nuevo vencimiento: <code>{r.get('new_expiry_date')}</code>")
+    return "\n".join(out)
+
+
+@mcp.tool()
+async def rechazar_comprobante_pago(
+    pago_id: int,
+    motivo: str = "Comprobante no válido o ilegible",
+    notificar_cliente: bool = False
+) -> str:
+    """Rechaza o descarta un comprobante de pago (#P<id>):
+    - Marca el registro como 'rejected' registrando el motivo y la auditoría.
+    - Opcionalmente le envía un mensaje por WhatsApp al cliente informándole que el comprobante no pudo validarse.
+    - Envía aviso al bot de Telegram.
+
+    Parámetros:
+    - pago_id: Número ID del comprobante a rechazar (ej: 12 para #P12).
+    - motivo: Razón del rechazo (ej: 'Transferencia no impactada en la cuenta bancaria', 'Monto insuficiente', 'Comprobante borroso').
+    - notificar_cliente: Si es True, envía un mensaje cordial al cliente pidiéndole reenviar el comprobante correcto.
+    """
+    res = database.reject_pending_payment(
+        payment_id=pago_id,
+        reason=motivo,
+        admin_user="Gemini Spark (MCP)"
+    )
+    if not res.get("success"):
+        return f"❌ Error al rechazar comprobante #P{pago_id}: {res.get('error')}"
+
+    p = res.get("payment", {})
+    c_name = p.get("client_name") or "Cliente"
+    c_phone = p.get("sender_phone") or p.get("client_whatsapp") or ""
+
+    wa_status = "⏸️ Notificación al cliente no solicitada"
+    if notificar_cliente and c_phone:
+        c_clean = database.clean_whatsapp_phone(c_phone)
+        if c_clean:
+            c_msg = (
+                f"Hola {c_name}. 🙌 Te informamos que no pudimos validar el comprobante enviado (#P{pago_id}).\n\n"
+                f"📌 *Motivo:* {motivo}\n\n"
+                f"Por favor, revisa la transferencia y envíanos el comprobante emitido por tu banco para poder acreditar tu pago. ¡Muchas gracias!"
+            )
+            try:
+                wa_res = await whatsapp_client.send_text_message(c_clean, c_msg, delay_seconds=1.0)
+                if wa_res.get("success"):
+                    wa_status = f"📲 Notificación de rechazo enviada al WhatsApp del cliente ({c_clean})"
+                else:
+                    wa_status = f"⚠️ Falló envío de WhatsApp: {wa_res.get('error')}"
+            except Exception as e:
+                wa_status = f"⚠️ Excepción al enviar WhatsApp: {e}"
+
+    # Telegram
+    try:
+        await send_telegram_message(
+            f"❌ <b>COMPROBANTE #P{pago_id} RECHAZADO (GEMINI MCP)</b>\n\n"
+            f"• Cliente: <b>{c_name}</b>\n"
+            f"• Motivo: {motivo}\n"
+            f"• Administrador: Gemini Spark (MCP)"
+        )
+    except Exception as e:
+        logger.warning(f"Error enviando aviso a Telegram: {e}")
+
+    return (
+        f"❌ <b>COMPROBANTE #P{pago_id} RECHAZADO:</b>\n"
+        f"• Cliente: <b>{c_name}</b>\n"
+        f"• Motivo registrado: <i>{motivo}</i>\n"
+        f"• Estado: <b>Rejected (Descartado sin impacto financiero)</b>\n"
+        f"• Notificación: {wa_status}"
+    )
+
+

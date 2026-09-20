@@ -1134,25 +1134,86 @@ async def whatsapp_webhook(request: Request):
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "no_active_services"})
 
-    # REGLA C: Consulta de Medios de Pago / CBU / Alias
+    # REGLA C: Consulta de Medios de Pago / CBU / Alias / Auto-Atención Financiera Personalizada
     payment_intents = [
         "alias", "cbu", "cvu", "como pago", "cómo pago", "donde pago", "dónde pago",
         "donde transfiero", "dónde transfiero", "datos de pago", "medios de pago",
         "datos para transferir", "datos bancarios", "a que cuenta transfiero",
         "a qué cuenta transfiero", "como te transfiero", "cómo te transfiero",
         "pasame el alias", "pásame el alias", "pasame el cbu", "pásame el cbu",
-        "pasa el alias", "pasa el cbu"
+        "pasa el alias", "pasa el cbu",
+        "/pagar", "/datos", "/pago", "/pagos", "/cbu", "/alias", "pagar",
+        "cuanto debo", "cuánto debo", "cuanto tengo que pagar", "cuánto tengo que pagar",
+        "cuanto es", "cuánto es", "cuanto te debo", "cuánto te debo",
+        "precio a transferir", "quiero pagar", "para pagar"
     ]
     if any(k in text_lower for k in payment_intents):
         pm = database.get_formatted_payment_methods()
-        reply = (
-            f"¡Hola {client_name}! Aquí tienes nuestros datos de cobro oficiales:\n\n"
-            f"{pm}\n\n"
-            f"Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu renovación. ¡Muchas gracias! 🙌"
-        )
+        active_accs = client_profile.get("active_accounts", []) if client_profile else []
+
+        if active_accs:
+            if len(active_accs) == 1:
+                acc = active_accs[0]
+                plat = acc.get("platform") or "Suscripción"
+                perf = f" (Perfil: {acc['profile_name']})" if acc.get("profile_name") else ""
+                price_str = acc.get("price_formatted") or database.format_ars(acc.get("price")) or "Consultar"
+                exp_date = acc.get("expiry_date") or ""
+                days_lbl = f" ({acc.get('days_label')})" if acc.get("days_label") else ""
+
+                reply = (
+                    f"¡Hola {client_name}! 🍿 Aquí tienes la información para abonar tu suscripción:\n\n"
+                    f"📺 *Servicio:* {plat}{perf}\n"
+                    f"💰 *Importe a transferir:* *{price_str}*\n"
+                    f"📅 *Vencimiento:* {exp_date}{days_lbl}\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💳 *DATOS DE PAGO OFICIALES:*\n"
+                    f"{pm}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"📲 Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu renovación de inmediato. ¡Muchas gracias! 🙌✨"
+                )
+            else:
+                total_sum = 0.0
+                svc_lines = []
+                for a in active_accs:
+                    p_num = a.get("price_num", 0.0)
+                    if not p_num and a.get("price"):
+                        try:
+                            p_num = float(re.sub(r'[^\d.]', '', str(a.get("price"))) or 0.0)
+                        except Exception:
+                            p_num = 0.0
+                    total_sum += p_num
+                    p_fmt = a.get("price_formatted") or database.format_ars(a.get("price"))
+                    v_str = f" | Vence: {a.get('expiry_date')}" if a.get('expiry_date') else ""
+                    perf = f" ({a['profile_name']})" if a.get("profile_name") else ""
+                    svc_lines.append(f"• *{a.get('platform', 'Servicio')}*{perf}: `{a.get('email')}` - *{p_fmt}*{v_str}")
+
+                services_block = "\n".join(svc_lines)
+                total_fmt = database.format_ars(total_sum) if total_sum > 0 else "Consultar"
+
+                reply = (
+                    f"¡Hola {client_name}! 🍿 Registramos *{len(active_accs)}* servicios activos a tu nombre:\n\n"
+                    f"{services_block}\n\n"
+                    f"💰 *TOTAL A TRANSFERIR:* *{total_fmt}*\n\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"💳 *DATOS DE PAGO OFICIALES:*\n"
+                    f"{pm}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                    f"📲 Una vez realizada la transferencia, envíanos el comprobante por este chat para acreditar la renovación de tus cuentas. ¡Muchas gracias! 🙌✨"
+                )
+        else:
+            reply = (
+                f"¡Hola {client_name}! Aquí tienes nuestros datos de cobro oficiales:\n\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"💳 *DATOS DE PAGO OFICIALES:*\n"
+                f"{pm}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"💡 Si deseas consultar nuestros precios o contratar un servicio (Netflix, Disney+, Max, etc.), escribe */catalogo* o */precios*.\n"
+                f"Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu pedido. ¡Muchas gracias! 🙌✨"
+            )
+
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
-        return JSONResponse({"status": "ok", "action": "payment_info_sent"})
+        return JSONResponse({"status": "ok", "action": "payment_info_sent", "active_accounts_count": len(active_accs)})
 
     # REGLA D: Consultas de Catálogo, Precios y Disponibilidad
     catalog_intents = [

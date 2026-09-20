@@ -472,6 +472,21 @@ def approve_pending_payment(
             conn.close()
 
         updated_item = get_pending_payment(payment_id) or item
+
+        try:
+            from core.audit import log_audit_event
+            log_audit_event(
+                actor=admin_user,
+                action="APPROVE_PAYMENT",
+                target_type="payment",
+                target_id=str(payment_id),
+                old_value=f"status:pending,amount:{item.get('amount')}",
+                new_value=f"status:approved,amount:{amt_val}",
+                ip_or_source="payments_approval_repo"
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo registrar auditoría de aprobación de pago #{payment_id}: {e}")
+
         return {
             "success": True,
             "payment_id": payment_id,
@@ -514,6 +529,21 @@ def reject_pending_payment(payment_id: int, reason: str = "", admin_user: str = 
         conn.close()
 
     updated_item = get_pending_payment(payment_id)
+
+    try:
+        from core.audit import log_audit_event
+        log_audit_event(
+            actor=admin_user,
+            action="REJECT_PAYMENT",
+            target_type="payment",
+            target_id=str(payment_id),
+            old_value="status:pending",
+            new_value=f"status:rejected,reason:{reason}",
+            ip_or_source="payments_approval_repo"
+        )
+    except Exception as e:
+        logger.warning(f"No se pudo registrar auditoría de rechazo de pago #{payment_id}: {e}")
+
     return {
         "success": True,
         "payment_id": payment_id,

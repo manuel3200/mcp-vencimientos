@@ -588,5 +588,39 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
+
+            # 22. Log de Auditoría Inmutable (Append-Only con encadenamiento HMAC estilo blockchain)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS audit_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    actor TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    target_id TEXT NOT NULL,
+                    old_value TEXT DEFAULT '',
+                    new_value TEXT DEFAULT '',
+                    ip_or_source TEXT DEFAULT '',
+                    prev_hash TEXT DEFAULT '',
+                    signature_hmac TEXT NOT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_target ON audit_log(target_type, target_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action)")
+
+            # 23. Enlaces Efímeros de Credenciales (Anti-SIM Swap / One-Time Secrets)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ephemeral_secrets (
+                    token TEXT PRIMARY KEY,
+                    ciphertext TEXT NOT NULL,
+                    title TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    max_views INTEGER DEFAULT 1,
+                    view_count INTEGER DEFAULT 0,
+                    burned_at TIMESTAMP DEFAULT NULL
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ephemeral_secrets_token ON ephemeral_secrets(token)")
     finally:
         conn.close()

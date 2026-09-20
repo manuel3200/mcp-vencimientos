@@ -1,6 +1,7 @@
 import os
 import hashlib
 import secrets
+import base64
 from typing import Optional, Tuple
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -143,4 +144,100 @@ def decrypt_backup(ciphertext: bytes, key: Optional[str] = None) -> bytes:
         return decrypted_data
     except InvalidTag as e:
         raise InvalidTag("Clave de descifrado incorrecta o integridad de backup violada (tag GCM inválido)") from e
+
+
+SECRET_PREFIX = "enc:v1:"
+COLUMN_SALT_LEN = 16
+COLUMN_NONCE_LEN = 12
+
+def is_encrypted_secret(text: Optional[str]) -> bool:
+    """Indica si un string ya contiene el prefijo de cifrado a nivel de columna."""
+    return isinstance(text, str) and text.startswith(SECRET_PREFIX)
+
+
+def encrypt_secret(plaintext: Optional[str], key: Optional[str] = None) -> str:
+    """Cifra un texto plano para almacenamiento seguro en base de datos (AES-256-GCM).
+    
+    Formato serializado:
+    enc:v1:<salt_b64>:<nonce_b64>:<ciphertext_tag_b64>
+    
+    Idempotente: si el texto ya está cifrado (comienza con 'enc:v1:'), se devuelve tal cual.
+    Si plaintext es None o vacío, devuelve "".
+    """
+    if plaintext is None:
+        return ""
+    text_str = str(plaintext)
+    if not text_str:
+        return ""
+    if is_encrypted_secret(text_str):
+        return text_str
+
+    passphrase = (
+        key or
+        getattr(settings, "DB_SECRET_KEY", "") or
+        os.getenv("DB_SECRET_KEY", "") or
+        settings.SESSION_SECRET_KEY
+    )
+    if not passphrase:
+        raise ValueError("No se configuró clave de cifrado de secretos (DB_SECRET_KEY o SESSION_SECRET_KEY)")
+
+    salt = secrets.token_bytes(COLUMN_SALT_LEN)
+    nonce = secrets.token_bytes(COLUMN_NONCE_LEN)
+    derived_key = _derive_backup_key(passphrase, salt)
+
+    aesgcm = AESGCM(derived_key)
+    encrypted_bytes = aesgcm.encrypt(nonce, text_str.encode("utf-8"), None)
+
+    salt_b64 = base64.urlsafe_b64encode(salt).decode("ascii")
+    nonce_b64 = base64.urlsafe_b64encode(nonce).decode("ascii")
+    enc_b64 = base64.urlsafe_b64encode(encrypted_bytes).decode("ascii")
+
+    return f"{SECRET_PREFIX}{salt_b64}:{nonce_b64}:{enc_b64}"
+
+
+def decrypt_secret(ciphertext: Optional[str], key: Optional[str] = None) -> str:
+    """Descifra un texto cifrado con encrypt_secret mediante AES-256-GCM.
+    
+    Retrocompatibilidad: Si el string no empieza con 'enc:v1:', asume texto plano histórico
+    y lo retorna sin error, permitiendo migraciones continuas sin downtime.
+    Si falla el tag o la clave, lanza ValueError.
+    """
+    if ciphertext is None:
+        return ""
+    text_str = str(ciphertext)
+    if not text_str:
+        return ""
+    if not is_encrypted_secret(text_str):
+        return text_str
+
+    raw_payload = text_str[len(SECRET_PREFIX):]
+    parts = raw_payload.split(":")
+    if len(parts) != 3:
+        raise ValueError("Formato de secreto cifrado inválido (se esperaban 3 componentes base64)")
+
+    try:
+        salt = base64.urlsafe_b64decode(parts[0].encode("ascii"))
+        nonce = base64.urlsafe_b64decode(parts[1].encode("ascii"))
+        encrypted_bytes = base64.urlsafe_b64decode(parts[2].encode("ascii"))
+    except Exception as e:
+        raise ValueError(f"Error decodificando componentes base64 del secreto: {e}") from e
+
+    passphrase = (
+        key or
+        getattr(settings, "DB_SECRET_KEY", "") or
+        os.getenv("DB_SECRET_KEY", "") or
+        settings.SESSION_SECRET_KEY
+    )
+    if not passphrase:
+        raise ValueError("No se configuró clave de descifrado de secretos (DB_SECRET_KEY o SESSION_SECRET_KEY)")
+
+    derived_key = _derive_backup_key(passphrase, salt)
+    aesgcm = AESGCM(derived_key)
+
+    try:
+        decrypted_bytes = aesgcm.decrypt(nonce, encrypted_bytes, None)
+        return decrypted_bytes.decode("utf-8")
+    except InvalidTag as e:
+        raise ValueError("Clave incorrecta o integridad de secreto alterada (tag AES-GCM inválido)") from e
+
 

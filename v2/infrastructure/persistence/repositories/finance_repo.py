@@ -290,6 +290,20 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
                 WHERE id = ?
             """, (rev_note, payment_id))
 
+            try:
+                from core.audit import log_audit_event
+                log_audit_event(
+                    actor=admin_user,
+                    action="REVERT_PAYMENT",
+                    target_type="payment",
+                    target_id=str(payment_id),
+                    old_value=f"amount:{p.get('amount')},account_id:{acc_id}",
+                    new_value=f"status:reversed,reason:{reason}",
+                    ip_or_source="finance_repo"
+                )
+            except Exception as e:
+                logger.warning(f"No se pudo registrar log de auditoría para reversión de pago #{payment_id}: {e}")
+
             return {
                 "success": True,
                 "payment_id": payment_id,

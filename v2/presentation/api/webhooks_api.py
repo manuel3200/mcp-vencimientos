@@ -472,7 +472,7 @@ async def whatsapp_webhook(request: Request):
             return JSONResponse({"status": "ignored", "reason": "group_message_non_catalog"})
 
     # Verificar si es un comando administrativo o comando de caída/autorización
-    is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|pagoparcial|parcial|revertir_pago|revertirpago|anularpago|deshacer_cambio|deshacercambio|baja|cortar|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer)', text_lower))
+    is_admin_cmd = bool(re.search(r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|pagoparcial|parcial|revertir_pago|revertirpago|anularpago|deshacer_cambio|deshacercambio|baja|cortar|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer|auditoria|audit)', text_lower))
 
     # Si es from_me (mensaje saliente propio):
     if from_me:
@@ -505,7 +505,7 @@ async def whatsapp_webhook(request: Request):
     client_profile = database.get_client_by_phone(sender_phone)
     client_name = client_profile["client"]["name"] if client_profile else push_name
 
-    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagoapro_<ID>_all, /pagodene_<ID>, /pagoparcial_<ID>, /revertir_pago_<ID>, /deshacer_cambio_<ID>, /baja_<ID>, /cambiar_<ID>, /esperar_<ID>, /caida)
+    # 5.1 COMANDOS DE ADMINISTRADOR POR WHATSAPP (/pagoapro_<ID>, /pagoapro_<ID>_all, /pagodene_<ID>, /pagoparcial_<ID>, /revertir_pago_<ID>, /deshacer_cambio_<ID>, /baja_<ID>, /cambiar_<ID>, /esperar_<ID>, /caida, /auditoria)
     admin_approval_all_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)_all', text_lower)
     admin_approval_match = re.search(r'^/(?:pagoapro|aprobarpago)[_\s]+(\d+)(?:\s+(\d+(?:[.,]\d+)?))?', text_lower)
     admin_reject_match = re.search(r'^/(?:pagodene|rechazarpago)[_\s]+(\d+)', text_lower)
@@ -516,10 +516,11 @@ async def whatsapp_webhook(request: Request):
     admin_change_match = re.search(r'^/(?:cambiar|reemplazar|autorizar)[_\s]+(\d+)', text_lower)
     admin_wait_match = re.search(r'^/(?:esperar|espera|posponer)[_\s]+(\d+)', text_lower)
     admin_fallen_match = re.search(r'^/(?:caida|reemplazo)(?:[_\s]+(.+))?', text_lower)
+    admin_audit_match = re.search(r'^/(?:auditoria|audit)(?:[_\s]+(.+))?', text_lower)
 
     if (admin_approval_all_match or admin_approval_match or admin_reject_match or admin_partial_pay_match or
         admin_reverse_pay_match or admin_undo_replace_match or admin_baja_match or
-        admin_change_match or admin_wait_match or (admin_fallen_match and is_owner)):
+        admin_change_match or admin_wait_match or (admin_fallen_match and is_owner) or admin_audit_match):
         admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
         clean_admin = database.clean_whatsapp_phone(admin_configured) if admin_configured else ""
 
@@ -530,8 +531,16 @@ async def whatsapp_webhook(request: Request):
         elif clean_admin:
             if sender_phone == clean_admin or (len(sender_phone) >= 10 and len(clean_admin) >= 10 and sender_phone[-10:] == clean_admin[-10:]):
                 is_auth = True
-        else:
-            is_auth = False
+        
+        # Validación de roles (RBAC)
+        if not is_auth:
+            try:
+                from core.rbac import check_admin_permission
+                allowed, role, _ = check_admin_permission(sender_phone, text_lower, is_from_me=from_me)
+                if allowed:
+                    is_auth = True
+            except Exception:
+                pass
 
         if not is_auth:
             logger.warning(f"Intento de comando administrativo no autorizado desde {sender_phone}")
@@ -956,6 +965,14 @@ async def whatsapp_webhook(request: Request):
             else:
                 await whatsapp_client.send_text_message(sender_phone, f"⚠️ Error al poner en espera reporte #C{rid}: {res.get('error')}")
                 return JSONResponse({"status": "error", "error": res.get("error")})
+
+        elif admin_audit_match:
+            target_query = admin_audit_match.group(1).strip() if admin_audit_match.group(1) else None
+            from core.audit import get_audit_history, format_audit_report
+            records = get_audit_history(target_id=target_query, limit=10)
+            report_msg = format_audit_report(records, target_query=target_query)
+            await whatsapp_client.send_text_message(sender_phone, report_msg)
+            return JSONResponse({"status": "ok", "action": "audit_report_sent"})
 
     # 6. FILTRO ANTI-BUCLE / ECO DE PLANTILLA DEL SISTEMA:
     # Si el mensaje recibido contiene nuestras propias plantillas de entrega o estado (ej. el cliente lo reenvió sin querer),
@@ -1397,6 +1414,31 @@ async def whatsapp_webhook(request: Request):
         if client_profile and client_profile.get("active_accounts"):
             accs = client_profile["active_accounts"]
             lines = [f"¡Hola {client_name}! 🍿 Aquí tienes el estado de tus servicios activos:\n"]
+
+            ephemeral_enabled = os.getenv("EPHEMERAL_CREDENTIALS_ENABLED", "true").lower() in ("true", "1", "yes")
+            ephemeral_url = ""
+            if ephemeral_enabled:
+                try:
+                    from core.ephemeral_secrets import create_ephemeral_secret
+                    secret_items = []
+                    for a in accs:
+                        secret_items.append({
+                            "platform": a.get("platform") or "Servicio",
+                            "email": a.get("email") or "",
+                            "password": a.get("password") or "",
+                            "profile": a.get("profile_name") or "",
+                            "pin": a.get("profile_pin") or "",
+                            "expiry": a.get("expiry_date") or ""
+                        })
+                    _, ephemeral_url = create_ephemeral_secret(
+                        data={"title": f"Accesos de {client_name}", "items": secret_items},
+                        title=f"Accesos de {client_name}",
+                        ttl_seconds=600,
+                        max_views=1
+                    )
+                except Exception as e:
+                    logger.warning(f"No se pudo generar enlace efímero para {sender_phone}: {e}")
+
             for a in accs:
                 plat = a.get("platform") or "Servicio"
                 perf = f" (Perfil: {a['profile_name']})" if a.get("profile_name") else ""
@@ -1413,17 +1455,33 @@ async def whatsapp_webhook(request: Request):
                         f"📅 Vence: *{a.get('expiry_date')}*{days_txt}\n"
                     )
                 else:
-                    lines.append(
-                        f"📺 *{plat}*{perf}\n"
-                        f"📧 Usuario: `{a.get('email')}`\n"
-                        f"🔑 Clave: `{a.get('password')}`{pin}\n"
-                        f"📅 Vence: *{a.get('expiry_date')}*{days_txt}\n"
-                    )
+                    if ephemeral_url:
+                        lines.append(
+                            f"📺 *{plat}*{perf}\n"
+                            f"📧 Usuario: `{a.get('email')}`\n"
+                            f"📅 Vence: *{a.get('expiry_date')}*{days_txt}\n"
+                        )
+                    else:
+                        lines.append(
+                            f"📺 *{plat}*{perf}\n"
+                            f"📧 Usuario: `{a.get('email')}`\n"
+                            f"🔑 Clave: `{a.get('password')}`{pin}\n"
+                            f"📅 Vence: *{a.get('expiry_date')}*{days_txt}\n"
+                        )
+
+            if ephemeral_url:
+                lines.append(
+                    f"🔒 *Acceso Seguro a tus Contraseñas y PIN (Anti-SIM Swap):*\n"
+                    f"Por tu seguridad, tus claves están protegidas en este enlace privado de un solo uso (válido por 10 min):\n"
+                    f"👉 {ephemeral_url}\n\n"
+                    f"⚠️ _Al abrirlo, la clave se autodestruirá automáticamente en el servidor para que nadie pueda acceder si extravías tu celular._\n"
+                )
+
             lines.append("¡Cualquier consulta o renovación estamos a tu disposición! 🙌✨")
             reply = "\n".join(lines)
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
-            return JSONResponse({"status": "ok", "action": "expiry_info_sent"})
+            return JSONResponse({"status": "ok", "action": "expiry_info_sent", "ephemeral": bool(ephemeral_url)})
         else:
             reply = (
                 f"¡Hola {client_name}! En este momento no registramos suscripciones activas a tu nombre en el sistema. "

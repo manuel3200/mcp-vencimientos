@@ -6,8 +6,22 @@ from typing import Optional, Dict, Any, List, Union, Tuple
 from db.connection import get_connection
 from db.repositories.clients_repo import find_or_create_client
 from core.utils import parse_money, format_ars
+from core.security import encrypt_secret, decrypt_secret
+from core.audit import log_audit_event
 
 logger = logging.getLogger("database.accounts")
+
+def _decrypt_account_dict(acc: Optional[Union[Dict[str, Any], Any]]) -> Optional[Dict[str, Any]]:
+    """Descifra de forma transparente las credenciales (password y profile_pin) de una fila."""
+    if not acc:
+        return None
+    d = dict(acc)
+    if "password" in d and d["password"]:
+        d["password"] = decrypt_secret(d["password"])
+    if "profile_pin" in d and d["profile_pin"]:
+        d["profile_pin"] = decrypt_secret(d["profile_pin"])
+    return d
+
 
 def add_free_account(
     platform: str, 
@@ -25,10 +39,10 @@ def add_free_account(
             cursor = conn.execute("""
                 INSERT INTO streaming_accounts (platform, email, password, profile_name, profile_pin, status, cost, notes)
                 VALUES (?, ?, ?, ?, ?, 'libre', ?, ?)
-            """, (clean_platform, email.strip(), password.strip(), profile_name.strip(), profile_pin.strip(), cost.strip(), notes.strip()))
+            """, (clean_platform, email.strip(), encrypt_secret(password.strip()), profile_name.strip(), encrypt_secret(profile_pin.strip()), cost.strip(), notes.strip()))
             acc_id = cursor.lastrowid
             row = conn.execute("SELECT * FROM streaming_accounts WHERE id = ?", (acc_id,)).fetchone()
-            return dict(row)
+            return _decrypt_account_dict(row)
     finally:
         conn.close()
 
@@ -107,8 +121,8 @@ def assign_or_sell_account(
                         cost = CASE WHEN length(?) > 0 THEN ? ELSE cost END,
                         notes = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (client["id"], clean_platform, password.strip(), profile_name.strip(), 
-                      profile_pin.strip(), s_date, expiry_date.strip(), recurrence.strip(), 
+                """, (client["id"], clean_platform, encrypt_secret(password.strip()), profile_name.strip(), 
+                      encrypt_secret(profile_pin.strip()), s_date, expiry_date.strip(), recurrence.strip(), 
                       price.strip(), cost.strip(), cost.strip(), notes.strip(), acc_id))
             else:
                 cursor = conn.execute("""
@@ -117,8 +131,8 @@ def assign_or_sell_account(
                         client_id, status, payment_status, start_date, expiry_date, recurrence,
                         price, cost, notes
                     ) VALUES (?, ?, ?, ?, ?, ?, 'ocupada', 'pagado', ?, ?, ?, ?, ?, ?)
-                """, (clean_platform, email.strip(), password.strip(), profile_name.strip(),
-                      profile_pin.strip(), client["id"], s_date, expiry_date.strip(),
+                """, (clean_platform, email.strip(), encrypt_secret(password.strip()), profile_name.strip(),
+                      encrypt_secret(profile_pin.strip()), client["id"], s_date, expiry_date.strip(),
                       recurrence.strip(), price.strip(), cost.strip(), notes.strip()))
                 acc_id = cursor.lastrowid
 
@@ -136,7 +150,7 @@ def assign_or_sell_account(
                 LEFT JOIN clients c ON a.client_id = c.id
                 WHERE a.id = ?
             """, (acc_id,)).fetchone()
-            return dict(row)
+            return _decrypt_account_dict(row)
     finally:
         conn.close()
 
@@ -197,7 +211,7 @@ def mark_account_fallen(email_or_query: str, reason: str = "Suscripción caída"
                 LEFT JOIN clients c ON a.client_id = c.id
                 WHERE a.id = ?
             """, (acc_id,)).fetchone()
-            return dict(updated)
+            return _decrypt_account_dict(updated)
     finally:
         conn.close()
 
@@ -242,7 +256,7 @@ def reactivate_fallen_account(email_or_id_or_client: str) -> Optional[Dict[str, 
                 LEFT JOIN clients c ON a.client_id = c.id
                 WHERE a.id = ?
             """, (acc_id,)).fetchone()
-            return dict(updated)
+            return _decrypt_account_dict(updated)
     finally:
         conn.close()
 
@@ -358,12 +372,22 @@ def replace_fallen_account(
                 WHERE a.id = ?
             """, (new_acc["id"],)).fetchone()
 
+            log_audit_event(
+                actor="system_replace",
+                action="REPLACE_FALLEN",
+                target_type="account",
+                target_id=str(new_acc["id"]),
+                old_value=f"old_acc:#{old_acc['id']}:{old_acc.get('email')}",
+                new_value=f"new_acc:#{new_acc['id']}:{new_acc.get('email')}",
+                ip_or_source="accounts_repo"
+            )
+
             return {
                 "success": True,
                 "replaced": True,
                 "platform": platform,
-                "old_account": old_acc,
-                "new_account": dict(fresh_new)
+                "old_account": _decrypt_account_dict(old_acc),
+                "new_account": _decrypt_account_dict(fresh_new)
             }
     finally:
         conn.close()
@@ -441,7 +465,7 @@ def get_free_stock(platform: Optional[str] = None) -> List[Dict[str, Any]]:
                 WHERE status = 'libre'
                 ORDER BY platform ASC, id ASC
             """,).fetchall()
-        return [dict(r) for r in rows]
+        return [_decrypt_account_dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -455,7 +479,7 @@ def get_fallen_accounts() -> List[Dict[str, Any]]:
             WHERE a.status = 'caida'
             ORDER BY a.updated_at DESC
         """).fetchall()
-        return [dict(r) for r in rows]
+        return [_decrypt_account_dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -472,7 +496,7 @@ def get_active_accounts() -> List[Dict[str, Any]]:
         """).fetchall()
         result = []
         for r in rows:
-            d = dict(r)
+            d = _decrypt_account_dict(r)
             try:
                 exp = datetime.strptime(d["expiry_date"], "%Y-%m-%d").date()
                 diff = (exp - today).days
@@ -543,7 +567,7 @@ def get_accounts_pending_password_change() -> List[Dict[str, Any]]:
             WHERE a.status = 'por_cambiar_clave'
             ORDER BY a.expiry_date ASC, a.id ASC
         """).fetchall()
-        return [dict(r) for r in rows]
+        return [_decrypt_account_dict(r) for r in rows]
     finally:
         conn.close()
 
@@ -619,7 +643,7 @@ def rotate_master_password_and_broadcast(
                 WHERE lower(a.email) = lower(?) AND lower(a.platform) = lower(?)
             """, (target_email, target_platform)).fetchall()
 
-            profile_list = [dict(p) for p in all_profiles]
+            profile_list = [_decrypt_account_dict(p) for p in all_profiles]
             is_shared = len(profile_list) > 1 or any(p.get("profile_name") for p in profile_list)
 
             # 3. Actualizar la contraseña en todas las filas de esa cuenta madre
@@ -627,7 +651,17 @@ def rotate_master_password_and_broadcast(
                 UPDATE streaming_accounts
                 SET password = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE lower(email) = lower(?) AND lower(platform) = lower(?)
-            """, (clean_pwd, target_email, target_platform))
+            """, (encrypt_secret(clean_pwd), target_email, target_platform))
+
+            log_audit_event(
+                actor="admin_rotation",
+                action="ROTATE_MASTER_PASSWORD",
+                target_type="account",
+                target_id=target_email,
+                old_value=f"profiles:{len(profile_list)}",
+                new_value="password_rotated_aes256",
+                ip_or_source="accounts_repo"
+            )
 
             # 4. Si se especificó el perfil impago que no renovó, liberarlo
             freed_profile = None
@@ -819,7 +853,7 @@ def get_account_detail(email_or_id: Union[str, int]) -> Optional[Dict[str, Any]]
                 """, (f"%{q}%",)).fetchone()
         if not row:
             return None
-        d = dict(row)
+        d = _decrypt_account_dict(row)
         today = date.today()
         try:
             exp = datetime.strptime(d["expiry_date"], "%Y-%m-%d").date()
@@ -871,12 +905,12 @@ def create_master_account_with_profiles(
                         status, payment_status, cost, notes,
                         supplier_id, supplier_expiry_date, supplier_cost
                     ) VALUES (?, ?, ?, ?, ?, 'libre', 'pagado', ?, ?, ?, ?, ?)
-                """, (clean_platform, clean_email, clean_password, prof_name, prof_pin, prof_cost, notes.strip(),
+                """, (clean_platform, clean_email, encrypt_secret(clean_password), prof_name, encrypt_secret(prof_pin), prof_cost, notes.strip(),
                       supplier_id, s_exp, s_cost_num))
                 
                 acc_id = cursor.lastrowid
                 row = conn.execute("SELECT * FROM streaming_accounts WHERE id = ?", (acc_id,)).fetchone()
-                created.append(dict(row))
+                created.append(_decrypt_account_dict(row))
         return created
     finally:
         conn.close()
@@ -996,7 +1030,7 @@ def assign_next_free_profile(
                 LEFT JOIN clients c ON a.client_id = c.id
                 WHERE a.id = ?
             """, (slot_id,)).fetchone()
-            return dict(fresh)
+            return _decrypt_account_dict(fresh)
     finally:
         conn.close()
 
@@ -1020,7 +1054,7 @@ def get_shared_screens_overview(platform: Optional[str] = None) -> List[Dict[str
 
         grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         for r in rows:
-            d = dict(r)
+            d = _decrypt_account_dict(r)
             try:
                 exp = datetime.strptime(d["expiry_date"], "%Y-%m-%d").date()
                 d["days_remaining"] = (exp - today).days
@@ -1348,7 +1382,44 @@ def get_http_custom_accounts() -> List[Dict[str, Any]]:
             WHERE a.platform = 'HTTP Custom'
             ORDER BY a.expiry_date ASC, a.id DESC
         """).fetchall()
-        return [dict(r) for r in rows]
+        return [_decrypt_account_dict(r) for r in rows]
     finally:
         conn.close()
+
+def migrate_encrypt_plaintext_accounts() -> int:
+    """Migra y cifra en reposo de forma transparente e idempotente todas las cuentas con contraseñas en texto plano."""
+    conn = get_connection()
+    count = 0
+    try:
+        with conn:
+            rows = conn.execute("SELECT id, password, profile_pin FROM streaming_accounts").fetchall()
+            for r in rows:
+                acc_id = r["id"]
+                raw_pwd = r["password"] or ""
+                raw_pin = r["profile_pin"] or ""
+                needs_update = False
+
+                enc_pwd = raw_pwd
+                if raw_pwd and not raw_pwd.startswith("enc:v1:"):
+                    enc_pwd = encrypt_secret(raw_pwd)
+                    needs_update = True
+
+                enc_pin = raw_pin
+                if raw_pin and not raw_pin.startswith("enc:v1:"):
+                    enc_pin = encrypt_secret(raw_pin)
+                    needs_update = True
+
+                if needs_update:
+                    conn.execute("""
+                        UPDATE streaming_accounts
+                        SET password = ?, profile_pin = ?
+                        WHERE id = ?
+                    """, (enc_pwd, enc_pin, acc_id))
+                    count += 1
+        if count > 0:
+            logger.info(f"🔒 Cifrado en reposo: {count} cuentas migradas a AES-256-GCM exitosamente.")
+        return count
+    finally:
+        conn.close()
+
 

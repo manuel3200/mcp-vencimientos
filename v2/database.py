@@ -7,7 +7,35 @@ Cualquier módulo existente que ejecute `import database` o `from database impor
 from db.connection import DB_DIR, DB_PATH, get_connection
 from db.schema import DEFAULT_WHATSAPP_TEMPLATES, init_db
 
-from core.security import hash_password, verify_password
+from core.security import (
+    hash_password,
+    verify_password,
+    encrypt_backup,
+    decrypt_backup,
+    encrypt_secret,
+    decrypt_secret,
+    is_encrypted_secret
+)
+from core.audit import (
+    log_audit_event,
+    verify_audit_chain,
+    get_audit_history,
+    format_audit_report
+)
+from core.ephemeral_secrets import (
+    create_ephemeral_secret,
+    reveal_and_burn_secret,
+    burn_secret_immediately
+)
+from core.rbac import (
+    ROLE_SUPER_ADMIN,
+    ROLE_FINANZAS,
+    ROLE_SOPORTE,
+    ROLE_UNAUTHORIZED,
+    get_actor_role,
+    has_permission,
+    check_admin_permission
+)
 from core.utils import parse_money, format_ars, clean_whatsapp_phone, _parse_date_flexible
 
 from db.repositories.admin_repo import (
@@ -57,7 +85,8 @@ from db.repositories.accounts_repo import (
     get_accounts_pending_password_change,
     mark_account_for_password_change,
     rotate_master_password_and_broadcast,
-    get_http_custom_accounts
+    get_http_custom_accounts,
+    migrate_encrypt_plaintext_accounts
 )
 
 

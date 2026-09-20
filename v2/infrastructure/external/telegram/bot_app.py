@@ -627,6 +627,50 @@ async def handle_telegram_message(msg: Dict[str, Any]):
         else:
             await send_telegram_message("No hay cuentas activas registradas para enviar alerta.", chat_id=chat_id)
 
+    elif cmd.startswith(("/auditoria", "/audit", "auditoria")):
+        parts = text.split(maxsplit=1)
+        target_q = parts[1].strip() if len(parts) > 1 else None
+
+        from core.audit import get_audit_history, verify_audit_chain
+        is_valid, count, status_msg = verify_audit_chain()
+        records = get_audit_history(target_id=target_q, limit=8)
+
+        status_icon = "🟢" if is_valid else "🔴"
+        chain_label = "Cadena 100% Íntegra" if is_valid else "⚠️ ALERTA DE MANIPULACIÓN"
+
+        lines = [
+            f"🛡️ <b>BITÁCORA INMUTABLE DE AUDITORÍA</b>\n",
+            f"• Estado Criptográfico: {status_icon} <b>{chain_label}</b>",
+            f"• Bloques Verificados: <code>{count}</code>",
+        ]
+        if target_q:
+            lines.append(f"• Filtro de Búsqueda: <code>{target_q}</code>")
+
+        if not records:
+            lines.append("\n<i>ℹ️ No se registran eventos con ese criterio en la base de datos.</i>")
+        else:
+            lines.append("\n<b>📋 Últimos Registros:</b>")
+            for r in records:
+                rid = r.get("id")
+                act = r.get("action") or ""
+                actor = r.get("actor") or ""
+                ttype = r.get("target_type") or ""
+                tid = r.get("target_id") or ""
+                ts = r.get("timestamp") or ""
+                sig_short = (r.get("signature_hmac") or "")[:8]
+                lines.append(
+                    f"• <b>#{rid} [{act}]</b> {ttype}#{tid}\n"
+                    f"  👤 <code>{actor}</code> | 📅 {ts}\n"
+                    f"  🔒 <code>sig:{sig_short}...</code>"
+                )
+
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🔙 Menú Principal", "callback_data": "menu_main"}]
+            ]
+        }
+        await send_telegram_message("\n".join(lines), reply_markup=kb, chat_id=chat_id)
+
     elif cmd.startswith(("/caida", "/reemplazo", "/reemplazar")):
         parts = text.split(maxsplit=1)
         if len(parts) < 2 or not parts[1].strip():

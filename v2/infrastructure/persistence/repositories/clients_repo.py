@@ -5,6 +5,7 @@ from typing import Optional, Dict, Any, List, Union
 
 from db.connection import get_connection
 from core.utils import parse_money, format_ars, clean_whatsapp_phone
+from core.security import decrypt_secret
 
 logger = logging.getLogger("database.clients")
 
@@ -235,6 +236,10 @@ def get_client_360_profile(query_or_id: Union[str, int]) -> Optional[Dict[str, A
 
             for r in acc_rows:
                 a = dict(r)
+                if a.get("password"):
+                    a["password"] = decrypt_secret(a["password"])
+                if a.get("profile_pin"):
+                    a["profile_pin"] = decrypt_secret(a["profile_pin"])
                 price_num = parse_money(a.get("price"))
                 cost_num = parse_money(a.get("cost"))
                 a["price_num"] = price_num

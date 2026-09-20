@@ -323,7 +323,7 @@ class ChurnPredictor:
         # Factor 2: Cuentas caídas no resueltas
         if fallen > 0:
             score += 30
-            factors.append(f"{fallen} cuenta(s) reportada(s) como caída")
+            factors.append(f"{fallen} cuenta(s) reportada(s) como caida")
 
         # Factor 3: Sin cuentas activas
         if total == 0:
@@ -337,7 +337,7 @@ class ChurnPredictor:
                 days_since = (datetime.utcnow() - last_dt).days
                 if days_since > 45:
                     score += 20
-                    factors.append(f"Sin pagos desde hace {days_since} días")
+                    factors.append(f"Sin pagos desde hace {days_since} dias")
             except Exception:
                 pass
         else:

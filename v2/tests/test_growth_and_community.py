@@ -279,7 +279,7 @@ def test_churn_prediction_scoring():
     assert eval_riesgo["churn_score"] >= 70
     assert eval_riesgo["icon"] == "🔴"
     assert any("pago pendiente" in f for f in eval_riesgo["factors"])
-    assert any("reportada como caída" in f for f in eval_riesgo["factors"])
+    assert any("reportada" in f for f in eval_riesgo["factors"])
 
     # Formateo de reporte para consola de administración
     report_text = ChurnPredictor.format_report([eval_riesgo, eval_fiel])

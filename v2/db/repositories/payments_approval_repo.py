@@ -23,12 +23,14 @@ def create_pending_payment(
     receipt_mimetype: str = "",
     receipt_base64: str = "",
     raw_text: str = "",
+    phash: str = "",
     notes: str = ""
 ) -> Dict[str, Any]:
     """Registra un nuevo comprobante o pago en estado 'pending' con ID único autoincremental e idempotencia."""
     clean_phone = sender_phone.strip()
     clean_op = operation_id.strip()
     clean_amount = float(amount or 0.0)
+    clean_phash = (phash or "").strip()
 
     conn = get_connection()
     try:
@@ -51,6 +53,44 @@ def create_pending_payment(
                 """, (clean_op,)).fetchone()
                 if existing_op:
                     return dict(existing_op)
+
+            # 1.1 Prevención de Comprobante Reciclado por Similitud Perceptual (pHash dHash 64 bits)
+            if clean_phash and len(clean_phash) == 16:
+                try:
+                    from services.receipt_service import hamming_distance
+                except Exception:
+                    try:
+                        from infrastructure.ocr.receipt_service import hamming_distance
+                    except Exception:
+                        def hamming_distance(h1: str, h2: str) -> int:
+                            if not h1 or not h2 or len(h1) != 16 or len(h2) != 16:
+                                return 999
+                            try:
+                                return bin(int(h1, 16) ^ int(h2, 16)).count("1")
+                            except (ValueError, TypeError):
+                                return 999
+
+                approved_recent = conn.execute("""
+                    SELECT id, created_at, resolved_at, client_name, amount_formatted, phash
+                    FROM pending_payments
+                    WHERE status = 'approved'
+                      AND phash IS NOT NULL
+                      AND phash != ''
+                      AND datetime(COALESCE(resolved_at, created_at)) >= datetime('now', '-45 days')
+                    ORDER BY id DESC
+                """).fetchall()
+
+                for app_row in approved_recent:
+                    app_dict = dict(app_row)
+                    prev_phash = (app_dict.get("phash") or "").strip()
+                    if prev_phash and len(prev_phash) == 16:
+                        dist = hamming_distance(clean_phash, prev_phash)
+                        if dist <= 4:
+                            prev_id = app_dict.get("id")
+                            prev_resolved = app_dict.get("resolved_at") or app_dict.get("created_at") or "recientemente"
+                            logger.warning(f"¡ALERTA DE SEGURIDAD! Comprobante reciclado por similitud perceptual (pHash distancia {dist} <= 4 con pago #{prev_id})")
+                            notes = f"[ALERTA DE FRAUDE: Comprobante idéntico/alterado perceptual (pHash distancia {dist} con pago #{prev_id} resuelto el {prev_resolved})] " + notes
+                            break
 
             # 2. Idempotencia estricta por sender_phone en ventana de 10 minutos
             if clean_phone:
@@ -78,6 +118,9 @@ def create_pending_payment(
                     if receipt_base64.strip():
                         update_fields.append("receipt_base64 = ?")
                         params.append(receipt_base64.strip())
+                    if clean_phash:
+                        update_fields.append("phash = ?")
+                        params.append(clean_phash)
 
                     if update_fields:
                         params.append(ex_dict["id"])
@@ -91,13 +134,13 @@ def create_pending_payment(
                     client_id, account_id, sender_phone, client_name, platform,
                     amount, amount_formatted, bank, operation_id, date_detected,
                     receipt_filename, receipt_mimetype, receipt_base64, raw_text,
-                    status, notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                    phash, status, notes
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
             """, (
                 client_id, account_id, clean_phone, client_name.strip(), platform.strip(),
                 clean_amount, amount_formatted.strip(), bank.strip(), clean_op,
                 date_detected.strip(), receipt_filename.strip(), receipt_mimetype.strip(),
-                receipt_base64.strip(), raw_text.strip(), notes.strip()
+                receipt_base64.strip(), raw_text.strip(), clean_phash, notes.strip()
             ))
             payment_id = cursor.lastrowid
 

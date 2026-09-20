@@ -327,6 +327,12 @@ async def whatsapp_webhook(request: Request):
 
     # 4. CONTROL DE GRUPOS Y WHITELIST (¿Está habilitado el bot en este grupo?)
     if is_group:
+        # 4.0 BLOQUEO TEMPRANO Y ESTRICTO DE SEGURIDAD EN GRUPOS: Comandos administrativos o confidenciales
+        forbidden_in_group_pattern = r'^/(?:pagoapro|aprobarpago|pagodene|rechazarpago|pagoparcial|parcial|revertir_pago|revertirpago|revertircambio|anularpago|deshacer_cambio|deshacercambio|baja|cortar|desactivar|caida|reemplazo|reemplazar|cambiar|esperar|espera|autorizar|posponer|auditoria|balance|vencimiento|clave|cuenta|pagar|cbu|alias)(?:[_\s]|$)'
+        if re.search(forbidden_in_group_pattern, text_lower):
+            logger.warning(f"🛡️ SEGURIDAD: Comando administrativo/confidencial '{text[:30]}' bloqueado en grupo {group_jid} proveniente de {sender_phone}.")
+            return JSONResponse({"status": "ignored", "reason": "admin_command_in_group_forbidden"})
+
         is_bot_enabled_in_group = bool(group_cfg.get("bot_enabled", 1))
         if not is_bot_enabled_in_group and not is_owner:
             return JSONResponse({"status": "ignored", "reason": "group_bot_disabled"})
@@ -1007,6 +1013,7 @@ async def whatsapp_webhook(request: Request):
 
     is_confirmed_receipt = False
     detected_info = None
+    computed_phash = ""
 
     # 4. Análisis profundo de media si está presente
     if is_media and key.get("id"):
@@ -1026,6 +1033,12 @@ async def whatsapp_webhook(request: Request):
                     try:
                         pdf_bytes = base64.b64decode(b64_str.split(",")[-1])
                         pdf_text, num_pages, pdf_img_bytes = receipt_service.extract_text_from_pdf(pdf_bytes)
+                        if pdf_img_bytes:
+                            try:
+                                computed_phash = receipt_service.compute_perceptual_hash(pdf_img_bytes)
+                            except Exception as ph_err:
+                                logger.debug(f"Error calculando pHash de imagen incrustada de PDF: {ph_err}")
+
                         if num_pages <= 3:
                             if pdf_text:
                                 detected_info = receipt_service.parse_transfer_receipt_text(pdf_text)
@@ -1040,6 +1053,8 @@ async def whatsapp_webhook(request: Request):
                                     if gemini_res and gemini_res.get("is_receipt"):
                                         detected_info = gemini_res
                                         is_confirmed_receipt = True
+                                        if gemini_res.get("phash"):
+                                            computed_phash = gemini_res["phash"]
                                 except Exception as g_err:
                                     logger.debug(f"Error analizando imagen incrustada de PDF con Gemini: {g_err}")
 
@@ -1059,6 +1074,8 @@ async def whatsapp_webhook(request: Request):
                     img_bytes = None
                     try:
                         img_bytes = base64.b64decode(b64_str.split(",")[-1])
+                        if img_bytes:
+                            computed_phash = receipt_service.compute_perceptual_hash(img_bytes)
                     except Exception:
                         pass
 
@@ -1156,6 +1173,10 @@ async def whatsapp_webhook(request: Request):
         mime_val = mime if ('mime' in locals() and mime) else ("application/pdf" if is_doc else ("image/jpeg" if is_img else ""))
         filename_val = file_name or ("comprobante.pdf" if is_doc else ("comprobante.jpg" if is_img else ""))
 
+        # Si el análisis por IA extrajo un pHash y no lo teníamos
+        if not computed_phash and detected_info and detected_info.get("phash"):
+            computed_phash = detected_info.get("phash") or ""
+
         # 1. Crear registro centralizado en estado 'pending' con ID único (#P<ID>)
         pending_item = database.create_pending_payment(
             sender_phone=sender_phone,
@@ -1172,6 +1193,7 @@ async def whatsapp_webhook(request: Request):
             receipt_mimetype=mime_val,
             receipt_base64=b64_val,
             raw_text=text,
+            phash=computed_phash,
             notes="Detectado vía WhatsApp Webhook"
         )
         payment_id = pending_item.get("id")

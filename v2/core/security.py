@@ -1,11 +1,21 @@
+import os
 import hashlib
 import secrets
 from typing import Optional, Tuple
 from itsdangerous import URLSafeTimedSerializer, SignatureExpired, BadSignature
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.hazmat.primitives import hashes
+from cryptography.exceptions import InvalidTag
 
 from core.config import settings
 
 _serializer = URLSafeTimedSerializer(settings.SESSION_SECRET_KEY)
+
+BACKUP_MAGIC_HEADER = b"SVENC01"
+BACKUP_SALT_LEN = 16
+BACKUP_NONCE_LEN = 12
+BACKUP_TAG_LEN = 16
 
 def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
     """Genera hash seguro PBKDF2-SHA256 con salt."""
@@ -51,3 +61,86 @@ def verify_preauth_cookie(cookie: Optional[str]) -> Optional[str]:
         return data.get("user")
     except (SignatureExpired, BadSignature):
         return None
+
+
+def _derive_backup_key(passphrase: str, salt: bytes) -> bytes:
+    """Deriva una clave simétrica de 256 bits (32 bytes) usando PBKDF2-HMAC-SHA256."""
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+    )
+    return kdf.derive(passphrase.encode("utf-8"))
+
+
+def encrypt_backup(data: bytes, key: Optional[str] = None) -> bytes:
+    """Cifra datos binarios utilizando AES-256-GCM con derivación PBKDF2 y salt único.
+    
+    Estructura binaria del backup protegido:
+    [Cabecera Mágica: 7 bytes (b"SVENC01")] +
+    [Salt PBKDF2: 16 bytes] +
+    [Nonce / IV: 12 bytes] +
+    [Ciphertext AES-256-GCM + Tag de autenticación GCM: N + 16 bytes]
+    """
+    if not isinstance(data, (bytes, bytearray)):
+        raise ValueError("Los datos a cifrar deben ser de tipo bytes o bytearray")
+
+    passphrase = (
+        key or
+        getattr(settings, "BACKUP_ENCRYPTION_KEY", "") or
+        os.getenv("BACKUP_ENCRYPTION_KEY", "") or
+        settings.SESSION_SECRET_KEY
+    )
+    if not passphrase:
+        raise ValueError("No se configuró clave de cifrado (BACKUP_ENCRYPTION_KEY o SESSION_SECRET_KEY)")
+
+    salt = secrets.token_bytes(BACKUP_SALT_LEN)
+    nonce = secrets.token_bytes(BACKUP_NONCE_LEN)
+    derived_key = _derive_backup_key(passphrase, salt)
+
+    aesgcm = AESGCM(derived_key)
+    # AESGCM.encrypt concatena automáticamente el tag de autenticación (16 bytes) al final del ciphertext
+    encrypted_payload = aesgcm.encrypt(nonce, bytes(data), None)
+
+    return BACKUP_MAGIC_HEADER + salt + nonce + encrypted_payload
+
+
+def decrypt_backup(ciphertext: bytes, key: Optional[str] = None) -> bytes:
+    """Descifra un backup previamente cifrado con encrypt_backup mediante AES-256-GCM.
+    
+    Verifica cabecera mágica (SVENC01), salt, nonce e integridad criptográfica con tag GCM.
+    Lanza ValueError o InvalidTag si la clave es incorrecta, los datos están alterados o el formato es inválido.
+    """
+    min_len = len(BACKUP_MAGIC_HEADER) + BACKUP_SALT_LEN + BACKUP_NONCE_LEN + BACKUP_TAG_LEN
+    if not isinstance(ciphertext, (bytes, bytearray)) or len(ciphertext) < min_len:
+        raise ValueError("Longitud de backup cifrado insuficiente o datos corruptos")
+
+    if not ciphertext.startswith(BACKUP_MAGIC_HEADER):
+        raise ValueError("Cabecera mágica inválida: no es un archivo de backup compatible de StreamVault")
+
+    offset = len(BACKUP_MAGIC_HEADER)
+    salt = ciphertext[offset : offset + BACKUP_SALT_LEN]
+    offset += BACKUP_SALT_LEN
+    nonce = ciphertext[offset : offset + BACKUP_NONCE_LEN]
+    offset += BACKUP_NONCE_LEN
+    encrypted_payload = ciphertext[offset:]
+
+    passphrase = (
+        key or
+        getattr(settings, "BACKUP_ENCRYPTION_KEY", "") or
+        os.getenv("BACKUP_ENCRYPTION_KEY", "") or
+        settings.SESSION_SECRET_KEY
+    )
+    if not passphrase:
+        raise ValueError("No se configuró clave de descifrado (BACKUP_ENCRYPTION_KEY o SESSION_SECRET_KEY)")
+
+    derived_key = _derive_backup_key(passphrase, salt)
+    aesgcm = AESGCM(derived_key)
+
+    try:
+        decrypted_data = aesgcm.decrypt(nonce, encrypted_payload, None)
+        return decrypted_data
+    except InvalidTag as e:
+        raise InvalidTag("Clave de descifrado incorrecta o integridad de backup violada (tag GCM inválido)") from e
+

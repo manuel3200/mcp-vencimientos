@@ -47,7 +47,8 @@ def main():
         ("Tarifas Comerciales y Clientes", "tests.test_pricing_and_clients"),
         ("Aprobación de Pagos y Notificaciones", "tests.test_payments_approval"),
         ("Cuentas, Estados y Vencimientos", "tests.test_accounts_and_alerts"),
-        ("Gestión de Grupos y Moderación (Atlas-MD)", "tests.test_groups_and_moderation")
+        ("Gestión de Grupos y Moderación (Atlas-MD)", "tests.test_groups_and_moderation"),
+        ("Aislamiento de Privacidad, Cifrado y pHash (Fase 1)", "tests.test_group_privacy_isolation")
     ]
 
     failed = 0

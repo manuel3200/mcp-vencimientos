@@ -48,6 +48,56 @@ def extract_text_from_image(image_bytes: bytes) -> str:
         return ""
 
 
+def compute_perceptual_hash(image_bytes: bytes) -> str:
+    """Calcula el hash perceptual (dHash 64 bits) de una imagen utilizando Pillow.
+    Convierte la imagen a escala de grises 'L', la redimensiona a 9x8, calcula las
+    diferencias de intensidad adyacentes horizontalmente y retorna un string hexadecimal
+    de 16 caracteres. Si falla o no es una imagen válida, retorna "".
+    """
+    if not image_bytes:
+        return ""
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(image_bytes))
+        img = img.convert("L")
+
+        resample = getattr(Image, "Resampling", Image).LANCZOS if hasattr(getattr(Image, "Resampling", Image), "LANCZOS") else getattr(Image, "BILINEAR", None)
+        if resample is not None:
+            img = img.resize((9, 8), resample)
+        else:
+            img = img.resize((9, 8))
+
+        diff_bits = 0
+        for y in range(8):
+            for x in range(8):
+                left = img.getpixel((x, y))
+                right = img.getpixel((x + 1, y))
+                diff_bits = (diff_bits << 1) | (1 if left > right else 0)
+
+        return f"{diff_bits:016x}"
+    except Exception as e:
+        logger.debug(f"Error calculando hash perceptual (dHash): {e}")
+        return ""
+
+
+def hamming_distance(h1: str, h2: str) -> int:
+    """Calcula la distancia de Hamming entre dos hashes hexadecimales de 64 bits.
+    Si alguno es inválido o de longitud distinta a 16 caracteres, retorna 999.
+    """
+    if not h1 or not h2:
+        return 999
+    h1_clean = str(h1).strip().lower()
+    h2_clean = str(h2).strip().lower()
+    if len(h1_clean) != 16 or len(h2_clean) != 16:
+        return 999
+    try:
+        val1 = int(h1_clean, 16)
+        val2 = int(h2_clean, 16)
+        return bin(val1 ^ val2).count("1")
+    except (ValueError, TypeError):
+        return 999
+
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> Tuple[str, int, Optional[bytes]]:
     """Extrae el texto de un documento PDF utilizando pypdf o escaneo directo de streams.
     Si el PDF es una exportación de imagen bancaria sin capa de texto digital (ej. NBCH 24, Brubank, Personal Pay),
@@ -476,6 +526,15 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
                             parsed["amount_formatted"] = f"${int(float(parsed['amount'])):,}".replace(",", ".")
                         except Exception:
                             parsed["amount_formatted"] = f"${parsed['amount']}"
+
+                    # Calcular perceptual hash de la imagen del comprobante
+                    try:
+                        raw_bytes = base64.b64decode(clean_b64)
+                        p_hash = compute_perceptual_hash(raw_bytes)
+                        if p_hash:
+                            parsed["phash"] = p_hash
+                    except Exception as ph_err:
+                        logger.debug(f"Error calculando pHash en analyze_image_with_gemini: {ph_err}")
 
                     res_parts = []
                     if parsed.get("bank"):

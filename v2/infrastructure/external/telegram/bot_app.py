@@ -136,41 +136,48 @@ async def send_telegram_document(
         return False
 
 async def send_database_backup_file(chat_id: str = "") -> bool:
-    """Comprime la base de datos SQLite (services.db) con gzip y la envía como respaldo directo a Telegram."""
+    """Comprime la base de datos SQLite (services.db) con gzip, la cifra con AES-256-GCM y la envía a Telegram."""
     import gzip
+    from datetime import datetime
     from core.config import settings
+    from core.security import encrypt_backup
+
     db_file = settings.DB_PATH
     if not os.path.exists(db_file):
         logger.error(f"No se encontró el archivo de base de datos en {db_file}")
         return False
 
     date_str = datetime.now().strftime("%Y%m%d_%H%M")
-    backup_filename = f"streamvault_db_{date_str}.db.gz"
+    backup_filename = f"streamvault_backup_{date_str}.db.enc"
 
     try:
         with open(db_file, "rb") as f_in:
             data = f_in.read()
         compressed = gzip.compress(data, compresslevel=6)
+        encrypted = encrypt_backup(compressed)
+
         orig_size_mb = len(data) / (1024 * 1024)
-        comp_size_mb = len(compressed) / (1024 * 1024)
+        enc_size_mb = len(encrypted) / (1024 * 1024)
 
         caption = (
-            f"📦 <b>COPIA DE SEGURIDAD SQLITE (services.db)</b>\n\n"
+            f"🔐 <b>COPIA DE SEGURIDAD CIFRADA CON AES-256-GCM (.db.enc)</b>\n\n"
             f"• <b>Fecha:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+            f"• <b>Archivo:</b> <code>{backup_filename}</code>\n"
             f"• <b>Tamaño original:</b> {orig_size_mb:.2f} MB\n"
-            f"• <b>Comprimido (.gz):</b> {comp_size_mb:.2f} MB\n\n"
-            f"💡 Guarda este archivo en un lugar seguro. En caso de migración o falla del servidor, puedes descomprimirlo y restaurar todo el sistema."
+            f"• <b>Cifrado y protegido:</b> {enc_size_mb:.2f} MB\n\n"
+            f"🛡️ <b>Seguridad Máxima:</b> Cifrado simétrico autenticado AES-256-GCM con derivación PBKDF2 y salt único.\n"
+            f"⚠️ <b>Importante:</b> Requiere la clave maestra del servidor (<code>BACKUP_ENCRYPTION_KEY</code>) para su restauración."
         )
 
         return await send_telegram_document(
             filename=backup_filename,
-            content=compressed,
+            content=encrypted,
             caption=caption,
             chat_id=chat_id,
-            mimetype="application/gzip"
+            mimetype="application/octet-stream"
         )
     except Exception as e:
-        logger.error(f"Error generando backup comprimido de SQLite para Telegram: {e}")
+        logger.error(f"Error generando backup cifrado de SQLite para Telegram: {e}")
         return False
 
 async def send_full_backup_to_telegram(chat_id: str = "") -> bool:

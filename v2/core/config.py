@@ -23,6 +23,7 @@ class Settings:
 
     # Seguridad y Sesiones
     SESSION_SECRET_KEY: str = os.getenv("SESSION_SECRET_KEY", "mcp-super-secret-key-change-in-prod-2026")
+    BACKUP_ENCRYPTION_KEY: str = os.getenv("BACKUP_ENCRYPTION_KEY", "").strip()
     WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "").strip()
     ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin").strip().lower()
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123").strip()

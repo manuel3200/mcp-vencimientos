@@ -434,6 +434,7 @@ def init_db():
                     receipt_mimetype TEXT DEFAULT '',
                     receipt_base64 TEXT DEFAULT '',
                     raw_text TEXT DEFAULT '',
+                    phash TEXT DEFAULT '',
                     status TEXT DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
                     notes TEXT DEFAULT '',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -517,6 +518,12 @@ def init_db():
 
             try:
                 conn.execute("ALTER TABLE fallen_reports ADD COLUMN followup_count INTEGER DEFAULT 0")
+            except Exception:
+                pass
+
+            # Migración: Agregar columna phash a pending_payments para detección perceptual de comprobantes reciclados
+            try:
+                conn.execute("ALTER TABLE pending_payments ADD COLUMN phash TEXT DEFAULT ''")
             except Exception:
                 pass
 

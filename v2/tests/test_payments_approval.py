@@ -275,7 +275,7 @@ def run_tests():
     match_cba = database.get_client_by_phone("54935198765432")
     assert match_cba is not None and match_cba["client"]["id"] == cli_cba["id"], "Debe coincidir exactamente con Cliente CBA"
 
-    # 16. Test Detección de Comprobante Reciclado / Fraude
+    # 16. Test Detección de Comprobante Reciclado / Fraude por Operation ID
     p_legit = database.create_pending_payment(
         sender_phone="5491100112233",
         client_name="Cliente Honesto",
@@ -291,10 +291,90 @@ def run_tests():
         amount=6000.0,
         operation_id="OP-UNICA-999"
     )
-    assert "ALERTA DE FRAUDE" in p_fraud["notes"], "Debe alertar intento de comprobante reciclado"
+    assert "ALERTA DE FRAUDE" in p_fraud["notes"], "Debe alertar intento de comprobante reciclado por op_id"
+
+    # 17. Test Detección de Comprobante Reciclado por Similitud Perceptual (pHash dHash)
+    test_phash_1 = "1a2b3c4d5e6f7a8b"
+    test_phash_similar = "1a2b3c4d5e6f7a8f" # Distancia de Hamming = 2 (<= 4)
+    test_phash_different = "ffffffffffffffff" # Distancia alta
+
+    p_legit_phash = database.create_pending_payment(
+        sender_phone="5491100112244",
+        client_name="Cliente Original pHash",
+        amount=7000.0,
+        phash=test_phash_1
+    )
+    assert p_legit_phash.get("phash") == test_phash_1
+    database.approve_pending_payment(p_legit_phash["id"])
+
+    # Intento de reenvío con pHash idéntico o similar (distancia <= 4)
+    p_fraud_phash = database.create_pending_payment(
+        sender_phone="5491199887755",
+        client_name="Cliente Reciclador pHash",
+        amount=7000.0,
+        phash=test_phash_similar
+    )
+    assert "ALERTA DE FRAUDE" in p_fraud_phash["notes"], "Debe alertar fraude por similitud perceptual pHash"
+    assert "perceptual" in p_fraud_phash["notes"].lower()
+
+    # Comprobante con imagen diferente (no debe alertar fraude)
+    p_diff_phash = database.create_pending_payment(
+        sender_phone="5491199887744",
+        client_name="Cliente Diferente",
+        amount=7500.0,
+        phash=test_phash_different
+    )
+    assert "ALERTA DE FRAUDE" not in p_diff_phash["notes"], "No debe alertar si el pHash es diferente"
+
+    # 18. Test Hamming Distance y Perceptual Hash
+    import services.receipt_service as rs
+    assert rs.hamming_distance("0000000000000000", "0000000000000000") == 0
+    assert rs.hamming_distance("0000000000000000", "0000000000000001") == 1
+    assert rs.hamming_distance("1a2b3c4d5e6f7a8b", "1a2b3c4d5e6f7a8f") == 2
+    assert rs.hamming_distance("short", "other") == 999
+    assert rs.hamming_distance("", "") == 999
+
+    # 19. Test Cifrado Simétrico AES-256-GCM para Backups
+    from core.security import encrypt_backup, decrypt_backup
+    test_db_bytes = b"SQLite format 3\x00 StreamVault DB Test Data 2026"
+    custom_master_key = "SuperMasterBackupKey2026-StrictTest"
+
+    # Cifrado y descifrado con clave por defecto (SESSION_SECRET_KEY / BACKUP_ENCRYPTION_KEY)
+    enc = encrypt_backup(test_db_bytes)
+    assert enc.startswith(b"SVENC01")
+    dec = decrypt_backup(enc)
+    assert dec == test_db_bytes
+
+    # Cifrado y descifrado con clave personalizada
+    enc_custom = encrypt_backup(test_db_bytes, key=custom_master_key)
+    dec_custom = decrypt_backup(enc_custom, key=custom_master_key)
+    assert dec_custom == test_db_bytes
+
+    # Falla con clave incorrecta
+    try:
+        from cryptography.exceptions import InvalidTag
+        failed = False
+        try:
+            decrypt_backup(enc_custom, key="ClaveTotalmenteEquivocada")
+        except (InvalidTag, ValueError):
+            failed = True
+        assert failed is True, "Debe rechazar descifrado con clave errónea"
+    except ImportError:
+        pass
+
+    # Falla ante corrupción / manipulación de bytes (integridad GCM)
+    corrupted = bytearray(enc)
+    corrupted[-5] ^= 0xFF # Alterar 1 bit en el ciphertext/tag
+    tamper_failed = False
+    try:
+        decrypt_backup(bytes(corrupted))
+    except Exception:
+        tamper_failed = True
+    assert tamper_failed is True, "Debe rechazar backup alterado/manipulado"
 
     print("    ✅ Aprobación y Pagos: Todos los casos de prueba y parches defensivos superados exitosamente.")
 
 if __name__ == "__main__":
     run_tests()
+
 

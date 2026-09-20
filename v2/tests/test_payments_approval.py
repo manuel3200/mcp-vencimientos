@@ -330,7 +330,8 @@ def run_tests():
     import services.receipt_service as rs
     assert rs.hamming_distance("0000000000000000", "0000000000000000") == 0
     assert rs.hamming_distance("0000000000000000", "0000000000000001") == 1
-    assert rs.hamming_distance("1a2b3c4d5e6f7a8b", "1a2b3c4d5e6f7a8f") == 2
+    assert rs.hamming_distance("0000000000000000", "0000000000000003") == 2
+    assert rs.hamming_distance("1a2b3c4d5e6f7a8b", "1a2b3c4d5e6f7a8f") == 1 # 0xb (1011) vs 0xf (1111) difiere en 1 bit
     assert rs.hamming_distance("short", "other") == 999
     assert rs.hamming_distance("", "") == 999
 

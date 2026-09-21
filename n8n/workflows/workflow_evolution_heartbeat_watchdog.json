@@ -1,0 +1,140 @@
+{
+  "name": "StreamVault - Watchdog de Conexión Evolution API (WhatsApp)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-heartbeat",
+      "name": "Cron Cada 15 Minutos",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.EVOLUTION_API_URL || 'http://evolution-api:8080' }}/instance/connectionState/{{ $env.EVOLUTION_INSTANCE_NAME || 'streamvault' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.EVOLUTION_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-http-check-state",
+      "name": "Consultar Estado Instancia WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.instance?.state || $json.state || 'unknown' }}",
+              "operation": "notEqual",
+              "value2": "open"
+            }
+          ]
+        }
+      },
+      "id": "node-filter-disconnected",
+      "name": "¿Sesión Desconectada?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_ADMIN_CHAT_ID }}\",\n  \"text\": \"🚨 <b>¡ALERTA STREAMVAULT: SESIÓN WHATSAPP CAÍDA!</b>\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n• <b>Instancia:</b> <code>{{ $('node-http-check-state').first().json.instance?.instanceName || 'streamvault' }}</code>\\n• <b>Estado:</b> <code>{{ $('node-http-check-state').first().json.instance?.state || 'close' }}</code>\\n• <b>Hora:</b> <code>\" + new Date().toISOString() + \"</code>\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n⚠️ Los envíos automáticos de vencimientos y recordatorios están pausados preventivamente para evitar baneos. Por favor ingresa al panel y reescanea el código QR.\",\n  \"parse_mode\": \"HTML\"\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-telegram-alert",
+      "name": "Alerta Roja Telegram al Admin",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 260]
+    }
+  ],
+  "connections": {
+    "Cron Cada 15 Minutos": {
+      "main": [
+        [
+          {
+            "node": "Consultar Estado Instancia WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Estado Instancia WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "¿Sesión Desconectada?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "¿Sesión Desconectada?": {
+      "main": [
+        [
+          {
+            "node": "Alerta Roja Telegram al Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "StreamVault"
+    },
+    {
+      "name": "Watchdog"
+    }
+  ]
+}

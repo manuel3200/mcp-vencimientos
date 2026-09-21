@@ -1,0 +1,145 @@
+{
+  "name": "StreamVault - Buffer Anti-Ban & Cadencia Gaussiana (WhatsApp)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dispatch-whatsapp",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook-in",
+      "name": "Webhook Entrada StreamVault",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "streamvault-whatsapp-dispatch"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generación de Retardo Gaussiano Humano (mu=67.5s, sigma=15s, acotado entre 45s y 90s)\nfunction gaussianRandom(mean, stdev) {\n  let u = 1 - Math.random();\n  let v = Math.random();\n  let z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);\n  return mean + z * stdev;\n}\n\nconst rawDelay = gaussianRandom(67.5, 15.0);\nconst boundedDelay = Math.round(Math.min(90, Math.max(45, rawDelay)));\n\nconst item = $input.first().json;\nreturn [{\n  json: {\n    ...item,\n    calculated_delay_seconds: boundedDelay,\n    enqueued_at: new Date().toISOString(),\n    target_recipient: item.recipient || item.number || '',\n    message_body: item.message || item.text || '',\n    instance_name: item.instance || 'streamvault'\n  }\n}];"
+      },
+      "id": "node-calc-gaussian-delay",
+      "name": "Calcular Pausa Gaussiana",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.calculated_delay_seconds }}",
+        "unit": "seconds"
+      },
+      "id": "node-wait-gaussian",
+      "name": "Pausa Anti-Ban Humana",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [660, 300],
+      "webhookId": "wait-antiban-pause"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL || 'http://evolution-api:8080' }}/message/sendText/{{ $json.instance_name }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.EVOLUTION_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"number\": \"{{ $json.target_recipient }}\",\n  \"text\": \"{{ $json.message_body }}\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node-http-send-evolution",
+      "name": "Despacho a Evolution API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\n  \"status\": \"queued_and_delivered\",\n  \"delay_applied_seconds\": {{ $('node-calc-gaussian-delay').first().json.calculated_delay_seconds }},\n  \"enqueued_at\": \"{{ $('node-calc-gaussian-delay').first().json.enqueued_at }}\",\n  \"delivered_at\": new Date().toISOString(),\n  \"evolution_response\": {{ JSON.stringify($json) }}\n}",
+        "options": {}
+      },
+      "id": "node-respond-webhook",
+      "name": "Respuesta HTTP Ack",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Entrada StreamVault": {
+      "main": [
+        [
+          {
+            "node": "Calcular Pausa Gaussiana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular Pausa Gaussiana": {
+      "main": [
+        [
+          {
+            "node": "Pausa Anti-Ban Humana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pausa Anti-Ban Humana": {
+      "main": [
+        [
+          {
+            "node": "Despacho a Evolution API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Despacho a Evolution API": {
+      "main": [
+        [
+          {
+            "node": "Respuesta HTTP Ack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "StreamVault"
+    },
+    {
+      "name": "Anti-Ban"
+    }
+  ]
+}

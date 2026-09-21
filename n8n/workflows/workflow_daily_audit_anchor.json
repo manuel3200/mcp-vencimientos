@@ -1,0 +1,132 @@
+{
+  "name": "StreamVault - Anclaje Diario de Auditoría HMAC (Telegram)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "59 23 * * *"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-anchor",
+      "name": "Disparador Diario 23:59 hs",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.STREAMVAULT_APP_URL || 'http://streamvault-app:8000' }}/api/audit/anchor",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-http-get-anchor",
+      "name": "Consultar Hash Raíz en StreamVault",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\n\nconst formattedMsg = \n  `🔒 <b>[STREAMVAULT v2 — ANCLA CRIPTOGRÁFICA DE AUDITORÍA]</b>\\n` +\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n` +\n  `• <b>Fecha y Hora UTC:</b> <code>${data.timestamp || new Date().toISOString()}</code>\\n` +\n  `• <b>Bloques Inmutables:</b> <code>${data.total_blocks || 0}</code> (Último ID: <code>#${data.latest_id || 0}</code>)\\n` +\n  `• <b>Root Hash HMAC-SHA256:</b>\\n<code>sha256:${data.root_hash}</code>\\n` +\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n` +\n  `🛡️ <i>Sello forense anclado automáticamente por n8n como testigo externo incorruptible (CRIT-04).</i>`;\n\nreturn [{\n  json: {\n    ...data,\n    telegram_formatted_message: formattedMsg\n  }\n}];"
+      },
+      "id": "node-format-anchor-msg",
+      "name": "Formatear Mensaje Criptográfico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_AUDIT_CHANNEL_ID || $env.TELEGRAM_ADMIN_CHAT_ID }}\",\n  \"text\": \"{{ $json.telegram_formatted_message }}\",\n  \"parse_mode\": \"HTML\"\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-telegram-publish",
+      "name": "Publicar en Canal de Auditoría",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    }
+  ],
+  "connections": {
+    "Disparador Diario 23:59 hs": {
+      "main": [
+        [
+          {
+            "node": "Consultar Hash Raíz en StreamVault",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Hash Raíz en StreamVault": {
+      "main": [
+        [
+          {
+            "node": "Formatear Mensaje Criptográfico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatear Mensaje Criptográfico": {
+      "main": [
+        [
+          {
+            "node": "Publicar en Canal de Auditoría",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "StreamVault"
+    },
+    {
+      "name": "Audit"
+    }
+  ]
+}

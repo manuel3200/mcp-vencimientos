@@ -1,0 +1,132 @@
+{
+  "name": "StreamVault - Resumen Ejecutivo Financiero Semanal (Telegram)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 20 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "node-schedule-sunday-20h",
+      "name": "Disparador Domingos 20:00 hs",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.STREAMVAULT_APP_URL || 'http://streamvault-app:8000' }}/api/finance/profitability-by-platform",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "node-http-get-profitability",
+      "name": "Consultar Rentabilidad por Plataforma",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst platforms = response.platforms || response.data || [];\n\nlet totalRevenue = 0;\nlet totalCosts = 0;\nlet totalFallenLoss = 0;\nlet totalNet = 0;\n\nlet lines = [];\n\nfor (const p of platforms) {\n  const rev = Number(p.total_revenue || 0);\n  const cost = Number(p.total_cost || 0);\n  const loss = Number(p.fallen_loss || 0);\n  const net = rev - cost - loss;\n  \n  totalRevenue += rev;\n  totalCosts += cost;\n  totalFallenLoss += loss;\n  totalNet += net;\n  \n  lines.push(`• <b>${p.platform}</b>: Cobrado $${rev.toLocaleString('es-AR')} | Neto: <b>$${net.toLocaleString('es-AR')}</b> (${p.health_indicator || 'OK'})`);\n}\n\nconst marginPct = totalRevenue > 0 ? ((totalNet / totalRevenue) * 100).toFixed(1) : '0.0';\n\nconst msg = \n  `📊 <b>[STREAMVAULT v2 — RESUMEN EJECUTIVO SEMANAL]</b>\\n` +\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n` +\n  `💰 <b>Facturación Total:</b> $${totalRevenue.toLocaleString('es-AR')} ARS\\n` +\n  `📉 <b>Costos Mayoristas:</b> $${totalCosts.toLocaleString('es-AR')} ARS\\n` +\n  `⚠️ <b>Pérdidas por Caídas:</b> $${totalFallenLoss.toLocaleString('es-AR')} ARS\\n` +\n  `🌟 <b>GANANCIA NETA REAL:</b> $${totalNet.toLocaleString('es-AR')} ARS (<b>${marginPct}%</b>)\\n` +\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n` +\n  `<b>Desglose por Plataforma:</b>\\n` +\n  lines.slice(0, 10).join('\\n') + `\\n` +\n  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\\n` +\n  `✨ <i>Generado automáticamente por n8n para optimización del negocio.</i>`;\n\nreturn [{\n  json: {\n    totalRevenue,\n    totalNet,\n    marginPct,\n    formatted_text: msg\n  }\n}];"
+      },
+      "id": "node-format-financial-digest",
+      "name": "Procesar y Formatear Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_ADMIN_CHAT_ID }}\",\n  \"text\": \"{{ $json.formatted_text }}\",\n  \"parse_mode\": \"HTML\"\n}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "node-telegram-send-digest",
+      "name": "Enviar Digest a Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [880, 300]
+    }
+  ],
+  "connections": {
+    "Disparador Domingos 20:00 hs": {
+      "main": [
+        [
+          {
+            "node": "Consultar Rentabilidad por Plataforma",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar Rentabilidad por Plataforma": {
+      "main": [
+        [
+          {
+            "node": "Procesar y Formatear Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Procesar y Formatear Digest": {
+      "main": [
+        [
+          {
+            "node": "Enviar Digest a Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [
+    {
+      "name": "StreamVault"
+    },
+    {
+      "name": "Finance"
+    }
+  ]
+}

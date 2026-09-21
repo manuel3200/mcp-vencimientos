@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  # ============================================================================
+  # 1. STREAMVAULT v2 — NÚCLEO CRM, REGLAS DE NEGOCIO Y FASTMCP
+  # ============================================================================
+  streamvault-app:
+    image: ghcr.io/manuel3200/streamvault-v2:latest
+    container_name: streamvault-core
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    volumes:
+      - streamvault_data:/app/data
+    environment:
+      - ADMIN_USER=${ADMIN_USER:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+      - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8000}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
+      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
+      - EVOLUTION_API_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET}
+      - EVOLUTION_INSTANCE_NAME=${EVOLUTION_INSTANCE_NAME:-streamvault}
+      - N8N_BUFFER_WEBHOOK_URL=http://n8n:5678/webhook/dispatch-whatsapp
+      - TIMEZONE=America/Argentina/Buenos_Aires
+    depends_on:
+      - evolution-api
+    networks:
+      - streamvault-net
+
+  # ============================================================================
+  # 2. n8n — BUS DE INTEGRACIÓN, BUFFER ANTI-BAN & OBSERVABILIDAD
+  # ============================================================================
+  # Configurado para almacenar TODAS sus ejecuciones, buffers e historial en
+  # la base de datos administrada gratuita de Oracle (MySQL HeatWave 50 GB).
+  # Cero consumo del disco local de la máquina ARM.
+  # ============================================================================
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: streamvault-n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_storage:/home/node/.n8n
+      - ./n8n/workflows:/workflows:ro
+    environment:
+      # Conexión nativa a Oracle Cloud MySQL HeatWave (Always Free)
+      - DB_TYPE=mysqldb
+      - DB_MYSQLDB_DATABASE=${MYSQL_HEATWAVE_DATABASE_N8N:-n8n_streamvault}
+      - DB_MYSQLDB_HOST=${MYSQL_HEATWAVE_HOST}
+      - DB_MYSQLDB_PORT=${MYSQL_HEATWAVE_PORT:-3306}
+      - DB_MYSQLDB_USER=${MYSQL_HEATWAVE_USER}
+      - DB_MYSQLDB_PASSWORD=${MYSQL_HEATWAVE_PASSWORD}
+      
+      # Autenticación y Seguridad n8n
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
+      - WEBHOOK_URL=${N8N_PUBLIC_WEBHOOK_URL:-http://localhost:5678/}
+      
+      # Política de Poda Automática (Garantiza que la base de datos nunca se sature)
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - EXECUTIONS_DATA_PRUNE_MAX_COUNT=50000
+      
+      # Variables accesibles por los flujos de n8n
+      - STREAMVAULT_APP_URL=http://streamvault-app:8000
+      - EVOLUTION_API_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - EVOLUTION_INSTANCE_NAME=${EVOLUTION_INSTANCE_NAME:-streamvault}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
+      - TELEGRAM_AUDIT_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
+      - GENERIC_TIMEZONE=America/Argentina/Buenos_Aires
+      - TZ=America/Argentina/Buenos_Aires
+    networks:
+      - streamvault-net
+
+  # ============================================================================
+  # 3. EVOLUTION API v2 — GATEWAY DE WHATSAPP EMPRESARIAL
+  # ============================================================================
+  # Utiliza MySQL HeatWave en Oracle para almacenar sesiones, mensajes y estados,
+  # sin sobrecargar el disco de la VM.
+  # ============================================================================
+  evolution-api:
+    image: evoapicloud/evolution-api:v2.3.7
+    container_name: streamvault-evolution
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    environment:
+      - SERVER_URL=${EVOLUTION_SERVER_URL:-http://localhost:8081}
+      - DOCKER_ENV=true
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY}
+      
+      # Conexión a Oracle Cloud MySQL HeatWave
+      - DATABASE_PROVIDER=mysql
+      - DATABASE_CONNECTION_URI=mysql://${MYSQL_HEATWAVE_USER}:${MYSQL_HEATWAVE_PASSWORD}@${MYSQL_HEATWAVE_HOST}:${MYSQL_HEATWAVE_PORT:-3306}/${MYSQL_HEATWAVE_DATABASE_EVO:-evolution_streamvault}
+      - DATABASE_CONNECTION_CLIENT_NAME=streamvault_evolution
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      - DATABASE_SAVE_DATA_HISTORIC=false
+      - DATABASE_DELETE_MESSAGE=true
+      
+      # Optimización de Rendimiento
+      - LOG_LEVEL=ERROR,WARN,INFO
+      - DEL_INSTANCE=false
+      - CACHE_REDIS_ENABLED=false
+      - CONFIG_SESSION_PHONE_CLIENT=StreamVault Business Bot
+      - QRCODE_LIMIT=30
+    networks:
+      - streamvault-net
+
+networks:
+  streamvault-net:
+    driver: bridge
+
+volumes:
+  streamvault_data:
+  n8n_storage:

@@ -285,5 +285,33 @@ async def api_renew_http_custom(account_id: int, request: Request, days: int = F
         err = urllib.parse.quote(res.get("error", "Error al renovar servidor"))
         return RedirectResponse(url=f"/?err={err}#http-custom", status_code=303)
 
+
+@router.get("/api/audit/anchor")
+async def api_get_audit_anchor(request: Request):
+    """Retorna el ancla criptográfica actual (root hash, total de bloques y último ID) para consumo por n8n o auditores."""
+    from core.audit import get_latest_audit_entry, GENESIS_HASH
+    from db.connection import get_connection
+    from datetime import datetime
+    
+    latest = get_latest_audit_entry()
+    latest_sig = latest.get("signature_hmac", GENESIS_HASH) if latest else GENESIS_HASH
+    latest_id = latest.get("id", 0) if latest else 0
+    
+    conn = get_connection()
+    try:
+        count_row = conn.execute("SELECT COUNT(*) as c FROM audit_log").fetchone()
+        total_count = count_row["c"] if count_row else 0
+    finally:
+        conn.close()
+        
+    return {
+        "success": True,
+        "total_blocks": total_count,
+        "latest_id": latest_id,
+        "root_hash": latest_sig,
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    }
+
+
 # ==========================================
 # 12. Endpoints Evolution API WhatsApp & Webhooks

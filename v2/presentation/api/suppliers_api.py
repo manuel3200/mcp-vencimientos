@@ -62,4 +62,42 @@ async def api_renew_master(
     )
     return RedirectResponse(url="/?msg=master_renewed#suppliers", status_code=303)
 
+
+@router.post("/api/suppliers/check-cost-variance")
+async def api_check_cost_variance(
+    request: Request,
+    platform: str = Form(...),
+    service_type: str = Form("pantalla"),
+    new_cost: float = Form(...),
+    old_cost: Optional[float] = Form(None)
+):
+    """Evalúa la variación de costos de proveedores, calculando si supera umbrales y emitiendo alertas."""
+    session_token = request.cookies.get("session_token")
+    auth_header = request.headers.get("Authorization", "")
+    bearer_token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    user = verify_session_cookie(session_token) or (verify_session_cookie(bearer_token) if bearer_token else None)
+
+    if not user:
+        raise HTTPException(status_code=401, detail="No autorizado")
+
+    from application.suppliers.cost_variance_service import evaluate_cost_variance
+
+    if old_cost is None or old_cost <= 0:
+        catalog = database.get_price_catalog()
+        for it in catalog:
+            if it["platform"].lower() == platform.strip().lower() and it["service_type"].lower() == service_type.strip().lower():
+                old_cost = float(it["cost_price"])
+                break
+
+    res = await evaluate_cost_variance(
+        platform=platform.strip(),
+        service_type=service_type.strip(),
+        old_cost=old_cost or 0.0,
+        new_cost=new_cost,
+        notify_telegram=True,
+        actor=str(user)
+    )
+    return JSONResponse(status_code=200, content=res)
+
+
 # API Logs y Diagnóstico del Sistema

@@ -217,6 +217,65 @@ async def send_text_message(
         return {"success": False, "phone": clean_phone, "error": err}
 
 
+async def send_channel_or_group_message(
+    recipient: str,
+    text: str,
+    delay_seconds: float = 1.5,
+    link_preview: bool = True
+) -> Dict[str, Any]:
+    """Envía un mensaje de texto a un Canal de WhatsApp (@newsletter), Grupo de Difusión (@g.us) o destinatario individual.
+    Preserva intacto el identificador de canal/grupo para evitar la mutilación del JID por filtros numéricos.
+    """
+    clean_target = str(recipient or "").strip()
+    if not clean_target:
+        return {"success": False, "error": "Destinatario no especificado"}
+
+    # Determinar si es JID de canal oficial o grupo de difusión
+    is_channel_or_group = clean_target.endswith("@newsletter") or clean_target.endswith("@g.us")
+    if not is_channel_or_group:
+        # Número estándar: extraer dígitos
+        digits = re.sub(r'[^0-9]', '', clean_target)
+        if not digits or len(digits) < 8:
+            return {"success": False, "error": f"Destinatario inválido: '{recipient}'"}
+        target_number = digits
+    else:
+        target_number = clean_target
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/message/sendText/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+    delay_ms = int(max(delay_seconds, 0.5) * 1000)
+
+    payload = {
+        "number": target_number,
+        "text": text,
+        "delay": delay_ms,
+        "linkPreview": link_preview
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                msg_id = data.get("key", {}).get("id") or "sent"
+                logger.info(f"Difusión WhatsApp enviada con éxito a {target_number} (ID: {msg_id})")
+                return {
+                    "success": True,
+                    "target": target_number,
+                    "message_id": msg_id,
+                    "data": data
+                }
+            else:
+                err = f"HTTP {resp.status_code}: {resp.text[:250]}"
+                logger.error(f"Fallo al enviar difusión WhatsApp a {target_number}: {err}")
+                return {"success": False, "target": target_number, "error": err}
+    except Exception as e:
+        err = str(e)
+        logger.error(f"Excepción en difusión WhatsApp a {target_number}: {err}")
+        return {"success": False, "target": target_number, "error": err}
+
+
 async def send_media_message(
     phone: str,
     base64_data: str,

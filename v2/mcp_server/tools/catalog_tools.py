@@ -180,3 +180,56 @@ def vender_combo(
         f"📲 <b>WhatsApp de Entrega Listo (1 Clic):</b>\n{res['wa_link']}"
     )
 
+
+@mcp.tool()
+async def verificar_variacion_costos_proveedor(
+    plataforma: str,
+    nuevo_costo: float,
+    tipo_servicio: str = "pantalla",
+    costo_anterior: Optional[float] = None
+) -> str:
+    """Evalúa la variación del costo mayorista cobrado por un proveedor y calcula si rompe el margen de ganancia:
+    - Si la fluctuación es >= 5% o >= $200 ARS, dispara una alerta con el nuevo precio de venta al público sugerido.
+    - plataforma: Nombre del servicio (ej: 'Netflix', 'Disney+', 'Max').
+    - nuevo_costo: Costo actual en ARS cobrado por el proveedor mayorista.
+    - tipo_servicio: 'pantalla', 'cuenta_completa', 'hwid'.
+    - costo_anterior: (Opcional) Si no se indica, toma el costo registrado en el catálogo actual.
+    """
+    from application.suppliers.cost_variance_service import evaluate_cost_variance
+
+    old_c = costo_anterior
+    if old_c is None or old_c <= 0:
+        catalog = database.get_price_catalog()
+        for it in catalog:
+            if it["platform"].lower() == plataforma.strip().lower() and it["service_type"].lower() == tipo_servicio.strip().lower():
+                old_c = float(it["cost_price"])
+                break
+
+    res = await evaluate_cost_variance(
+        platform=plataforma,
+        service_type=tipo_servicio,
+        old_cost=old_c or 0.0,
+        new_cost=nuevo_costo,
+        notify_telegram=True,
+        actor="Gemini-Spark-MCP"
+    )
+
+    if not res.get("is_significant"):
+        return (
+            f"✅ <b>COSTO ESTABLE:</b> La variación para {plataforma} ({tipo_servicio}) no es significativa ({res.get('diff_pct')}% / {database.format_ars(res.get('diff_ars'))}).\n"
+            f"• Costo evaluado: {database.format_ars(nuevo_costo)}\n"
+            f"• Los márgenes de rentabilidad actuales se mantienen protegidos."
+        )
+
+    direction = "aumento" if res.get("diff_ars", 0) > 0 else "reducción"
+    return (
+        f"🚨 <b>ALERTA DE VARIACIÓN DE COSTOS DETECTADA:</b>\n"
+        f"• Servicio: <b>{res.get('platform')}</b> ({res.get('service_type')})\n"
+        f"• Costo Previo: {database.format_ars(res.get('old_cost'))}\n"
+        f"• Nuevo Costo: {database.format_ars(res.get('new_cost'))} ({direction} de {res.get('diff_pct')}%)\n"
+        f"💡 <b>PRECIO DE VENTA SUGERIDO: {res.get('recommended_retail_formatted')}</b> (para mantener 35% de margen neto)\n"
+        f"📲 Alerta enviada a Telegram: {'Sí' if res.get('telegram_alert_sent') else 'Omitida/Sin configurar'}\n"
+        f"🔒 Evento registrado en auditoría inmutable HMAC."
+    )
+
+

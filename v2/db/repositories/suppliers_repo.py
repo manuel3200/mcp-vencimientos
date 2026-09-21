@@ -1,8 +1,11 @@
+import logging
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List, Union, Tuple
 
 from db.connection import get_connection
 from core.utils import parse_money, format_ars
+
+logger = logging.getLogger("db.suppliers_repo")
 
 def get_suppliers() -> List[Dict[str, Any]]:
     """Devuelve la lista de todos los proveedores mayoristas con resumen de cuentas y gastos."""
@@ -207,6 +210,13 @@ def renew_master_account(
 
     try:
         with conn:
+            cur_cost_row = conn.execute("""
+                SELECT supplier_cost FROM streaming_accounts 
+                WHERE lower(email) = lower(?) AND lower(platform) = lower(?) AND supplier_cost > 0
+                LIMIT 1
+            """, (clean_email, clean_plat)).fetchone()
+            old_sup_cost = float(cur_cost_row["supplier_cost"]) if cur_cost_row else 0.0
+
             if supplier_id is None:
                 cur_row = conn.execute("""
                     SELECT supplier_id FROM streaming_accounts 
@@ -235,6 +245,32 @@ def renew_master_account(
                     INSERT INTO payments (account_id, client_id, amount, cost, profit, payment_method, notes)
                     VALUES (NULL, NULL, 0.0, ?, ?, ?, ?)
                 """, (cost_num, -cost_num, payment_method.strip(), f"Renovación Cuenta Madre {clean_plat} ({clean_email})"))
+
+            if old_sup_cost > 0 and cost_num > 0 and old_sup_cost != cost_num:
+                try:
+                    import asyncio
+                    from application.suppliers.cost_variance_service import evaluate_cost_variance
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(evaluate_cost_variance(
+                            platform=clean_plat,
+                            service_type="cuenta_completa",
+                            old_cost=old_sup_cost,
+                            new_cost=cost_num,
+                            notify_telegram=True,
+                            actor="suppliers_repo"
+                        ))
+                    except RuntimeError:
+                        asyncio.run(evaluate_cost_variance(
+                            platform=clean_plat,
+                            service_type="cuenta_completa",
+                            old_cost=old_sup_cost,
+                            new_cost=cost_num,
+                            notify_telegram=True,
+                            actor="suppliers_repo"
+                        ))
+                except Exception as e:
+                    logger.warning(f"Error evaluando variación de costo de proveedor: {e}")
 
             return {
                 "success": True,

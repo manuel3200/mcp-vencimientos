@@ -542,3 +542,52 @@ async def resumen_ejecutivo_negocio(detallado: bool = False) -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+async def publicar_en_canales(
+    titulo: str,
+    mensaje: str,
+    categoria: str = "promo",
+    plataformas: Optional[str] = None,
+    canal_whatsapp: Optional[str] = None,
+    canal_telegram: Optional[str] = None
+) -> str:
+    """Difunde un comunicado oficial o promoción flash en Canales de WhatsApp (@newsletter o grupo) y Canales de Telegram (@canal o ID) con 1 solo clic.
+    - titulo: Encabezado del anuncio (ej: 'Promo Relámpago Netflix 4K').
+    - mensaje: Cuerpo explicativo de la oferta, novedad o mantenimiento.
+    - categoria: 'promo', 'stock', 'mantenimiento', 'comunicado'.
+    - plataformas: Lista separada por comas de servicios incluidos (ej: 'Netflix, Disney+, Max').
+    - canal_whatsapp: JID destino opcional (si no se envía, usa el predeterminado de configuración).
+    - canal_telegram: Destino opcional de Telegram (si no se envía, usa el canal por defecto).
+    """
+    from application.channels.broadcast_service import broadcast_announcement
+    
+    plat_list = [p.strip() for p in plataformas.split(",") if p.strip()] if plataformas else None
+    res = await broadcast_announcement(
+        title=titulo,
+        message=mensaje,
+        category=categoria,
+        platforms=plat_list,
+        send_whatsapp=True,
+        whatsapp_target=canal_whatsapp,
+        send_telegram=True,
+        telegram_target=canal_telegram,
+        actor="Gemini-Spark-MCP"
+    )
+    
+    if not res.get("success"):
+        errors_str = " | ".join(res.get("errors", ["Error desconocido"]))
+        return f"❌ Fallo en la difusión: {errors_str}"
+    
+    wa_st = "✅ Enviado" if res.get("whatsapp_sent") else "⚠️ No enviado (verificar destino)"
+    tg_st = "✅ Enviado" if res.get("telegram_sent") else "⚠️ No enviado (verificar destino)"
+    return (
+        f"📢 <b>DIFUSIÓN EN CANALES COMPLETADA CON ÉXITO:</b>\n"
+        f"• Título: <b>{res.get('title')}</b>\n"
+        f"• Categoría: <code>{res.get('category')}</code>\n"
+        f"• Canal WhatsApp: {wa_st} ({res.get('whatsapp_target') or 'N/A'})\n"
+        f"• Canal Telegram: {tg_st} ({res.get('telegram_target') or 'N/A'})\n"
+        f"🔒 Operación asentada en bitácora inmutable de auditoría HMAC."
+    )
+
+
+

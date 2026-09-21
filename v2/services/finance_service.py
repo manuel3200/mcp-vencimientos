@@ -3,6 +3,7 @@ from typing import Dict, Any
 
 from db.connection import get_connection
 from db.repositories.accounts_repo import get_active_accounts
+from db.repositories.finance_repo import get_profitability_by_platform
 from core.utils import parse_money
 
 def get_financial_balance(period: str = "mes_actual") -> Dict[str, Any]:

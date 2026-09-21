@@ -3,7 +3,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List, Union
 
 from db.connection import get_connection
-from core.utils import parse_money
+from core.utils import parse_money, format_ars
 
 logger = logging.getLogger("db.finance_repo")
 
@@ -393,3 +393,120 @@ def get_recent_transactions(limit: int = 15) -> List[Dict[str, Any]]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def get_profitability_by_platform(target_platform: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Calcula la rentabilidad neta real por plataforma comparando ingresos brutos cobrados,
+    costos mayoristas de proveedor y el costo económico de reposición por caídas.
+    """
+    conn = get_connection()
+    try:
+        # Obtener lista de plataformas únicas registradas
+        if target_platform:
+            clean_target = target_platform.strip()
+            platforms = [clean_target]
+        else:
+            rows = conn.execute("""
+                SELECT DISTINCT platform FROM streaming_accounts WHERE platform != ''
+                UNION
+                SELECT DISTINCT platform FROM price_catalog WHERE platform != ''
+                ORDER BY platform ASC
+            """).fetchall()
+            platforms = [r["platform"] for r in rows if r["platform"]]
+
+        profitability = []
+
+        for plat in platforms:
+            # 1. Total de cuentas e inventario
+            acc_stats = conn.execute("""
+                SELECT 
+                    COUNT(*) as total_accounts,
+                    SUM(CASE WHEN status = 'ocupada' AND (payment_status = 'pagado' OR payment_status IS NULL) THEN 1 ELSE 0 END) as active_accounts,
+                    SUM(CASE WHEN status = 'libre' THEN 1 ELSE 0 END) as free_stock,
+                    SUM(CASE WHEN status IN ('caida', 'reemplazada_caida') THEN 1 ELSE 0 END) as fallen_count
+                FROM streaming_accounts
+                WHERE lower(platform) = lower(?)
+            """, (plat,)).fetchone()
+
+            tot_acc = int(acc_stats["total_accounts"] or 0)
+            act_acc = int(acc_stats["active_accounts"] or 0)
+            free_acc = int(acc_stats["free_stock"] or 0)
+            fall_acc = int(acc_stats["fallen_count"] or 0)
+
+            # 2. Ingresos brutos cobrados por ventas / renovaciones de esta plataforma
+            rev_row = conn.execute("""
+                SELECT COALESCE(SUM(p.amount), 0.0) as gross_revenue
+                FROM payments p
+                JOIN streaming_accounts a ON p.account_id = a.id
+                WHERE lower(a.platform) = lower(?)
+                  AND (p.status IS NULL OR p.status != 'reversed')
+            """, (plat,)).fetchone()
+            gross_revenue = float(rev_row["gross_revenue"] or 0.0)
+
+            # 3. Costos mayoristas directos asentados en pagos y gastos a proveedores
+            pay_costs = conn.execute("""
+                SELECT COALESCE(SUM(p.cost), 0.0) as pay_cost
+                FROM payments p
+                JOIN streaming_accounts a ON p.account_id = a.id
+                WHERE lower(a.platform) = lower(?)
+                  AND (p.status IS NULL OR p.status != 'reversed')
+            """, (plat,)).fetchone()
+
+            sup_expenses = conn.execute("""
+                SELECT COALESCE(SUM(amount), 0.0) as sup_cost
+                FROM supplier_expenses
+                WHERE lower(platform) = lower(?)
+            """, (plat,)).fetchone()
+
+            direct_costs = float(pay_costs["pay_cost"] or 0.0) + float(sup_expenses["sup_cost"] or 0.0)
+
+            # 4. Costo económico de cuentas caídas y reemplazos
+            fallen_cost_row = conn.execute("""
+                SELECT COALESCE(SUM(CAST(cost as REAL)), 0.0) as fallen_cost
+                FROM streaming_accounts
+                WHERE lower(platform) = lower(?)
+                  AND status IN ('caida', 'reemplazada_caida')
+            """, (plat,)).fetchone()
+            fallen_cost = float(fallen_cost_row["fallen_cost"] or 0.0)
+
+            total_expenses = direct_costs + fallen_cost
+            net_profit = gross_revenue - total_expenses
+            profit_margin_pct = round((net_profit / gross_revenue) * 100, 2) if gross_revenue > 0 else 0.0
+            fallen_rate_pct = round((fall_acc / tot_acc) * 100, 2) if tot_acc > 0 else 0.0
+
+            # Indicador cualitativo de salud
+            if fallen_rate_pct > 10.0:
+                health_status = "⚠️ Alta tasa de caídas"
+            elif profit_margin_pct >= 30.0:
+                health_status = "🌟 Altamente rentable"
+            elif profit_margin_pct > 0:
+                health_status = "✅ Rentable"
+            else:
+                health_status = "📉 En balance neutro / negativo"
+
+            profitability.append({
+                "platform": plat,
+                "total_accounts": tot_acc,
+                "active_accounts": act_acc,
+                "free_stock": free_acc,
+                "fallen_count": fall_acc,
+                "gross_revenue": gross_revenue,
+                "supplier_costs": direct_costs,
+                "fallen_cost": fallen_cost,
+                "total_expenses": total_expenses,
+                "net_profit": net_profit,
+                "profit_margin_pct": profit_margin_pct,
+                "fallen_rate_pct": fallen_rate_pct,
+                "health_status": health_status,
+                "gross_revenue_formatted": format_ars(gross_revenue),
+                "supplier_costs_formatted": format_ars(direct_costs),
+                "fallen_cost_formatted": format_ars(fallen_cost),
+                "net_profit_formatted": format_ars(net_profit)
+            })
+
+        # Ordenar de mayor a menor ganancia neta
+        profitability.sort(key=lambda x: x["net_profit"], reverse=True)
+        return profitability
+    finally:
+        conn.close()
+

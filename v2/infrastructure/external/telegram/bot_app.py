@@ -54,6 +54,24 @@ async def send_telegram_message(
         logger.error(f"Excepción al enviar mensaje de Telegram: {e}")
         return False
 
+async def broadcast_to_telegram_channel(
+    channel_target: str,
+    text: str,
+    parse_mode: str = "HTML",
+    reply_markup: Optional[Dict[str, Any]] = None
+) -> bool:
+    """Envía un comunicado o difusión a un Canal de Telegram público (@canal) o privado (-100...)."""
+    target = str(channel_target or "").strip()
+    if not target:
+        logger.warning("No se proporcionó canal de destino para difusión en Telegram.")
+        return False
+    return await send_telegram_message(
+        text=text,
+        parse_mode=parse_mode,
+        reply_markup=reply_markup,
+        chat_id=target
+    )
+
 async def edit_telegram_message(
     chat_id: str,
     message_id: int,

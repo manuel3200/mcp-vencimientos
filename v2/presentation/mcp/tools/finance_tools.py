@@ -436,3 +436,39 @@ def validar_cupon_descuento(codigo: str, monto_compra: float) -> str:
     return f"❌ <b>CUPÓN INVÁLIDO:</b> {msg}"
 
 
+@mcp.tool()
+def consultar_rentabilidad_por_plataforma(plataforma: Optional[str] = None) -> str:
+    """Calcula y reporta la rentabilidad neta real por plataforma (Netflix, Disney+, Max, Spotify, HTTP Custom, etc.):
+    Compara ingresos brutos cobrados vs. costos mayoristas y descuenta las pérdidas por cuentas caídas para dar el margen neto real.
+    - plataforma: (Opcional) Nombre de la plataforma a auditar o dejar vacío para ranking comparativo de todas.
+    """
+    from db.repositories.finance_repo import get_profitability_by_platform
+    data = get_profitability_by_platform(target_platform=plataforma)
+
+    if not data:
+        return "ℹ️ No se registraron datos contables ni cuentas para la plataforma indicada."
+
+    lines = [
+        "📊 <b>REPORTE FINANCIERO DE RENTABILIDAD NETA POR PLATAFORMA:</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    ]
+
+    total_net = sum(d["net_profit"] for d in data)
+    total_rev = sum(d["gross_revenue"] for d in data)
+    total_exp = sum(d["total_expenses"] for d in data)
+
+    for i, d in enumerate(data, 1):
+        lines.append(
+            f"<b>{i}. {d['platform']}</b> {d['health_status']}\n"
+            f"  • Ingresos Cobrados: <b>{d['gross_revenue_formatted']}</b>\n"
+            f"  • Costos Mayoristas: {d['supplier_costs_formatted']}" + (f" + Caídas: {d['fallen_cost_formatted']}" if d['fallen_cost'] > 0 else "") + "\n"
+            f"  • 💵 <b>Ganancia Neta Real: {d['net_profit_formatted']}</b> (Margen: <b>{d['profit_margin_pct']}%</b>)\n"
+            f"  • Cuentas: {d['active_accounts']} activas / {d['free_stock']} stock libre | Caídas: {d['fallen_count']} ({d['fallen_rate_pct']}%)"
+        )
+        lines.append("────────────────────────────────────────────────────")
+
+    lines.append(f"💰 <b>TOTAL GANANCIA NETA CARTERA:</b> {database.format_ars(total_net)} (Ingresos: {database.format_ars(total_rev)} | Gastos: {database.format_ars(total_exp)})")
+    return "\n".join(lines)
+
+
+

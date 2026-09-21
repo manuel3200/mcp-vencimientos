@@ -95,7 +95,8 @@ from db.repositories.finance_repo import (
     register_partial_payment,
     reverse_customer_payment,
     collect_payment,
-    get_recent_transactions
+    get_recent_transactions,
+    get_profitability_by_platform
 )
 
 from services.finance_service import (
@@ -256,5 +257,13 @@ from core.growth import (
     ChurnPredictor
 )
 
+# Automatización Comercial y Analítica de Negocio (Prioridad 2)
+from application.channels.broadcast_service import (
+    broadcast_announcement,
+    format_whatsapp_broadcast,
+    format_telegram_broadcast
+)
 
-
+from application.suppliers.cost_variance_service import (
+    evaluate_cost_variance
+)

@@ -1,3 +1,4 @@
+import logging
 import urllib.parse
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List, Union, Tuple
@@ -5,6 +6,8 @@ from typing import Optional, Dict, Any, List, Union, Tuple
 from db.connection import get_connection
 from db.repositories.clients_repo import find_or_create_client
 from core.utils import parse_money, format_ars, clean_whatsapp_phone
+
+logger = logging.getLogger("db.catalog_repo")
 
 def get_price_catalog() -> List[Dict[str, Any]]:
     """Devuelve la lista completa de precios oficiales por plataforma en Pesos Argentinos (ARS)."""
@@ -57,6 +60,12 @@ def upsert_catalog_price(
     
     try:
         with conn:
+            existing_row = conn.execute("""
+                SELECT cost_price, price_final FROM price_catalog
+                WHERE platform = ? AND service_type = ?
+            """, (clean_platform, clean_stype)).fetchone()
+            old_cost = float(existing_row["cost_price"]) if existing_row else 0.0
+
             conn.execute("""
                 INSERT INTO price_catalog (platform, service_type, cost_price, price_final, price_reseller, price_reseller_vip, notes, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -73,6 +82,35 @@ def upsert_catalog_price(
                 SELECT * FROM price_catalog
                 WHERE platform = ? AND service_type = ?
             """, (clean_platform, clean_stype)).fetchone()
+
+            if old_cost > 0 and cost_val > 0 and old_cost != cost_val:
+                try:
+                    import asyncio
+                    from application.suppliers.cost_variance_service import evaluate_cost_variance
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(evaluate_cost_variance(
+                            platform=clean_platform,
+                            service_type=clean_stype,
+                            old_cost=old_cost,
+                            new_cost=cost_val,
+                            current_sale_price=final_val,
+                            notify_telegram=True,
+                            actor="catalog_repo"
+                        ))
+                    except RuntimeError:
+                        asyncio.run(evaluate_cost_variance(
+                            platform=clean_platform,
+                            service_type=clean_stype,
+                            old_cost=old_cost,
+                            new_cost=cost_val,
+                            current_sale_price=final_val,
+                            notify_telegram=True,
+                            actor="catalog_repo"
+                        ))
+                except Exception as e:
+                    logger.warning(f"Error evaluando variación de costo: {e}")
+
             return dict(row)
     finally:
         conn.close()

@@ -130,33 +130,34 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
             raw_ciphertext = row["ciphertext"]
             decrypted_json = decrypt_secret(raw_ciphertext)
             payload = json.loads(decrypted_json)
-
-            try:
-                log_audit_event(
-                    actor="client_web",
-                    action="CONSUME_EPHEMERAL_SECRET",
-                    target_type="ephemeral_secret",
-                    target_id=clean_token,
-                    old_value="active",
-                    new_value="burned",
-                    ip_or_source="ephemeral_secrets"
-                )
-            except Exception as e:
-                logger.warning(f"Error en auditoría al consumir secreto: {e}")
-
-            logger.info(f"🔥 Secreto efímero consumido y quemado atómicamente: {clean_token}")
-            return payload, "revealed"
     except Exception as e:
         logger.error(f"Error procesando secreto efímero {clean_token}: {e}")
         return None, "error"
     finally:
         conn.close()
 
+    try:
+        log_audit_event(
+            actor="client_web",
+            action="CONSUME_EPHEMERAL_SECRET",
+            target_type="ephemeral_secret",
+            target_id=clean_token,
+            old_value="active",
+            new_value="burned",
+            ip_or_source="ephemeral_secrets"
+        )
+    except Exception as e:
+        logger.warning(f"Error en auditoría al consumir secreto: {e}")
+
+    logger.info(f"🔥 Secreto efímero consumido y quemado atómicamente: {clean_token}")
+    return payload, "revealed"
+
 
 def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
     """Quema inmediatamente un secreto efímero para forzar su expiración anticipada."""
     clean_token = token.strip()
     conn = get_connection()
+    burned = False
     try:
         with conn:
             cursor = conn.execute("""
@@ -165,19 +166,20 @@ def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
                 WHERE token = ? AND burned_at IS NULL
             """, (clean_token,))
             burned = cursor.rowcount > 0
-            if burned:
-                try:
-                    log_audit_event(
-                        actor=actor,
-                        action="BURN_EPHEMERAL_SECRET",
-                        target_type="ephemeral_secret",
-                        target_id=clean_token,
-                        old_value="active",
-                        new_value="forced_burn",
-                        ip_or_source="ephemeral_secrets"
-                    )
-                except Exception as e:
-                    logger.warning(f"Error en auditoría al forzar quemado: {e}")
-            return burned
     finally:
         conn.close()
+
+    if burned:
+        try:
+            log_audit_event(
+                actor=actor,
+                action="BURN_EPHEMERAL_SECRET",
+                target_type="ephemeral_secret",
+                target_id=clean_token,
+                old_value="active",
+                new_value="forced_burn",
+                ip_or_source="ephemeral_secrets"
+            )
+        except Exception as e:
+            logger.warning(f"Error en auditoría al forzar quemado: {e}")
+    return burned

@@ -42,7 +42,6 @@ async def create_and_dispatch_poll(
 
     sensitive = is_sensitive_poll(clean_q)
     if sensitive:
-        category = "sensitive_pricing" if category == "demand" else category
         logger.info(f"🔒 Encuesta de intención de compra/precio detectada: '{clean_q}'. Forzando anonimato estricto (MED-01).")
 
     target_wa = whatsapp_target or os.getenv("WHATSAPP_BROADCAST_TARGET", "").strip()

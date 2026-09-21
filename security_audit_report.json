@@ -1,0 +1,35 @@
+{
+  "timestamp": "2026-09-21T01:52:48.444Z",
+  "durationSeconds": "4.88",
+  "securityScore": 100,
+  "securityGrade": "A+",
+  "summary": {
+    "totalFindings": 0,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  },
+  "phases": {
+    "sast": {
+      "filesScanned": 144,
+      "linesScanned": 35884,
+      "findingsCount": 0
+    },
+    "secrets": {
+      "filesScanned": 146,
+      "findingsCount": 0
+    },
+    "sca": {
+      "packagesScanned": 13,
+      "findingsCount": 0
+    },
+    "dast": {
+      "serverOnline": false,
+      "probesExecuted": 5,
+      "findingsCount": 0
+    }
+  },
+  "findings": []
+}

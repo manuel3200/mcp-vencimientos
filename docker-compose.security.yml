@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  security-audit:
+    build:
+      context: .
+      dockerfile: Dockerfile.security
+    container_name: streamvault-security-audit
+    volumes:
+      # Montar volumen para que el reporte generado se guarde directamente en el host
+      - ./:/workspace
+    environment:
+      - NODE_ENV=production
+      - TARGET_URL=http://app:8000
+    restart: "no"

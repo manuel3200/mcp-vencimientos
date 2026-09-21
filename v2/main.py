@@ -109,7 +109,51 @@ async def mcp_oauth_guard(request: Request, call_next):
                 )
     return await call_next(request)
 
-# 6. Health check endpoint
+# 5. Middleware de Cabeceras de Seguridad HTTP (OWASP A05:2021)
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Inyecta cabeceras HTTP de endurecimiento y seguridad defensiva en todas las respuestas."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    if "Content-Security-Policy" not in response.headers:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self' https: 'unsafe-inline' 'unsafe-eval' data: blob:; "
+            "img-src 'self' data: https: blob:; "
+            "font-src 'self' https: data:; "
+            "frame-ancestors 'none';"
+        )
+    return response
+
+# 6. Manejador Global de Excepciones Sanitizado (OWASP CWE-209 Anti-Information Disclosure)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Manejador global de excepciones no controladas.
+    Registra el stack trace completo en el log seguro pero devuelve una respuesta sanitizada al cliente.
+    """
+    logger.exception(f"Excepción no controlada en {request.method} {request.url.path}: {exc}")
+    accept_header = request.headers.get("accept", "").lower()
+    if "text/html" in accept_header:
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(
+            status_code=500,
+            content="""<!DOCTYPE html><html><head><title>Error 500 - StreamVault</title></head>
+            <body style='font-family:sans-serif;background:#0f172a;color:#f8fafc;padding:2rem;text-align:center;'>
+            <h2>Error Interno del Servidor</h2><p style='color:#94a3b8;'>Ocurrió un error procesando su solicitud. El evento ha sido registrado en auditoría.</p>
+            </body></html>"""
+        )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "error": "Internal Server Error",
+            "message": "Ocurrió un error interno procesando su solicitud."
+        }
+    )
+
+# 7. Health check endpoint
 @app.get("/health")
 async def health():
     return {

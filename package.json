@@ -1,0 +1,8 @@
+{
+  "name": "streamvault-ecosystem",
+  "version": "2.0.0",
+  "description": "StreamVault v2 - DevSecOps Security & Robustness Automation",
+  "scripts": {
+    "security:audit": "node security_pipeline/orchestrator.js"
+  }
+}

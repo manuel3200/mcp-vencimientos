@@ -1,0 +1,18 @@
+# ==============================================================================
+# Dockerfile para Ejecución Aislada de Auditoría de Seguridad StreamVault v2
+# ==============================================================================
+FROM node:20-alpine
+
+WORKDIR /workspace
+
+# Instalar utilidades básicas (curl, bash)
+RUN apk add --no-cache bash curl
+
+# Copiar el código fuente y el pipeline
+COPY . .
+
+# Permisos de ejecución
+RUN chmod +x run_audit.sh
+
+# Ejecutar el pipeline por defecto
+ENTRYPOINT ["node", "security_pipeline/orchestrator.js"]

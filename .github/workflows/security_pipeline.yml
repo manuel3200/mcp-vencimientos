@@ -1,0 +1,36 @@
+name: DevSecOps Autonomous Security & Robustness Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  security-audit:
+    name: 🛡️ Security Audit & Robustness Gate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js for Security Pipeline
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 🚀 Run Autonomous Security Pipeline (SAST, Secrets, SCA, DAST)
+        run: |
+          chmod +x run_audit.sh
+          ./run_audit.sh
+
+      - name: 📄 Upload Security Audit Report Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-reports
+          path: |
+            SECURITY_AUDIT_REPORT.md
+            security_audit_report.json

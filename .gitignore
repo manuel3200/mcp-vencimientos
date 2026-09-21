@@ -13,3 +13,11 @@ data/
 v1/data/
 v2/data/
 v1_backup/
+
+# Node / JS
+node_modules/
+package-lock.json
+
+# Office / Temporary Locks
+.~lock.*
+*.tmp

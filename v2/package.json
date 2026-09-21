@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "security:audit": "node ../security_pipeline/orchestrator.js"
+  },
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}

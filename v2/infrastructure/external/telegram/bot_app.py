@@ -72,6 +72,51 @@ async def broadcast_to_telegram_channel(
         chat_id=target
     )
 
+async def send_telegram_poll(
+    chat_id: str,
+    question: str,
+    options: List[str],
+    is_anonymous: bool = True,
+    allows_multiple_answers: bool = False
+) -> bool:
+    """Envía una encuesta nativa a un chat, grupo o canal de Telegram."""
+    token, default_chat_id = get_telegram_config()
+    target = str(chat_id or default_chat_id).strip()
+    clean_question = str(question or "").strip()
+    clean_options = [str(opt).strip() for opt in (options or []) if str(opt).strip()]
+
+    if not token or not target:
+        logger.warning("Token de Telegram o chat de destino no configurados para enviar encuesta.")
+        return False
+    if not clean_question or len(clean_options) < 2:
+        logger.warning("Pregunta u opciones insuficientes para crear encuesta en Telegram.")
+        return False
+    if len(clean_options) > 10:
+        clean_options = clean_options[:10]
+
+    url = f"https://api.telegram.org/bot{token}/sendPoll"
+    payload = {
+        "chat_id": target,
+        "question": clean_question,
+        "options": clean_options,
+        "is_anonymous": is_anonymous,
+        "allows_multiple_answers": allows_multiple_answers
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            data = resp.json()
+            if resp.status_code == 200 and data.get("ok"):
+                logger.info(f"Encuesta enviada exitosamente a Telegram ({target})")
+                return True
+            else:
+                logger.error(f"Error de Telegram API (sendPoll): {data.get('description', resp.text)}")
+                return False
+    except Exception as e:
+        logger.error(f"Excepción al enviar encuesta a Telegram: {e}")
+        return False
+
 async def edit_telegram_message(
     chat_id: str,
     message_id: int,

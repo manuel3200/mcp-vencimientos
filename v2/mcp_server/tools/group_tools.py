@@ -298,3 +298,84 @@ def consultar_ranking_grupo_whatsapp(group_jid: str, limite: int = 10) -> str:
     g_name = g_cfg.get("group_name") if g_cfg else "Grupo"
     return database.GamificationManager.format_leaderboard(records, group_name=g_name)
 
+
+@mcp.tool()
+async def lanzar_encuesta_comunidad(
+    pregunta: str,
+    opciones: str,
+    destino_whatsapp: Optional[str] = None,
+    destino_telegram: Optional[str] = None,
+    opciones_multiples: bool = False
+) -> str:
+    """Publica una encuesta interactiva nativa en grupos de WhatsApp y canales de Telegram para medir demanda o interés comercial:
+    - pregunta: Texto de la pregunta (ej: '¿Qué servicio te gustaría que sumemos con promo?').
+    - opciones: Opciones de respuesta separadas por comas (ej: 'Apple TV+, Crunchyroll Fan, Deezer HiFi').
+    - destino_whatsapp: JID opcional de grupo de WhatsApp (si no se envía, toma el predeterminado).
+    - destino_telegram: Canal o chat opcional de Telegram.
+    - opciones_multiples: True si el usuario puede marcar más de 1 opción.
+    """
+    from application.community.polls_service import create_and_dispatch_poll
+
+    opts_list = [o.strip() for o in opciones.split(",") if o.strip()]
+    res = await create_and_dispatch_poll(
+        question=pregunta,
+        options=opts_list,
+        send_whatsapp=True,
+        whatsapp_target=destino_whatsapp,
+        send_telegram=True,
+        telegram_target=destino_telegram,
+        selectable_count=len(opts_list) if opciones_multiples else 1,
+        actor="Gemini-Spark-MCP"
+    )
+
+    if not res.get("success"):
+        errors_str = " | ".join(res.get("errors", ["Error desconocido"]))
+        return f"❌ Fallo al lanzar encuesta: {errors_str}"
+
+    wa_st = "✅ Enviada" if res.get("whatsapp_sent") else "⚠️ No enviada"
+    tg_st = "✅ Enviada" if res.get("telegram_sent") else "⚠️ No enviada"
+    return (
+        f"📊 <b>ENCUESTA INTERACTIVA PUBLICADA CON ÉXITO:</b>\n"
+        f"• Pregunta: <b>{res.get('question')}</b>\n"
+        f"• Opciones ({len(res.get('options'))}): {', '.join(res.get('options'))}\n"
+        f"• WhatsApp: {wa_st} ({res.get('whatsapp_target') or 'N/A'})\n"
+        f"• Telegram: {tg_st} ({res.get('telegram_target') or 'N/A'})\n"
+        f"🔒 Registrada en bitácora inmutable de auditoría HMAC."
+    )
+
+
+@mcp.tool()
+async def despachar_comunicado_programado(
+    tipo_comunicado: str = "lunes_normas",
+    destino_grupo: Optional[str] = None
+) -> str:
+    """Dispara a demanda uno de los comunicados periódicos comunitarios a los grupos de WhatsApp:
+    - tipo_comunicado: 'lunes_normas' (normas de convivencia y soporte) o 'viernes_promo' (liquidación de casilleros y stock de fin de semana).
+    - destino_grupo: JID de grupo opcional (si no se indica, despacha a todos los grupos activos de la whitelist).
+    """
+    from application.community.scheduled_broadcast_service import (
+        run_monday_rules_broadcast,
+        run_friday_weekend_promo_broadcast
+    )
+
+    targets = [destino_grupo.strip()] if destino_grupo and destino_grupo.strip() else None
+    clean_type = tipo_comunicado.strip().lower()
+
+    if "viernes" in clean_type or "promo" in clean_type or "stock" in clean_type:
+        res = await run_friday_weekend_promo_broadcast(target_groups=targets, actor="Gemini-Spark-MCP")
+        label = "Viernes (Liquidación & Promos)"
+    else:
+        res = await run_monday_rules_broadcast(target_groups=targets, actor="Gemini-Spark-MCP")
+        label = "Lunes (Normas de Convivencia & Soporte)"
+
+    if not res.get("success"):
+        return f"❌ Error despachando comunicado: {res.get('message', 'Fallo en el despacho')}"
+
+    return (
+        f"📢 <b>COMUNICADO PROGRAMADO DESPACHADO:</b>\n"
+        f"• Tipo: <b>{label}</b>\n"
+        f"• Grupos alcanzados: <b>{res.get('sent_count')}/{res.get('total_targets')}</b>\n"
+        f"🔒 Evento asentado en bitácora inmutable de auditoría HMAC."
+    )
+
+

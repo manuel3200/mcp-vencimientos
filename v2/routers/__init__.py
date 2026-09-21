@@ -12,6 +12,7 @@ from presentation.api.groups_api import router as groups_router
 from presentation.api.referrals_api import router as referrals_router
 from presentation.api.channels_api import router as channels_router
 from presentation.api.finance_api import router as finance_router
+from presentation.api.community_api import router as community_router
 from presentation.web.ephemeral_routes import router as ephemeral_router
 
 __all__ = [
@@ -19,6 +20,7 @@ __all__ = [
     "auth_router",
     "catalog_router",
     "channels_router",
+    "community_router",
     "dashboard_router",
     "ephemeral_router",
     "finance_router",
@@ -46,5 +48,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(referrals_router)
     app.include_router(channels_router)
     app.include_router(finance_router)
+    app.include_router(community_router)
+
 
 

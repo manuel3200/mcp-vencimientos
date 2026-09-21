@@ -276,6 +276,76 @@ async def send_channel_or_group_message(
         return {"success": False, "target": target_number, "error": err}
 
 
+async def send_poll(
+    recipient: str,
+    question: str,
+    options: List[str],
+    selectable_count: int = 1
+) -> Dict[str, Any]:
+    """Envía una encuesta interactiva nativa de WhatsApp a un grupo (@g.us) o chat individual vía Evolution API.
+    - recipient: Número de teléfono o JID de grupo.
+    - question: Título o pregunta de la encuesta.
+    - options: Lista de opciones (entre 2 y 12).
+    - selectable_count: Cantidad máxima de opciones seleccionables (1 para elección única).
+    """
+    clean_target = str(recipient or "").strip()
+    clean_question = str(question or "").strip()
+    clean_options = [str(opt).strip() for opt in (options or []) if str(opt).strip()]
+
+    if not clean_target:
+        return {"success": False, "error": "Destinatario no especificado"}
+    if not clean_question:
+        return {"success": False, "error": "La pregunta de la encuesta no puede estar vacía"}
+    if len(clean_options) < 2:
+        return {"success": False, "error": "Una encuesta requiere al menos 2 opciones"}
+    if len(clean_options) > 12:
+        clean_options = clean_options[:12]
+
+    is_group = clean_target.endswith("@g.us") or clean_target.endswith("@newsletter")
+    if not is_group:
+        digits = re.sub(r'[^0-9]', '', clean_target)
+        if not digits or len(digits) < 8:
+            return {"success": False, "error": f"Destinatario inválido: '{recipient}'"}
+        target_number = digits
+    else:
+        target_number = clean_target
+
+    config = get_evolution_config()
+    url = f"{config['api_url']}/message/sendPoll/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+
+    payload = {
+        "number": target_number,
+        "name": clean_question,
+        "selectableCount": max(1, selectable_count),
+        "values": clean_options
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                msg_id = data.get("key", {}).get("id") or "sent"
+                logger.info(f"Encuesta WhatsApp enviada con éxito a {target_number} (ID: {msg_id})")
+                return {
+                    "success": True,
+                    "target": target_number,
+                    "message_id": msg_id,
+                    "question": clean_question,
+                    "options": clean_options,
+                    "data": data
+                }
+            else:
+                err = f"HTTP {resp.status_code}: {resp.text[:250]}"
+                logger.error(f"Fallo al enviar encuesta WhatsApp a {target_number}: {err}")
+                return {"success": False, "target": target_number, "error": err}
+    except Exception as e:
+        err = str(e)
+        logger.error(f"Excepción al enviar encuesta WhatsApp a {target_number}: {err}")
+        return {"success": False, "target": target_number, "error": err}
+
+
 async def send_media_message(
     phone: str,
     base64_data: str,

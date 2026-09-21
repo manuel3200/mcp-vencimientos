@@ -53,7 +53,8 @@ def main():
         ("Auditoría Inmutable, Enlaces Efímeros y Cifrado en Reposo (Fase 3)", "tests.test_audit_log_and_ephemeral_secrets"),
         ("Crecimiento Comercial, Cupones, Referidos y Comunidad (Fase 4)", "tests.test_growth_and_community"),
         ("Capacidades Avanzadas de WhatsApp: Reacciones, VCards, Stickers y Lectura", "tests.test_evolution_advanced_features"),
-        ("Automatización Comercial y Analítica de Negocio (Prioridad 2)", "tests.test_commercial_automation_p2")
+        ("Automatización Comercial y Analítica de Negocio (Prioridad 2)", "tests.test_commercial_automation_p2"),
+        ("Fidelización, Automatización Comunitaria y Sondeos (Prioridad 3)", "tests.test_community_automation_p3")
     ]
 
     failed = 0

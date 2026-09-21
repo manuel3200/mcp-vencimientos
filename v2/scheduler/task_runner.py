@@ -389,6 +389,28 @@ def start_scheduler():
         id="monthly_receipts_base64_purge",
         replace_existing=True
     )
+
+    # 8. Comunicado Semanal de Normas de Convivencia (Lunes 10:00 AM)
+    from application.community.scheduled_broadcast_service import (
+        run_monday_rules_broadcast,
+        run_friday_weekend_promo_broadcast
+    )
+    trigger_monday = CronTrigger(day_of_week='mon', hour=10, minute=0, timezone=tz)
+    scheduler.add_job(
+        run_monday_rules_broadcast,
+        trigger=trigger_monday,
+        id="weekly_community_monday_rules",
+        replace_existing=True
+    )
+
+    # 9. Liquidación y Promos de Fin de Semana (Viernes 16:00 PM)
+    trigger_friday = CronTrigger(day_of_week='fri', hour=16, minute=0, timezone=tz)
+    scheduler.add_job(
+        run_friday_weekend_promo_broadcast,
+        trigger=trigger_friday,
+        id="weekly_community_friday_promo",
+        replace_existing=True
+    )
     
     scheduler.start()
     logger.info(f"Scheduler iniciado. Mañana: {check_hour:02d}:{check_minute:02d}, Corte: {cutoff_hour:02d}:00, Backup Semanal: Dom 04:00, Heartbeat: cada 15m ({tz_str})")

@@ -267,3 +267,17 @@ from application.channels.broadcast_service import (
 from application.suppliers.cost_variance_service import (
     evaluate_cost_variance
 )
+
+# Fidelización, Automatización Comunitaria y Sondeos (Prioridad 3)
+from application.community.polls_service import (
+    create_and_dispatch_poll
+)
+from application.community.scheduled_broadcast_service import (
+    run_monday_rules_broadcast,
+    run_friday_weekend_promo_broadcast,
+    get_active_community_groups
+)
+from application.community.word_filter_service import (
+    inspect_community_message
+)
+

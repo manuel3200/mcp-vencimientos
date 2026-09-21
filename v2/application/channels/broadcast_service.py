@@ -25,11 +25,16 @@ CATEGORY_CONFIG = {
         "default_cta": "🛡️ _Nuestro equipo está optimizando la infraestructura para garantizar la máxima estabilidad._"
     },
     "comunicado": {
-        "badge_wa": "📢 *COMUNICADO OFICIAL DE LA COMUNIDAD* 📢",
-        "badge_tg": "📢 <b>COMUNICADO OFICIAL DE LA COMUNIDAD</b> 📢",
+        "badge_wa": "📢 *¡COMUNICADO OFICIAL DE LA COMUNIDAD!* 📢",
+        "badge_tg": "📢 <b>¡COMUNICADO OFICIAL DE LA COMUNIDAD!</b> 📢",
         "default_cta": "✨ _Gracias por ser parte de StreamVault. Tu preferencia es nuestra mayor motivación._"
     }
 }
+
+
+def _markdown_italics_to_html(text: str) -> str:
+    import re
+    return re.sub(r'_(.+?)_', r'<i>\1</i>', text)
 
 
 def format_whatsapp_broadcast(
@@ -71,7 +76,7 @@ def format_telegram_broadcast(
     """Construye un mensaje corporativo optimizado con HTML para Canales de Telegram."""
     cat_cfg = CATEGORY_CONFIG.get(category.lower(), CATEGORY_CONFIG["comunicado"])
     badge = cat_cfg["badge_tg"]
-    cta = custom_cta or cat_cfg["default_cta"].replace("_", "<i>").replace("_", "</i>")
+    cta = custom_cta or _markdown_italics_to_html(cat_cfg["default_cta"])
 
     lines = [
         badge,

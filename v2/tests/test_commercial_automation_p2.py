@@ -265,7 +265,7 @@ class TestCommercialAutomationP2(unittest.TestCase):
 
     def test_cost_variance_significant_increase(self):
         """Valida que aumentos >= 5% disparen alerta, calculen margen y recomienden precio de venta."""
-        with patch("infrastructure.external.telegram.bot_app.send_telegram_message", new_callable=AsyncMock) as mock_tg:
+        with patch("application.suppliers.cost_variance_service.send_telegram_message", new_callable=AsyncMock) as mock_tg:
             mock_tg.return_value = True
 
             res = self.loop.run_until_complete(
@@ -292,7 +292,7 @@ class TestCommercialAutomationP2(unittest.TestCase):
 
     def test_cost_variance_insignificant_change(self):
         """Valida que fluctuaciones menores a 5% y menores a $200 ARS no disparen falsas alarmas."""
-        with patch("infrastructure.external.telegram.bot_app.send_telegram_message", new_callable=AsyncMock) as mock_tg:
+        with patch("application.suppliers.cost_variance_service.send_telegram_message", new_callable=AsyncMock) as mock_tg:
             res = self.loop.run_until_complete(
                 evaluate_cost_variance(
                     platform="Disney+ P2",

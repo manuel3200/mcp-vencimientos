@@ -54,7 +54,8 @@ def main():
         ("Crecimiento Comercial, Cupones, Referidos y Comunidad (Fase 4)", "tests.test_growth_and_community"),
         ("Capacidades Avanzadas de WhatsApp: Reacciones, VCards, Stickers y Lectura", "tests.test_evolution_advanced_features"),
         ("Automatización Comercial y Analítica de Negocio (Prioridad 2)", "tests.test_commercial_automation_p2"),
-        ("Fidelización, Automatización Comunitaria y Sondeos (Prioridad 3)", "tests.test_community_automation_p3")
+        ("Fidelización, Automatización Comunitaria y Sondeos (Prioridad 3)", "tests.test_community_automation_p3"),
+        ("Hardening de Seguridad de Auditoría (Mitigación CRIT/HIGH/MED)", "tests.test_security_audit_hardening")
     ]
 
     failed = 0

@@ -25,8 +25,14 @@ class Settings:
     SESSION_SECRET_KEY: str = os.getenv("SESSION_SECRET_KEY", "mcp-super-secret-key-change-in-prod-2026")
     BACKUP_ENCRYPTION_KEY: str = os.getenv("BACKUP_ENCRYPTION_KEY", "").strip()
     WEBHOOK_SECRET: str = os.getenv("WEBHOOK_SECRET", "").strip()
+    EVOLUTION_WEBHOOK_SECRET: str = os.getenv("EVOLUTION_WEBHOOK_SECRET", "").strip()
     ADMIN_USERNAME: str = os.getenv("ADMIN_USERNAME", "admin").strip().lower()
     ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "admin123").strip()
+    ADMIN_WHATSAPP: str = os.getenv("ADMIN_WHATSAPP", "").strip()
+
+    # Dominio Público y Enlaces Efímeros
+    PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:8000").strip().rstrip("/")
 
     # Bot de Telegram
     TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()

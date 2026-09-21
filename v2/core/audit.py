@@ -9,6 +9,7 @@ import hmac
 import hashlib
 import secrets
 import logging
+from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
 from core.config import settings
@@ -212,3 +213,42 @@ def format_audit_report(records: List[Dict[str, Any]], target_query: Optional[st
         )
 
     return "\n".join(lines)
+
+
+async def anchor_audit_root_to_telegram(chat_id: Optional[str] = None) -> Dict[str, Any]:
+    """Publica el hash raíz acumulado de la bitácora inmutable en Telegram como testigo externo inmutable (CRIT-04)."""
+    from db.connection import get_connection
+    from telegram_bot import send_telegram_message
+
+    latest = get_latest_audit_entry()
+    latest_sig = latest.get("signature_hmac", GENESIS_HASH) if latest else GENESIS_HASH
+    latest_id = latest.get("id", 0) if latest else 0
+
+    conn = get_connection()
+    try:
+        count_row = conn.execute("SELECT COUNT(*) as c FROM audit_log").fetchone()
+        total_count = count_row["c"] if count_row else 0
+    finally:
+        conn.close()
+
+    utc_now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    msg = (
+        f"🔒 <b>[AUDIT ANCHOR — TESTIGO EXTERNO INMUTABLE]</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"• <b>Timestamp:</b> <code>{utc_now}</code>\n"
+        f"• <b>Bloques Auditados:</b> <code>{total_count}</code> (Último ID: <code>#{latest_id}</code>)\n"
+        f"• <b>Root Hash HMAC:</b>\n<code>sha256:{latest_sig}</code>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🛡️ <i>Sello criptográfico publicado de forma inmutable para verificación forense externa.</i>"
+    )
+
+    ok = await send_telegram_message(text=msg, chat_id=chat_id)
+    logger.info(f"Ancla de auditoría publicada en Telegram: Root sha256:{latest_sig[:16]}... ({'OK' if ok else 'FALLO'})")
+    return {
+        "success": ok,
+        "total_blocks": total_count,
+        "latest_id": latest_id,
+        "root_hash": latest_sig,
+        "timestamp": utc_now
+    }
+

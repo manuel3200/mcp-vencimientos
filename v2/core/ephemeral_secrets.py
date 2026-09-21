@@ -13,6 +13,7 @@ from typing import Dict, Any, Optional, Tuple
 
 from core.config import settings
 from core.security import encrypt_secret, decrypt_secret
+from core.audit import log_audit_event
 from db.connection import get_connection
 
 logger = logging.getLogger("core.ephemeral_secrets")
@@ -22,7 +23,8 @@ def create_ephemeral_secret(
     data: Dict[str, Any],
     title: str = "Credenciales Seguras",
     ttl_seconds: int = 600,
-    max_views: int = 1
+    max_views: int = 1,
+    actor: str = "system"
 ) -> Tuple[str, str]:
     """Cifra un diccionario de datos sensibles y genera un enlace efímero de un solo uso.
     
@@ -47,10 +49,30 @@ def create_ephemeral_secret(
     finally:
         conn.close()
 
-    base_url = getattr(settings, "APP_BASE_URL", "") or os.getenv("APP_BASE_URL", "http://localhost:8000")
-    full_url = f"{base_url.rstrip('/')}/v/{token}"
+    base_url = (
+        getattr(settings, "PUBLIC_BASE_URL", "") or
+        os.getenv("PUBLIC_BASE_URL", "") or
+        getattr(settings, "APP_BASE_URL", "") or
+        os.getenv("APP_BASE_URL", "http://localhost:8000")
+    ).strip().rstrip("/")
+    full_url = f"{base_url}/v/{token}"
+
+    try:
+        log_audit_event(
+            actor=actor,
+            action="GENERATE_EPHEMERAL_SECRET",
+            target_type="ephemeral_secret",
+            target_id=token,
+            old_value="",
+            new_value=f"title:{title},ttl:{ttl_seconds}s,max_views:{max_views}",
+            ip_or_source="ephemeral_secrets"
+        )
+    except Exception as e:
+        logger.warning(f"Error registrando auditoría de secreto efímero: {e}")
+
     logger.info(f"🔑 Secreto efímero creado: {token} (válido por {ttl_seconds}s, max_views={max_views})")
     return token, full_url
+
 
 
 def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
@@ -108,6 +130,20 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
             raw_ciphertext = row["ciphertext"]
             decrypted_json = decrypt_secret(raw_ciphertext)
             payload = json.loads(decrypted_json)
+
+            try:
+                log_audit_event(
+                    actor="client_web",
+                    action="CONSUME_EPHEMERAL_SECRET",
+                    target_type="ephemeral_secret",
+                    target_id=clean_token,
+                    old_value="active",
+                    new_value="burned",
+                    ip_or_source="ephemeral_secrets"
+                )
+            except Exception as e:
+                logger.warning(f"Error en auditoría al consumir secreto: {e}")
+
             logger.info(f"🔥 Secreto efímero consumido y quemado atómicamente: {clean_token}")
             return payload, "revealed"
     except Exception as e:
@@ -117,7 +153,7 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
         conn.close()
 
 
-def burn_secret_immediately(token: str) -> bool:
+def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
     """Quema inmediatamente un secreto efímero para forzar su expiración anticipada."""
     clean_token = token.strip()
     conn = get_connection()
@@ -128,6 +164,20 @@ def burn_secret_immediately(token: str) -> bool:
                 SET burned_at = CURRENT_TIMESTAMP
                 WHERE token = ? AND burned_at IS NULL
             """, (clean_token,))
-            return cursor.rowcount > 0
+            burned = cursor.rowcount > 0
+            if burned:
+                try:
+                    log_audit_event(
+                        actor=actor,
+                        action="BURN_EPHEMERAL_SECRET",
+                        target_type="ephemeral_secret",
+                        target_id=clean_token,
+                        old_value="active",
+                        new_value="forced_burn",
+                        ip_or_source="ephemeral_secrets"
+                    )
+                except Exception as e:
+                    logger.warning(f"Error en auditoría al forzar quemado: {e}")
+            return burned
     finally:
         conn.close()

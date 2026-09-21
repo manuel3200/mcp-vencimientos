@@ -12,6 +12,12 @@ logger = logging.getLogger("scheduler")
 scheduler = AsyncIOScheduler()
 
 import asyncio
+import random
+
+def get_gaussian_human_delay(mu: float = 67.5, sigma: float = 15.0, min_val: float = 45.0, max_val: float = 90.0) -> float:
+    """Distribución gaussiana centrada en 67.5s (desvío 15s) acotada entre 45s y 90s para cadencia anti-ban (CRIT-03)."""
+    val = random.gauss(mu, sigma)
+    return max(min_val, min(max_val, val))
 
 async def check_and_send_alerts(days_window: int = None, force: bool = False) -> int:
     """Verifica servicios y cuentas de streaming por vencer y envía notificaciones por Telegram."""
@@ -41,12 +47,12 @@ async def check_and_send_alerts(days_window: int = None, force: bool = False) ->
 
     logger.info(f"Escaneo finalizado. Alertas enviadas: {sent_count}")
 
-    # Verificar salud de stock en cada comprobación diaria
+    # Monitorear umbrales de stock mínimo por plataforma
     try:
-        import database
+        from db.repositories.accounts_repo import get_stock_health_summary
         from telegram_bot import format_and_send_stock_alert
-        summary = database.get_stock_health_summary()
-        if summary.get("has_alerts") and not force:
+        health = get_stock_health_summary()
+        if health.get("low_stock_count", 0) > 0:
             logger.info("Plataformas con stock crítico detectadas durante escaneo diario. Notificando...")
             await format_and_send_stock_alert()
     except Exception as e:
@@ -61,7 +67,6 @@ async def check_and_send_alerts(days_window: int = None, force: bool = False) ->
     # Despacho automático de cobros/recordatorios por WhatsApp si Evolution API está activa
     try:
         import whatsapp_client
-        import random
         wa_settings = database.get_whatsapp_api_settings()
         if wa_settings.get("auto_send_expiry") and wa_settings["auto_send_expiry"] == 1:
             wa_status = await whatsapp_client.check_connection_status()
@@ -69,6 +74,10 @@ async def check_and_send_alerts(days_window: int = None, force: bool = False) ->
                 logger.info("Evolution API conectada. Iniciando envío automático de recordatorios por WhatsApp...")
                 wa_sent_count = 0
                 for item in expiring:
+                    if wa_sent_count >= 50:
+                        logger.warning("Límite anti-ban de 50 mensajes por hora alcanzado. Deteniendo lote matutino.")
+                        break
+
                     client_phone = item.get("whatsapp") or ""
                     if client_phone:
                         wa_data = database.generate_whatsapp_message(item, "cobro")
@@ -83,15 +92,15 @@ async def check_and_send_alerts(days_window: int = None, force: bool = False) ->
                             )
                             if res.get("success"):
                                 wa_sent_count += 1
-                                # Cadencia anti-spam humana entre chat y chat: 15 a 30 segundos
-                                between_chat_delay = random.uniform(15.0, 30.0)
-                                logger.info(f"Recordatorio WhatsApp enviado a {client_phone}. Pausa humana de {between_chat_delay:.1f}s...")
+                                # Cadencia anti-spam gaussiana (45s a 90s)
+                                between_chat_delay = get_gaussian_human_delay()
+                                logger.info(f"Recordatorio WhatsApp enviado a {client_phone}. Pausa gaussiana anti-ban de {between_chat_delay:.1f}s...")
                                 await asyncio.sleep(between_chat_delay)
                 if wa_sent_count > 0:
                     from telegram_bot import send_telegram_message
                     await send_telegram_message(
                         f"📲 <b>Auto-Cobro WhatsApp Activo:</b>\n"
-                        f"Se enviaron automáticamente <b>{wa_sent_count}</b> recordatorios de vencimiento por WhatsApp a tus clientes con pausas anti-spam."
+                        f"Se enviaron automáticamente <b>{wa_sent_count}</b> recordatorios de vencimiento por WhatsApp a tus clientes con pausas gaussianas anti-ban."
                     )
     except Exception as e:
         logger.error(f"Error en envío automático de recordatorios WhatsApp: {e}")
@@ -142,8 +151,8 @@ async def check_and_send_evening_cutoff_alerts() -> int:
         if res.get("success"):
             database.mark_streaming_alert_sent(item["id"], f"{today_str}_evening")
             sent_count += 1
-            between_chat_delay = random.uniform(15.0, 30.0)
-            logger.info(f"Aviso de corte vespertino enviado a {client_phone}. Pausa humana de {between_chat_delay:.1f}s...")
+            between_chat_delay = get_gaussian_human_delay()
+            logger.info(f"Aviso de corte vespertino enviado a {client_phone}. Pausa gaussiana de {between_chat_delay:.1f}s...")
             await asyncio.sleep(between_chat_delay)
 
     if sent_count > 0:
@@ -152,6 +161,76 @@ async def check_and_send_evening_cutoff_alerts() -> int:
             f"Se notificó a <b>{sent_count}</b> cliente(s) cuyo servicio vence hoy y aún no han registrado pago."
         )
     return sent_count
+
+async def check_and_send_night_cutoff_warnings(warning_hour: int = 22) -> int:
+    """Avisos preventivos a las 22:00 hs (2h antes) y 23:00 hs (1h antes) previo a la rotación nocturna de claves (MED-02)."""
+    import database
+    import whatsapp_client
+    from telegram_bot import send_telegram_message
+
+    wa_settings = database.get_whatsapp_api_settings()
+    if not wa_settings.get("auto_send_expiry") or wa_settings["auto_send_expiry"] != 1:
+        return 0
+
+    status = await whatsapp_client.check_connection_status()
+    if not status.get("connected"):
+        return 0
+
+    unpaid_today = database.get_due_today_unpaid_accounts()
+    today_str = date.today().isoformat()
+    sent_count = 0
+    tag = f"{today_str}_night_{warning_hour}h"
+
+    logger.info(f"Iniciando aviso preventivo nocturno de las {warning_hour}hs ({len(unpaid_today)} cuentas hoy)...")
+    for item in unpaid_today:
+        if sent_count >= 50:
+            logger.warning("Límite de seguridad de 50 mensajes/hora alcanzado.")
+            break
+
+        client_phone = item.get("whatsapp") or ""
+        if item.get("last_alert_sent") == tag:
+            continue
+
+        c_name = item.get("client_name") or "Cliente"
+        plat = item.get("platform") or "Streaming"
+
+        if warning_hour == 23:
+            msg_warn = (
+                f"⏰ *¡Última hora, {c_name}!* Tu servicio de *{plat}* se suspenderá en 60 minutos por finalización de ciclo.\n\n"
+                f"A medianoche se rotarán automáticamente las contraseñas del sistema. Si estás viendo una serie o película y deseas conservarla activa sin cortes, por favor envíanos tu comprobante ahora.\n\n"
+                f"¡Muchas gracias! 🙌✨"
+            )
+        else:
+            msg_warn = (
+                f"⚠️ *¡Hola {c_name}!* Te recordamos que tu servicio de *{plat}* vence hoy a medianoche.\n\n"
+                f"Para evitar que el acceso se actualice automáticamente mientras lo estás disfrutando, te invitamos a enviar tu comprobante de renovación antes de las 23:59 hs.\n\n"
+                f"¡Que disfrutes tu noche! 🍿✨"
+            )
+
+        typing_sec = random.uniform(3.0, 5.0)
+        res = await whatsapp_client.send_text_message(client_phone, msg_warn, delay_seconds=typing_sec, simulate_typing=True)
+        if res.get("success"):
+            database.mark_streaming_alert_sent(item["id"], tag)
+            sent_count += 1
+            between_chat_delay = get_gaussian_human_delay()
+            logger.info(f"Aviso preventivo {warning_hour}hs enviado a {client_phone}. Pausa gaussiana de {between_chat_delay:.1f}s...")
+            await asyncio.sleep(between_chat_delay)
+
+    if sent_count > 0:
+        await send_telegram_message(
+            f"🌙 <b>Aviso Preventivo Nocturno ({warning_hour}:00 hs):</b>\n"
+            f"Se enviaron <b>{sent_count}</b> alertas preventivas previas a la rotación nocturna de contraseñas."
+        )
+    return sent_count
+
+async def run_daily_audit_anchor():
+    """Publica el ancla criptográfica del hash raíz de la bitácora inmutable en Telegram como testigo externo inmutable (CRIT-04)."""
+    try:
+        from core.audit import anchor_audit_root_to_telegram
+        await anchor_audit_root_to_telegram()
+    except Exception as e:
+        logger.error(f"Error publicando ancla de auditoría en Telegram: {e}")
+
 
 async def cleanup_overdue_accounts() -> int:
     """Detecta cuentas vencidas sin pago y las pasa al estado 'por_cambiar_clave' para frenar avisos zombie."""
@@ -411,9 +490,39 @@ def start_scheduler():
         id="weekly_community_friday_promo",
         replace_existing=True
     )
+
+    # 10. Aviso Preventivo de Corte Nocturno (22:00 hs) (MED-02)
+    trigger_night_22 = CronTrigger(hour=22, minute=0, timezone=tz)
+    scheduler.add_job(
+        check_and_send_night_cutoff_warnings,
+        args=[22],
+        trigger=trigger_night_22,
+        id="daily_night_cutoff_warning_22h",
+        replace_existing=True
+    )
+
+    # 11. Última Hora de Corte Nocturno (23:00 hs) (MED-02)
+    trigger_night_23 = CronTrigger(hour=23, minute=0, timezone=tz)
+    scheduler.add_job(
+        check_and_send_night_cutoff_warnings,
+        args=[23],
+        trigger=trigger_night_23,
+        id="daily_night_cutoff_warning_23h",
+        replace_existing=True
+    )
+
+    # 12. Ancla Criptográfica de Auditoría en Telegram (23:59 hs) (CRIT-04)
+    trigger_audit_anchor = CronTrigger(hour=23, minute=59, timezone=tz)
+    scheduler.add_job(
+        run_daily_audit_anchor,
+        trigger=trigger_audit_anchor,
+        id="daily_audit_anchor_telegram",
+        replace_existing=True
+    )
     
     scheduler.start()
-    logger.info(f"Scheduler iniciado. Mañana: {check_hour:02d}:{check_minute:02d}, Corte: {cutoff_hour:02d}:00, Backup Semanal: Dom 04:00, Heartbeat: cada 15m ({tz_str})")
+    logger.info(f"Scheduler iniciado. Mañana: {check_hour:02d}:{check_minute:02d}, Corte: {cutoff_hour:02d}:00, Avisos 22h/23h, Ancla 23:59h, Backup Semanal: Dom 04:00, Heartbeat: cada 15m ({tz_str})")
+
 
 def stop_scheduler():
     """Detiene el programador de tareas."""

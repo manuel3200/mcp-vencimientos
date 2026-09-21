@@ -1,6 +1,9 @@
 import os
 import re
 import time
+import json
+import hmac
+import hashlib
 import urllib.parse
 import logging
 import secrets
@@ -252,12 +255,33 @@ async def api_whatsapp_mark_read(request: Request):
 
 
 @router.post("/api/webhook/whatsapp")
+@router.post("/webhook/evolution")
 async def whatsapp_webhook(request: Request):
     """Webhook receptor de eventos de Evolution API v2 (Baileys).
     Procesa mensajes entrantes de clientes, auto-responde consultas de vencimientos/claves/CBU y
     alerta a Telegram ante el envío de comprobantes de pago.
     """
-    # 0. VERIFICACIÓN DE AUTENTICIDAD DEL WEBHOOK (si WEBHOOK_SECRET está configurado)
+    client_ip = request.client.host if request.client else "desconocido"
+    raw_body = await request.body()
+
+    # 0.A VERIFICACIÓN CRIPTOGRÁFICA DE FIRMA (HIGH-02: X-Evolution-Signature)
+    evo_secret = (app_settings.EVOLUTION_WEBHOOK_SECRET or os.getenv("EVOLUTION_WEBHOOK_SECRET", "")).strip()
+    if evo_secret:
+        sig_hdr = (
+            request.headers.get("x-evolution-signature") or
+            request.headers.get("X-Evolution-Signature") or
+            ""
+        ).strip()
+        expected_sig = hmac.new(evo_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        is_valid_sig = (
+            secrets.compare_digest(sig_hdr, expected_sig) or
+            secrets.compare_digest(sig_hdr, f"sha256={expected_sig}")
+        )
+        if not is_valid_sig:
+            logger.warning(f"🚨 Firma HMAC inválida en webhook Evolution API desde {client_ip}")
+            return JSONResponse({"status": "error", "message": "Invalid webhook signature"}, status_code=401)
+
+    # 0.B VERIFICACIÓN DE AUTENTICIDAD DEL WEBHOOK (si WEBHOOK_SECRET está configurado)
     webhook_secret = (app_settings.WEBHOOK_SECRET or os.getenv("WEBHOOK_SECRET", "")).strip()
     if webhook_secret:
         req_token = (
@@ -273,14 +297,14 @@ async def whatsapp_webhook(request: Request):
             req_token = req_token or auth_hdr.split("Bearer ")[-1].strip()
 
         if not req_token or not secrets.compare_digest(req_token, webhook_secret):
-            client_ip = request.client.host if request.client else "desconocido"
             logger.warning(f"Intento de webhook WhatsApp no autorizado desde {client_ip}")
             return JSONResponse({"status": "error", "message": "Unauthorized webhook"}, status_code=401)
 
     try:
-        body = await request.json()
+        body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
     except Exception:
         return JSONResponse({"status": "ignored", "reason": "invalid_json"})
+
 
     event = (body.get("event") or body.get("type", "")).lower()
 

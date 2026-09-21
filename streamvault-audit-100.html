@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>StreamVault v2 — Auditoría + 100 Funciones</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #070b14;
+  --bg2: #0d1420;
+  --surface: #111c2e;
+  --surface2: #172035;
+  --border: #1e2d45;
+  --border2: #243452;
+  --red: #ff3b3b;
+  --red-dim: rgba(255,59,59,0.1);
+  --red-border: rgba(255,59,59,0.25);
+  --orange: #ff8c00;
+  --orange-dim: rgba(255,140,0,0.1);
+  --orange-border: rgba(255,140,0,0.25);
+  --yellow: #ffd60a;
+  --yellow-dim: rgba(255,214,10,0.08);
+  --yellow-border: rgba(255,214,10,0.2);
+  --green: #00e676;
+  --green-dim: rgba(0,230,118,0.08);
+  --green-border: rgba(0,230,118,0.2);
+  --blue: #00b4ff;
+  --blue-dim: rgba(0,180,255,0.08);
+  --blue-border: rgba(0,180,255,0.2);
+  --purple: #b47cff;
+  --purple-dim: rgba(180,124,255,0.08);
+  --purple-border: rgba(180,124,255,0.2);
+  --text: #dce8f8;
+  --text-muted: #5e7a9e;
+  --text-dim: #2e4260;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'IBM Plex Sans', sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.6;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+
+/* NAV */
+nav{position:sticky;top:0;z-index:100;background:rgba(7,11,20,0.95);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:0 32px}
+.nav-inner{max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:0;height:48px;overflow-x:auto;scrollbar-width:none}
+.nav-inner::-webkit-scrollbar{display:none}
+.nav-tab{font-family:var(--mono);font-size:11px;font-weight:500;padding:0 18px;height:100%;display:flex;align-items:center;color:var(--text-muted);border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;transition:all 0.15s;background:none;border-left:none;border-right:none;border-top:none}
+.nav-tab:hover{color:var(--text)}
+.nav-tab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.nav-badge{margin-left:6px;font-size:9px;padding:1px 5px;border-radius:2px;background:var(--red-dim);color:var(--red);border:1px solid var(--red-border)}
+.nav-badge.g{background:var(--green-dim);color:var(--green);border-color:var(--green-border)}
+
+/* HEADER */
+header{padding:56px 32px 48px;border-bottom:1px solid var(--border);background:linear-gradient(160deg,#07101f 0%,var(--bg) 100%);position:relative;overflow:hidden}
+header::after{content:'';position:absolute;top:-100px;right:-100px;width:500px;height:500px;background:radial-gradient(circle,rgba(255,59,59,0.04) 0%,transparent 70%);pointer-events:none}
+.header-inner{max-width:1200px;margin:0 auto}
+.sys-badge{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10px;color:var(--red);background:var(--red-dim);border:1px solid var(--red-border);padding:4px 12px;border-radius:2px;margin-bottom:20px}
+.sys-badge::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--red);box-shadow:0 0 8px var(--red);animation:blink 1.5s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
+h1{font-size:clamp(26px,4vw,44px);font-weight:700;letter-spacing:-0.03em;line-height:1.1;margin-bottom:10px}
+h1 em{font-style:normal;color:var(--red)}
+.header-sub{font-size:14px;color:var(--text-muted);max-width:600px;margin-bottom:32px}
+.kpi-row{display:flex;flex-wrap:wrap;gap:24px}
+.kpi{display:flex;flex-direction:column;gap:2px}
+.kpi-n{font-family:var(--mono);font-size:26px;font-weight:600;line-height:1}
+.kpi-l{font-size:11px;color:var(--text-muted)}
+.kpi-n.red{color:var(--red)}.kpi-n.orange{color:var(--orange)}.kpi-n.yellow{color:var(--yellow)}.kpi-n.green{color:var(--green)}
+
+/* SECTIONS */
+.page{display:none;max-width:1200px;margin:0 auto;padding:40px 32px 80px}
+.page.active{display:block}
+
+/* SECURITY AUDIT */
+.vuln-grid{display:grid;gap:12px}
+.vuln{border-radius:4px;border-left:3px solid;padding:18px 20px;background:var(--surface)}
+.vuln.critical{border-color:var(--red);background:linear-gradient(90deg,var(--red-dim),var(--surface))}
+.vuln.high{border-color:var(--orange);background:linear-gradient(90deg,var(--orange-dim),var(--surface))}
+.vuln.medium{border-color:var(--yellow);background:linear-gradient(90deg,var(--yellow-dim),var(--surface))}
+.vuln.low{border-color:var(--blue);background:linear-gradient(90deg,var(--blue-dim),var(--surface))}
+.vuln-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:8px}
+.sev-tag{font-family:var(--mono);font-size:9px;font-weight:600;padding:2px 8px;border-radius:2px;flex-shrink:0;margin-top:2px;text-transform:uppercase;letter-spacing:.08em}
+.sev-tag.critical{background:var(--red-dim);color:var(--red);border:1px solid var(--red-border)}
+.sev-tag.high{background:var(--orange-dim);color:var(--orange);border:1px solid var(--orange-border)}
+.sev-tag.medium{background:var(--yellow-dim);color:var(--yellow);border:1px solid var(--yellow-border)}
+.sev-tag.low{background:var(--blue-dim);color:var(--blue);border:1px solid var(--blue-border)}
+.vuln-title{font-size:14px;font-weight:600;color:var(--text)}
+.vuln-desc{font-size:13px;color:var(--text-muted);line-height:1.6;margin-bottom:10px}
+.vuln-fix{font-family:var(--mono);font-size:11px;color:var(--green);background:var(--green-dim);border:1px solid var(--green-border);border-radius:3px;padding:8px 12px;line-height:1.6}
+.vuln-fix::before{content:'✦ FIX: ';font-weight:600}
+.vuln-ctx{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.ctx-tag{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:2px}
+.ctx-g{background:rgba(0,180,255,0.1);color:var(--blue);border:1px solid var(--blue-border)}
+.ctx-c{background:var(--purple-dim);color:var(--purple);border:1px solid var(--purple-border)}
+.ctx-p{background:var(--orange-dim);color:var(--orange);border:1px solid var(--orange-border)}
+.ctx-co{background:var(--green-dim);color:var(--green);border:1px solid var(--green-border)}
+
+.section-sep{margin:36px 0 20px;display:flex;align-items:center;gap:12px}
+.section-sep-line{flex:1;height:1px;background:var(--border)}
+.section-sep-label{font-family:var(--mono);font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.1em;white-space:nowrap}
+
+/* FUNCTIONS */
+.filter-bar2{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:24px}
+.fb{font-family:var(--mono);font-size:10px;padding:5px 12px;border-radius:2px;border:1px solid var(--border);background:transparent;color:var(--text-muted);cursor:pointer;transition:all .15s}
+.fb:hover{border-color:var(--blue);color:var(--blue)}
+.fb.on{background:var(--blue);border-color:var(--blue);color:#07101f;font-weight:600}
+.fb.on.ex{background:var(--green);border-color:var(--green)}
+.fb.on.new{background:var(--orange);border-color:var(--orange)}
+
+.fn-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:10px}
+.fn-card{background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:14px 16px;transition:border-color .15s}
+.fn-card:hover{border-color:var(--border2)}
+.fn-card.is-new{border-left:3px solid var(--orange)}
+.fn-card.is-existing{border-left:3px solid var(--green)}
+.fn-card.hidden{display:none}
+.fn-top{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px}
+.fn-num{font-family:var(--mono);font-size:9px;color:var(--text-dim);padding-top:3px;flex-shrink:0;min-width:26px}
+.fn-name{font-size:13px;font-weight:600;color:var(--text);line-height:1.3}
+.fn-desc{font-size:12px;color:var(--text-muted);line-height:1.55;padding-left:34px;margin-bottom:8px}
+.fn-meta{display:flex;gap:5px;flex-wrap:wrap;padding-left:34px}
+.badge-ex{font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:2px;background:var(--green-dim);color:var(--green);border:1px solid var(--green-border)}
+.badge-new{font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:2px;background:var(--orange-dim);color:var(--orange);border:1px solid var(--orange-border)}
+.badge-sec{font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:2px;background:var(--red-dim);color:var(--red);border:1px solid var(--red-border)}
+.ctx-tiny{font-family:var(--mono);font-size:8px;padding:2px 6px;border-radius:2px}
+.tg{background:rgba(0,180,255,0.1);color:var(--blue);border:1px solid var(--blue-border)}
+.tc{background:var(--purple-dim);color:var(--purple);border:1px solid var(--purple-border)}
+.tp{background:var(--orange-dim);color:var(--orange);border:1px solid var(--orange-border)}
+.tco{background:var(--green-dim);color:var(--green);border:1px solid var(--green-border)}
+
+/* LEGEND */
+.legend{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:20px;font-size:11px;color:var(--text-muted)}
+.leg{display:flex;align-items:center;gap:6px}
+.leg-dot{width:10px;height:10px;border-radius:1px;flex-shrink:0}
+
+@media(max-width:640px){header,.page{padding-left:16px;padding-right:16px}nav{padding:0 16px}.fn-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <div class="sys-badge">AUDITORÍA DE SEGURIDAD ACTIVA · StreamVault v2 / MCP Vencimientos</div>
+    <h1>Brechas detectadas<br>+ <em>100 funciones</em> documentadas</h1>
+    <p class="header-sub">Análisis de vulnerabilidades del sistema actual y mapa completo de funciones para grupos, canales, comunidad y chats privados.</p>
+    <div class="kpi-row">
+      <div class="kpi"><span class="kpi-n red">8</span><span class="kpi-l">Críticas / Altas</span></div>
+      <div class="kpi"><span class="kpi-n orange">7</span><span class="kpi-l">Medias</span></div>
+      <div class="kpi"><span class="kpi-n yellow">4</span><span class="kpi-l">Bajas / Info</span></div>
+      <div class="kpi"><span class="kpi-n green">55</span><span class="kpi-l">Funciones existentes</span></div>
+      <div class="kpi"><span class="kpi-n" style="color:var(--orange)">45</span><span class="kpi-l">Funciones nuevas</span></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <div class="nav-inner">
+    <button class="nav-tab active" onclick="showPage('seg')">🔐 Auditoría de Seguridad <span class="nav-badge">19 brechas</span></button>
+    <button class="nav-tab" onclick="showPage('fn')">⚡ 100 Funciones <span class="nav-badge g">completo</span></button>
+  </div>
+</nav>
+
+<!-- ═══════════════ PÁGINA 1: SEGURIDAD ═══════════════ -->
+<div class="page active" id="page-seg">
+
+  <div class="section-sep"><div class="section-sep-line"></div><span class="section-sep-label">🔴 Críticas — Riesgo inmediato de pérdida de datos o fraude</span><div class="section-sep-line"></div></div>
+  <div class="vuln-grid">
+
+    <div class="vuln critical">
+      <div class="vuln-head"><span class="sev-tag critical">crítica</span><span class="vuln-title">SQLite sin cifrado en disco — robo total de base de datos</span></div>
+      <p class="vuln-desc">La base de datos SQLite almacena credenciales de cuentas madre, PINs, CBU/Alias y comprobantes bancarios en texto plano (o cifrado por OS pero no por aplicación). Si alguien accede al servidor por cualquier vector (shell, backup filtrado, acceso físico), obtiene toda la información de todos los clientes en segundos.</p>
+      <div class="vuln-fix">Migrar a SQLCipher (SQLite cifrado con AES-256) o PostgreSQL con TDE. Los backups .db.gz enviados a Telegram también deben ir cifrados con GPG antes del envío. Rotar passphrase mensualmente.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span><span class="ctx-tag ctx-g">grupos</span></div>
+    </div>
+
+    <div class="vuln critical">
+      <div class="vuln-head"><span class="sev-tag critical">crítica</span><span class="vuln-title">Credenciales de cuentas madre accesibles vía /clave en grupos</span></div>
+      <p class="vuln-desc">El comando /clave retorna credenciales activas del servicio del cliente. Si bien se menciona que "en grupos públicos se redirige a privado", no queda claro si esto está implementado a nivel de validación estricta. Un error de configuración del modo del bot (public/private/self) o un cambio accidental puede filtrar credenciales a todos los miembros del grupo.</p>
+      <div class="vuln-fix">Hardcodear que /clave, /cuenta y /vencimiento NUNCA respondan en grupos ni canales bajo ninguna configuración. La validación debe ser a nivel de middleware MCP, no sólo de bot. Agregar log de alerta cuando se intente desde grupo.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-g">grupos</span><span class="ctx-tag ctx-c">canales</span></div>
+    </div>
+
+    <div class="vuln critical">
+      <div class="vuln-head"><span class="sev-tag critical">crítica</span><span class="vuln-title">Sin rate limiting en comandos de administración por WhatsApp</span></div>
+      <p class="vuln-desc">Los comandos /pagoapro_, /baja_, /revertir_pago_, /caida operan directamente sobre la base de datos sin mencionar ningún sistema de rate limiting, cooldown ni confirmación de doble factor. Un atacante que tome el número del admin (SIM swapping, sesión robada de Baileys) puede aprobar pagos falsos masivamente o dar de baja a todos los clientes.</p>
+      <div class="vuln-fix">Implementar: (1) Rate limit de 10 operaciones/minuto por número. (2) Confirmación de 2 pasos para operaciones destructivas (/baja, /revertir). (3) Lista blanca de números admin con verificación de Device ID de Baileys. (4) Alerta inmediata a Telegram ante operaciones en lote.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln critical">
+      <div class="vuln-head"><span class="sev-tag critical">crítica</span><span class="vuln-title">Backup .db.gz enviado en claro a Telegram</span></div>
+      <p class="vuln-desc">El comando /backup envía la base de datos comprimida directamente al chat de Telegram. Telegram, aunque cifrado en tránsito, almacena archivos en sus servidores y cualquier persona con acceso al chat de Telegram (co-administrador, dispositivo comprometido) puede descargar la DB completa con toda la información de clientes y finanzas.</p>
+      <div class="vuln-fix">Cifrar el backup con GPG (gpg --symmetric --cipher-algo AES256) antes del envío. La passphrase no debe estar en el código fuente — usar variable de entorno o Vault. Considerar también dividir el backup: datos financieros separados de credenciales.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln critical">
+      <div class="vuln-head"><span class="sev-tag critical">crítica</span><span class="vuln-title">Sesión de Baileys (Evolution API) sin protección ante robo de sesión</span></div>
+      <p class="vuln-desc">Baileys almacena la sesión de WhatsApp en archivos locales. Si esos archivos son robados (acceso al servidor, backup mal protegido), el atacante puede operar el bot como si fuera el dueño del número: enviar mensajes, aprobar pagos, ejecutar comandos de admin. No se menciona ningún mecanismo de detección de sesión duplicada o anomalía geográfica.</p>
+      <div class="vuln-fix">Almacenar los archivos de sesión de Baileys en directorio con permisos 600. Implementar webhook de alerta ante nuevo Device ID en la sesión. Rotar sesión periódicamente. Monitorear el número de WhatsApp desde otro dispositivo para detectar actividad anómala.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-g">grupos</span><span class="ctx-tag ctx-p">chat privado</span><span class="ctx-tag ctx-c">canales</span></div>
+    </div>
+
+  </div>
+
+  <div class="section-sep"><div class="section-sep-line"></div><span class="section-sep-label">🟠 Altas — Vectores de ataque con impacto financiero o reputacional</span><div class="section-sep-line"></div></div>
+  <div class="vuln-grid">
+
+    <div class="vuln high">
+      <div class="vuln-head"><span class="sev-tag high">alta</span><span class="vuln-title">Ventana de idempotencia de comprobantes demasiado corta (10 min)</span></div>
+      <p class="vuln-desc">El sistema usa un hash del comprobante y un operation_id con ventana de 10 minutos para evitar comprobantes reciclados. Un atacante sofisticado puede reutilizar el mismo comprobante tras ese período en otro servicio o con otra imagen ligeramente modificada (pixel diferente, recorte diferente) para evadir la detección por hash.</p>
+      <div class="vuln-fix">Extender la ventana de idempotencia a 90 días mínimo (vida útil de un comprobante bancario). Agregar normalización de imagen antes del hash (quitar metadatos EXIF, normalizar tamaño, convertir a escala de grises) para que pequeñas modificaciones den el mismo hash. Mantener tabla permanente de operation_id bancarios aprobados.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span><span class="ctx-tag ctx-g">grupos</span></div>
+    </div>
+
+    <div class="vuln high">
+      <div class="vuln-head"><span class="sev-tag high">alta</span><span class="vuln-title">Sin autenticación en el Dashboard Web BFF más allá del 2FA inicial</span></div>
+      <p class="vuln-desc">El panel web usa sesiones cifradas + 2FA para el login, pero no se menciona timeout de sesión inactiva, revocación de sesión en logout, ni protección ante CSRF o fijación de sesión. Una sesión activa en un equipo compartido o robada mediante XSS podría dar acceso completo al panel.</p>
+      <div class="vuln-fix">Implementar: timeout de sesión de 30 min de inactividad, revocación de todas las sesiones al cambiar contraseña, cabeceras CSRF en todos los endpoints mutantes (POST/PUT/DELETE), Content-Security-Policy estricta en el BFF, y log de cada inicio de sesión con IP y User-Agent.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-g">grupos</span><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln high">
+      <div class="vuln-head"><span class="sev-tag high">alta</span><span class="vuln-title">Ausencia de validación de número de origen en comandos admin de WhatsApp</span></div>
+      <p class="vuln-desc">No se describe explícitamente un mecanismo de whitelist de números habilitados para ejecutar comandos de administración. Si el bot está en modo "public" o un atacante conoce la sintaxis de los comandos, podría intentar ejecutar /pagoapro_, /baja_ u otros desde un número no autorizado.</p>
+      <div class="vuln-fix">Mantener una tabla admin_whitelist en DB con los JIDs (número@s.whatsapp.net) autorizados. Verificar el origen en middleware antes de procesar cualquier comando admin. Loguear y alertar por Telegram cada intento de comando admin desde número no autorizado.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span><span class="ctx-tag ctx-g">grupos</span></div>
+    </div>
+
+  </div>
+
+  <div class="section-sep"><div class="section-sep-line"></div><span class="section-sep-label">🟡 Medias — Mejoras de hardening y resiliencia</span><div class="section-sep-line"></div></div>
+  <div class="vuln-grid">
+
+    <div class="vuln medium">
+      <div class="vuln-head"><span class="sev-tag medium">media</span><span class="vuln-title">Sin sanitización de inputs en Chatwoot slash commands</span></div>
+      <p class="vuln-desc">Los slash commands de Chatwoot como /nombre &lt;Nuevo Nombre&gt; o /cliente &lt;query&gt; reciben texto libre del operador. Si esos valores se interpolan directamente en consultas SQLite sin prepared statements, existe riesgo de SQL injection interno.</p>
+      <div class="vuln-fix">Usar exclusivamente parameterized queries (cursor.execute("SELECT … WHERE id=?", (id,))) en todas las herramientas MCP que reciban inputs externos. Agregar validación de tipo y longitud máxima en cada parámetro de las tools MCP antes de ejecutar.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln medium">
+      <div class="vuln-head"><span class="sev-tag medium">media</span><span class="vuln-title">Filtros anti-spam de PDFs insuficientes — posible DoS por archivos grandes</span></div>
+      <p class="vuln-desc">El filtro actual rechaza PDFs de más de 3 páginas, pero no limita el tamaño en bytes del archivo antes de cargarlo en memoria. Un PDF de 2 páginas pero de 50 MB puede saturar la RAM del servidor y hacer caer el bot para todos los clientes.</p>
+      <div class="vuln-fix">Agregar validación de tamaño en bytes (máx 5 MB) antes de cualquier lectura del archivo. El rechazo debe ocurrir en el webhook de Evolution API antes de que el archivo llegue al motor OCR. Implementar circuit breaker: si OCR falla 3 veces seguidas, pausa 60 segundos.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span><span class="ctx-tag ctx-g">grupos</span></div>
+    </div>
+
+    <div class="vuln medium">
+      <div class="vuln-head"><span class="sev-tag medium">media</span><span class="vuln-title">Credenciales de API (Gemini, Evolution, Telegram) probablemente en variables de entorno sin rotación</span></div>
+      <p class="vuln-desc">Los sistemas de esta naturaleza suelen tener API keys y tokens en archivos .env o hardcodeados. No se menciona ningún sistema de gestión de secretos ni política de rotación de claves.</p>
+      <div class="vuln-fix">Adoptar un gestor de secretos (HashiCorp Vault, Doppler, AWS Secrets Manager o al menos un .env con permisos 600 y fuera del repo). Definir una política de rotación trimestral para todas las API keys. Auditar si alguna key está en el historial de git con git-secrets o truffleHog.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln medium">
+      <div class="vuln-head"><span class="sev-tag medium">media</span><span class="vuln-title">Sin protección contra /tagall y menciones masivas abusivas en comunidades</span></div>
+      <p class="vuln-desc">El comando /tagall y @everyone mencionan a todos los miembros del grupo. En comunidades grandes, un operador malintencionado o un número comprometido puede usar este comando para spam masivo, generando reportes de los miembros o el baneo del número de WhatsApp.</p>
+      <div class="vuln-fix">Restringir /tagall exclusivamente a administradores verificados (whitelist de JIDs). Agregar cooldown de 1 uso por hora por grupo. En comunidades con más de 100 miembros, requerir confirmación adicional antes de ejecutar.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-g">grupos</span><span class="ctx-tag ctx-co">comunidad</span></div>
+    </div>
+
+    <div class="vuln medium">
+      <div class="vuln-head"><span class="sev-tag medium">media</span><span class="vuln-title">Purga automática de archivos Base64 sin verificación de integridad previa</span></div>
+      <p class="vuln-desc">El scheduler purga archivos Base64 mayores a 60 días con un "freno de emergencia", pero no se describe qué activa ese freno ni cómo funciona. Una purga accidental de comprobantes aún en disputa puede eliminar evidencia necesaria para resolver fraudes.</p>
+      <div class="vuln-fix">Antes de purgar, verificar que el comprobante asociado tenga estado APROBADO o RECHAZADO_DEFINITIVO en la DB. Comprobantes en estado PENDIENTE o DISPUTA deben quedar excluidos independientemente de la antigüedad. Mantener al menos un hash del archivo incluso después de purgar el binario.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln medium">
+      <div class="vuln-head"><span class="sev-tag medium">media</span><span class="vuln-title">Sin límite de cuentas activas por cliente — posible abuso de planes compartidos</span></div>
+      <p class="vuln-desc">No se menciona un sistema que limite cuántos perfiles PIN puede tener activos un cliente, ni cuántos servicios puede tener asociados. Un revendedor VIP podría acumular indefinidamente perfiles sin activarlos, bloqueando stock que otros clientes necesitan.</p>
+      <div class="vuln-fix">Implementar límite configurable de servicios simultáneos por tipo de cliente (ej: Consumidor Final max 3, Revendedor max 20, VIP ilimitado). Alertar cuando un cliente supere el 80% de su límite. Liberar automáticamente perfiles inactivos > 15 días post-vencimiento.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln medium">
+      <div class="vuln-head"><span class="sev-tag medium">media</span><span class="vuln-title">Desofuscación Unicode en Antilink — posible bypass con nuevas técnicas</span></div>
+      <p class="vuln-desc">El sistema desofusca Unicode para detectar links ocultos, pero las técnicas de evasión evolucionan constantemente: Zalgo text, RTL override, homoglifos Cirílicos/Griegos, Zero-Width characters. Una librería de desofuscación desactualizada puede dejar pasar links de phishing disfrazados.</p>
+      <div class="vuln-fix">Actualizar la librería de normalización Unicode periódicamente. Agregar detección por patrones de dominio (TLDs comunes en phishing) además de la desofuscación. Incluir detección de QR codes en imágenes como vector alternativo de distribución de links.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-g">grupos</span><span class="ctx-tag ctx-co">comunidad</span></div>
+    </div>
+
+  </div>
+
+  <div class="section-sep"><div class="section-sep-line"></div><span class="section-sep-label">🔵 Bajas / Informativas — Deuda técnica y hardening proactivo</span><div class="section-sep-line"></div></div>
+  <div class="vuln-grid">
+
+    <div class="vuln low">
+      <div class="vuln-head"><span class="sev-tag low">baja</span><span class="vuln-title">Sin auditoría inmutable de acciones de administradores</span></div>
+      <p class="vuln-desc">Las acciones de admin (aprobaciones, bajas, reversiones) se ejecutan pero no queda claro si existe un log inmutable (append-only) que registre quién hizo qué, cuándo y desde qué número. En caso de disputa interna, es imposible determinar responsabilidades.</p>
+      <div class="vuln-fix">Crear tabla audit_log con campos: timestamp, jid_actor, accion, entidad_id, datos_antes, datos_despues. Esta tabla debe ser INSERT-only desde la aplicación (nunca UPDATE/DELETE). Enviar cada entrada al canal de Telegram como log secundario.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln low">
+      <div class="vuln-head"><span class="sev-tag low">baja</span><span class="vuln-title">Sin política de contraseñas para el Dashboard Web</span></div>
+      <p class="vuln-desc">El panel usa 2FA pero no se describe la política de contraseña para la cuenta principal: longitud mínima, complejidad, historial de contraseñas usadas o protección ante fuerza bruta en el endpoint de login.</p>
+      <div class="vuln-fix">Mínimo 16 caracteres, bloqueo temporal tras 5 intentos fallidos (incremento exponencial), hasheo con bcrypt (cost 12) o Argon2id, y prohibición de reusar las últimas 5 contraseñas.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln low">
+      <div class="vuln-head"><span class="sev-tag low">baja</span><span class="vuln-title">Dependencias del servidor sin verificación de integridad (pip/npm sin lockfile hash)</span></div>
+      <p class="vuln-desc">No se menciona un mecanismo de verificación de integridad de las dependencias Python/Node del servidor FastMCP y del bot. Un ataque de supply chain (dependencia maliciosa publicada en PyPI/npm) podría comprometer todo el sistema sin que nadie lo note.</p>
+      <div class="vuln-fix">Usar pip-compile con hashes verificados (requirements.txt con --generate-hashes). Para Node, usar package-lock.json y npm ci en deploy. Activar Dependabot o pip-audit en el repositorio para alertas de CVEs en dependencias.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-p">chat privado</span></div>
+    </div>
+
+    <div class="vuln low">
+      <div class="vuln-head"><span class="sev-tag low">baja</span><span class="vuln-title">Sin monitoreo de salud de canales y comunidades de WhatsApp</span></div>
+      <p class="vuln-desc">El sistema monitorea la salud técnica del servidor (system_tools.py), pero no hay mención de alertas si el bot es expulsado de un grupo/canal de la comunidad, si pierde permisos de admin en un grupo, o si un canal de difusión es eliminado.</p>
+      <div class="vuln-fix">Implementar un heartbeat cada 30 minutos que verifique que el bot sigue siendo miembro y administrador de todos los grupos y canales registrados. Alertar por Telegram si algún grupo ya no responde o el bot perdió privilegios.</div>
+      <div class="vuln-ctx"><span class="ctx-tag ctx-g">grupos</span><span class="ctx-tag ctx-c">canales</span><span class="ctx-tag ctx-co">comunidad</span></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════ PÁGINA 2: 100 FUNCIONES ═══════════════ -->
+<div class="page" id="page-fn">
+
+  <div class="legend">
+    <div class="leg"><div class="leg-dot" style="background:var(--green)"></div> Función existente en tu sistema</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--orange)"></div> Función nueva propuesta</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--red)"></div> Nueva + cubre brecha de seguridad</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--blue)"></div> Grupos &nbsp;|&nbsp;</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--purple)"></div> Canales &nbsp;|&nbsp;</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--orange)"></div> Chat Priv. &nbsp;|&nbsp;</div>
+    <div class="leg"><div class="leg-dot" style="background:var(--green)"></div> Comunidad</div>
+  </div>
+
+  <div class="filter-bar2">
+    <button class="fb on" onclick="fnFilter('all',this)">Todo (100)</button>
+    <button class="fb on ex" onclick="fnFilter('existing',this)">✓ Existentes (55)</button>
+    <button class="fb on new" onclick="fnFilter('new',this)">+ Nuevas (45)</button>
+    <button class="fb" onclick="fnFilter('g',this)">Grupos</button>
+    <button class="fb" onclick="fnFilter('c',this)">Canales</button>
+    <button class="fb" onclick="fnFilter('p',this)">Chat Privado</button>
+    <button class="fb" onclick="fnFilter('co',this)">Comunidad</button>
+    <button class="fb" onclick="fnFilter('sec',this)">🔐 Seguridad</button>
+  </div>
+
+  <div class="fn-grid" id="fn-grid">
+
+<!-- ──────── BLOQUE: AUTO-ATENCIÓN CLIENTE ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#001</span><span class="fn-name">/vencimiento — Consulta de días restantes</span></div><p class="fn-desc">El cliente consulta sus servicios activos y días restantes. En grupos redirige a privado para proteger privacidad.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#002</span><span class="fn-name">/clave — Entrega de credenciales de servicio</span></div><p class="fn-desc">Retorna usuario y contraseña del servicio activo. Bloqueado en grupos y canales, sólo responde en chat privado.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#003</span><span class="fn-name">/cuenta — Resumen completo de cuenta</span></div><p class="fn-desc">Muestra todos los servicios del cliente, estado, vencimiento y link de renovación. Solo en privado.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p g"><div class="fn-top"><span class="fn-num">#004</span><span class="fn-name">/pagar — Datos de cobro consolidados</span></div><p class="fn-desc">Envía CBU/Alias, monto total de la deuda consolidada multi-servicio y QR de pago si aplica.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p g"><div class="fn-top"><span class="fn-num">#005</span><span class="fn-name">/catalogo — Catálogo interactivo de servicios</span></div><p class="fn-desc">Muestra el catálogo filtrable por plataforma y tipo de cliente (Consumidor Final / Revendedor / VIP).</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tc">canales</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p g"><div class="fn-top"><span class="fn-num">#006</span><span class="fn-name">/caida — Reporte y ticket de caída de servicio</span></div><p class="fn-desc">Crea ticket #C&lt;ID&gt; y notifica al admin para reemplazo en 1 toque. Funciona en grupos y chats.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p g"><div class="fn-top"><span class="fn-num">#007</span><span class="fn-name">/soporte — Apertura de ticket de soporte técnico</span></div><p class="fn-desc">Genera ticket de soporte con descripción del problema y estado inicial PENDIENTE.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#008</span><span class="fn-name">/cbu — Datos bancarios de cobro</span></div><p class="fn-desc">Envía CBU, Alias y datos completos de cobro. Solo en privado para evitar phishing de terceros en grupos.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── COMPROBANTES ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#009</span><span class="fn-name">OCR de comprobante bancario (Gemini Vision)</span></div><p class="fn-desc">Extrae monto, CBU destino, alias y operation_id del comprobante con visión multimodal Google Gemini.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#010</span><span class="fn-name">OCR fallback con Tesseract local</span></div><p class="fn-desc">Si Gemini no responde o el comprobante no es legible, Tesseract actúa como fallback para extraer texto.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#011</span><span class="fn-name">Idempotencia de comprobantes por hash</span></div><p class="fn-desc">Detecta comprobantes duplicados por hash de imagen en ventana de 10 minutos. Evita doble contabilización.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="badge-sec">⚠ brecha: ampliar a 90 días</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#012</span><span class="fn-name">Detección de fraude por comprobante reciclado</span></div><p class="fn-desc">Verifica operation_id bancario en tabla histórica de aprobados. Alerta visual de emergencia ante reciclado.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#013</span><span class="fn-name">Filtro anti-spam de archivos no financieros</span></div><p class="fn-desc">Rechaza PDFs de más de 3 páginas, archivos académicos o casuales que no correspondan a comprobantes bancarios.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="badge-sec">⚠ brecha: agregar límite en bytes</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── COMANDOS ADMIN WA ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#014</span><span class="fn-name">/pagoapro_ — Aprobación individual de pago</span></div><p class="fn-desc">Aprueba el comprobante de un cliente, registra el pago en finanzas y notifica al cliente. Solo admin whitelist.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#015</span><span class="fn-name">/pagoapro_all — Aprobación multi-servicio</span></div><p class="fn-desc">Aprueba todos los servicios pendientes de un cliente en una sola operación con registro contable unificado.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#016</span><span class="fn-name">/pagodene_ — Denegación de comprobante</span></div><p class="fn-desc">Rechaza el comprobante con motivo, notifica al cliente y mantiene el servicio en estado PENDIENTE_PAGO.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#017</span><span class="fn-name">/pagoparcial_ — Registro de seña o pago parcial</span></div><p class="fn-desc">Registra un pago parcial con el monto indicado, actualiza la deuda pendiente y notifica al cliente el saldo.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#018</span><span class="fn-name">/revertir_pago_ — Reversión contable</span></div><p class="fn-desc">Anula un pago aprobado, revierte el asiento contable y devuelve el servicio a PENDIENTE_PAGO.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="badge-sec">⚠ brecha: requiere 2FA</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#019</span><span class="fn-name">/baja_ — Suspensión de servicio</span></div><p class="fn-desc">Suspende el servicio de un cliente, rota la contraseña de la cuenta madre y libera el casillero al stock.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="badge-sec">⚠ brecha: requiere confirmación</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#020</span><span class="fn-name">/caida admin — Reemplazo automático 1 clic</span></div><p class="fn-desc">Asigna automáticamente un casillero libre del stock al cliente caído y notifica las nuevas credenciales.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#021</span><span class="fn-name">/cambiar_ y /esperar_ — Gestión de tickets</span></div><p class="fn-desc">Cambia el estado de un ticket de soporte a EN_PROCESO o EN_ESPERA y notifica al cliente del cambio.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── GRUPOS ATLAS-MD ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#022</span><span class="fn-name">/tagall — Mención masiva de miembros</span></div><p class="fn-desc">Menciona a todos los miembros del grupo para anuncios importantes. Solo administradores autorizados.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="badge-sec">⚠ brecha: cooldown y whitelist</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#023</span><span class="fn-name">Antilink con desofuscación Unicode</span></div><p class="fn-desc">Detecta y elimina links en grupos, incluyendo links ofuscados con caracteres Unicode especiales. Acción: delete o kick.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="badge-sec">⚠ brecha: actualizar contra homoglifos</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#024</span><span class="fn-name">Bienvenida y despedida de miembros</span></div><p class="fn-desc">Mensaje automático de bienvenida al unirse y despedida al salir, configurable por grupo.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#025</span><span class="fn-name">Modos de bot (public/private/self)</span></div><p class="fn-desc">Controla qué usuarios pueden interactuar con el bot: todos, solo admins o solo el dueño.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#026</span><span class="fn-name">Silent Ban — expulsión silenciosa</span></div><p class="fn-desc">Expulsa a un miembro sin mensaje visible para no generar drama en el grupo.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#027</span><span class="fn-name">/mute y /unmute — Control de voz en grupos</span></div><p class="fn-desc">Silencia o restaura la capacidad de enviar mensajes de un miembro específico sin expulsarlo.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#028</span><span class="fn-name">/promote y /demote — Gestión de admins de grupo</span></div><p class="fn-desc">Promueve o degrada administradores del grupo desde WhatsApp sin necesidad de abrir la app.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#029</span><span class="fn-name">/infogrupo — Información del grupo</span></div><p class="fn-desc">Muestra estadísticas del grupo: cantidad de miembros, admins, fecha de creación y configuración del bot.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="g co"><div class="fn-top"><span class="fn-num">#030</span><span class="fn-name">Listado y sincronización de grupos</span></div><p class="fn-desc">Registra todos los grupos activos en la DB y los mantiene sincronizados con la instancia de Evolution API.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<!-- ──────── CRM CLIENTE ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#031</span><span class="fn-name">Ficha 360° del cliente con semáforo de morosidad</span></div><p class="fn-desc">Vista completa del cliente: servicios, vencimientos, historial de pagos y estado de morosidad visual (🟢/🟡/🔴).</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#032</span><span class="fn-name">Cálculo de LTV histórico en ARS</span></div><p class="fn-desc">Calcula el valor de vida del cliente sumando todos sus pagos históricos en moneda local.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#033</span><span class="fn-name">Cobro unificado multi-servicio</span></div><p class="fn-desc">Genera un único mensaje de cobro consolidando todos los servicios activos del cliente con total a pagar.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── FINANZAS ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#034</span><span class="fn-name">Radiografía financiera y balance contable</span></div><p class="fn-desc">Balance en tiempo real: ingresos cobrados, costo de proveedores y utilidad neta en ARS.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#035</span><span class="fn-name">Cuentas por cobrar a 7 días</span></div><p class="fn-desc">Lista todos los servicios que vencen en los próximos 7 días con monto a cobrar por cliente.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#036</span><span class="fn-name">Configuración de CBU/Alias de cobro</span></div><p class="fn-desc">Permite actualizar el CBU o Alias de cobro desde el sistema, propagando el cambio a todas las respuestas automáticas.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── CATÁLOGO ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p g c"><div class="fn-top"><span class="fn-num">#037</span><span class="fn-name">Catálogo de precios con tarifas segmentadas</span></div><p class="fn-desc">Precios diferenciados por segmento: Consumidor Final, Revendedor y Revendedor VIP con combos promocionales.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tc">canales</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#038</span><span class="fn-name">Cálculo de márgenes por producto</span></div><p class="fn-desc">Calcula el margen de ganancia neto por cada servicio vendido después de descontar el costo del proveedor.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── CUENTAS ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#039</span><span class="fn-name">Creación de cuenta con perfiles y PINs</span></div><p class="fn-desc">Alta de cuenta madre con sus casilleros, perfiles compartidos y PINs individuales por perfil.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#040</span><span class="fn-name">Monitoreo de casilleros y alertas de stock bajo</span></div><p class="fn-desc">Detecta cuando el stock de casilleros libres cae por debajo del umbral mínimo y alerta por Telegram.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#041</span><span class="fn-name">Rotación de claves maestras de cuentas madre</span></div><p class="fn-desc">Rota automáticamente las contraseñas de las cuentas madre según la política definida o al registrar una caída.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#042</span><span class="fn-name">Auditoría de cuentas madre</span></div><p class="fn-desc">Registra cada cambio en una cuenta madre: rotación de clave, asignación de casillero, caídas y reemplazos.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── SCHEDULER ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#043</span><span class="fn-name">Alerta preventiva T-5 días</span></div><p class="fn-desc">Notifica al cliente 5 días antes del vencimiento con instrucciones de renovación y link de pago.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#044</span><span class="fn-name">Alerta prioritaria T-2 días</span></div><p class="fn-desc">Segundo recordatorio 48 horas antes del vencimiento con tono más urgente y total consolidado a pagar.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#045</span><span class="fn-name">Alerta de vencimiento T-0 y corte</span></div><p class="fn-desc">Notificación el día del vencimiento y mensaje de corte si no se registra pago, iniciando proceso de baja.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#046</span><span class="fn-name">Alerta diaria de stock matutina a Telegram</span></div><p class="fn-desc">Reporte automático cada mañana con el stock disponible por servicio, casilleros libres y alertas de reposición.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── CHATWOOT ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#047</span><span class="fn-name">Ventas rápidas desde Chatwoot (/nc_*)</span></div><p class="fn-desc">Slash commands para altas inmediatas de cada plataforma: Disney, Max, Prime, Spotify, YouTube, etc.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#048</span><span class="fn-name">Pagos y renovaciones desde Chatwoot</span></div><p class="fn-desc">/pago, /renovar y comandos de aprobación/denegación directamente desde el panel de Chatwoot.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#049</span><span class="fn-name">/nombre — Renombrar cliente en Chatwoot</span></div><p class="fn-desc">Actualiza el nombre del contacto en el CRM directamente desde el chat de atención al cliente.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── TELEGRAM BOT ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#050</span><span class="fn-name">Bot Telegram: alertas con botones inline</span></div><p class="fn-desc">Aprobación en 1 toque de pagos, renovación masiva y acceso a Ficha 360° desde Telegram.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#051</span><span class="fn-name">/balance y /stock desde Telegram</span></div><p class="fn-desc">Consulta del balance financiero del día y del stock de casilleros disponibles desde el bot de Telegram.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#052</span><span class="fn-name">/backup — Exportación de DB a Telegram</span></div><p class="fn-desc">Envía el backup comprimido .db.gz y .csv al chat de Telegram admin para resguardo externo.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="badge-sec">⚠ brecha: cifrar con GPG</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#053</span><span class="fn-name">/cliente — Búsqueda rápida desde Telegram</span></div><p class="fn-desc">Busca la ficha de un cliente por nombre, número o alias desde el bot de Telegram con vista inline.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ──────── SISTEMA ──────── -->
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#054</span><span class="fn-name">Diagnóstico integral de salud del sistema</span></div><p class="fn-desc">Verifica el estado de todos los servicios: FastMCP, Evolution API, SQLite, OCR, Scheduler y Chatwoot.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-existing" data-type="existing" data-ctx="p"><div class="fn-top"><span class="fn-num">#055</span><span class="fn-name">Importación/exportación CSV de clientes y finanzas</span></div><p class="fn-desc">Permite migrar o respaldar la base de clientes y el historial financiero en formato CSV estándar.</p><div class="fn-meta"><span class="badge-ex">existente</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<!-- ══════════ NUEVAS (45) ══════════ -->
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec g c p co"><div class="fn-top"><span class="fn-num">#056</span><span class="fn-name">Audit log inmutable de acciones de admin</span></div><p class="fn-desc">Tabla INSERT-only que registra cada operación de admin con actor, acción, entidad afectada y timestamp. Espeja cada entrada al canal de Telegram.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#057</span><span class="fn-name">Rate limiting de comandos de administración</span></div><p class="fn-desc">Máximo de 10 operaciones de admin por minuto por número. Bloqueo temporal y alerta ante ráfagas anómalas. Protege ante sesión comprometida.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#058</span><span class="fn-name">Confirmación de 2 pasos para operaciones destructivas</span></div><p class="fn-desc">Antes de ejecutar /baja_ o /revertir_pago_, el sistema pide confirmación con un código temporal de 6 dígitos enviado por Telegram.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#059</span><span class="fn-name">Whitelist de JIDs admin con Device ID verificado</span></div><p class="fn-desc">Solo los números en la tabla admin_whitelist, validados por su Device ID de Baileys, pueden ejecutar comandos de administración.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#060</span><span class="fn-name">Cifrado GPG de backups antes del envío a Telegram</span></div><p class="fn-desc">El backup se cifra simétricamente con AES-256 antes de enviarse. La passphrase se gestiona desde variable de entorno, no del código fuente.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#061</span><span class="fn-name">Normalización de imagen para hash de comprobantes</span></div><p class="fn-desc">Antes de calcular el hash, normaliza la imagen (quita EXIF, escala de grises, tamaño fijo) para que variantes mínimas del mismo comprobante tengan el mismo hash.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#062</span><span class="fn-name">Tabla permanente de operation_id aprobados (90 días)</span></div><p class="fn-desc">Extiende la ventana de idempotencia de 10 min a 90 días. Ningún operation_id bancario puede aprobarse dos veces aunque pasen semanas.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#063</span><span class="fn-name">Validación de tamaño en bytes antes de OCR</span></div><p class="fn-desc">Rechaza cualquier archivo mayor a 5 MB antes de cargarlo en memoria. El rechazo ocurre en el webhook de Evolution API, antes de llegar al motor OCR.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#064</span><span class="fn-name">Alerta de sesión de Baileys duplicada o anómala</span></div><p class="fn-desc">Detecta la apertura de un nuevo Device ID en la sesión de WhatsApp y alerta por Telegram inmediatamente con opción de revocar.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec g c co"><div class="fn-top"><span class="fn-num">#065</span><span class="fn-name">Heartbeat de presencia en grupos y canales</span></div><p class="fn-desc">Cada 30 minutos verifica que el bot siga siendo miembro y admin de todos los grupos y canales registrados. Alerta en Telegram si alguno falla.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tc">canales</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec g co"><div class="fn-top"><span class="fn-num">#066</span><span class="fn-name">Detección de QR codes en imágenes como vector de links</span></div><p class="fn-desc">Extiende el Antilink para detectar también códigos QR en imágenes que contengan URLs, complementando la protección contra links en grupos y comunidades.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#067</span><span class="fn-name">Cooldown de /tagall con confirmación en comunidades grandes</span></div><p class="fn-desc">Limita /tagall a 1 uso por hora por grupo y exige confirmación del admin en grupos con más de 100 miembros para evitar spam masivo.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p g c co"><div class="fn-top"><span class="fn-num">#068</span><span class="fn-name">Panel de morosidad en canal de la comunidad</span></div><p class="fn-desc">Publica en el canal interno de la comunidad un reporte diario anonimizado de clientes por vencer, sin revelar datos personales.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tc">canales</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g c co"><div class="fn-top"><span class="fn-num">#069</span><span class="fn-name">Anuncio automático de renovaciones en canal</span></div><p class="fn-desc">Publica en el canal de difusión cuando hay una actualización de precios o nuevos combos disponibles, con enlace directo a /catalogo.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tc">canales</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#070</span><span class="fn-name">Sistema de preguntas frecuentes con respuesta automática en grupos</span></div><p class="fn-desc">Detecta preguntas frecuentes de clientes en grupos (precio, cómo pagar, cómo reportar caída) y responde automáticamente con plantillas configurables.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#071</span><span class="fn-name">Encuesta de satisfacción post-servicio en grupo</span></div><p class="fn-desc">Al renovar un servicio, el cliente recibe una encuesta de 1 pregunta (⭐1-5) en el grupo VIP o en privado, con registro de NPS mensual.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#072</span><span class="fn-name">Renovación automática con cargo programado</span></div><p class="fn-desc">Si el cliente autorizó débito automático, renueva el servicio al vencimiento y notifica el monto descontado y el nuevo período activo.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#073</span><span class="fn-name">Generador de recibo de pago en PDF</span></div><p class="fn-desc">Al aprobar un pago, genera automáticamente un PDF de recibo con número de transacción, servicio, período y monto, y lo envía al cliente por WhatsApp.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g c co"><div class="fn-top"><span class="fn-num">#074</span><span class="fn-name">Flash Sale con countdown en grupo</span></div><p class="fn-desc">Publica una oferta por tiempo limitado con temporizador visual en el grupo. Al vencer el plazo, cierra la oferta automáticamente y notifica a quienes no aprovecharon.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tc">canales</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#075</span><span class="fn-name">Historial de tickets de soporte del cliente</span></div><p class="fn-desc">El cliente puede consultar con /mistickets el estado de todos sus tickets abiertos y cerrados con fecha de resolución y responsable.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#076</span><span class="fn-name">Límite configurable de servicios por tipo de cliente</span></div><p class="fn-desc">Restricción de servicios simultáneos por segmento (ej: CF max 3, Revendedor max 20). Alerta al 80% del límite y libera perfiles inactivos post-vencimiento.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#077</span><span class="fn-name">Comando /referido — Programa de referidos</span></div><p class="fn-desc">Genera un código único de referido por cliente. Cuando otro cliente compra con ese código, el referente acumula crédito o descuento en su próxima renovación.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="c co"><div class="fn-top"><span class="fn-num">#078</span><span class="fn-name">Canal exclusivo por segmento de cliente</span></div><p class="fn-desc">Canales de difusión separados para Consumidor Final, Revendedor y VIP con contenido, precios y ofertas diferenciadas por segmento.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tc">canales</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#079</span><span class="fn-name">Grupo VIP de clientes premium con acceso automático</span></div><p class="fn-desc">Agrega automáticamente al grupo VIP a los clientes que superen el umbral de compras definido. Los que caigan por debajo son movidos al grupo regular.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#080</span><span class="fn-name">Sistema de incidencias conocidas en grupo de soporte</span></div><p class="fn-desc">Cuando hay una caída masiva confirmada de una plataforma, publica automáticamente el estado en el grupo de soporte evitando que cada cliente reporte lo mismo.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#081</span><span class="fn-name">/estado — Estado en tiempo real de todas las plataformas</span></div><p class="fn-desc">El cliente consulta el estado operativo de cada plataforma (Netflix, Disney, Max, etc.) desde el chat privado, con información de incidencias activas.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#082</span><span class="fn-name">Venta asistida multi-plataforma en un solo flujo</span></div><p class="fn-desc">Flujo conversacional que permite al cliente contratar múltiples servicios en un solo chat, generando un único cobro consolidado y registrando todo en el CRM.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#083</span><span class="fn-name">Notificación de cambio de credenciales al cliente</span></div><p class="fn-desc">Cuando se rota la clave de una cuenta madre, notifica automáticamente a todos los clientes afectados con las nuevas credenciales por mensaje privado.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#084</span><span class="fn-name">Detección de tipo de cliente al primer contacto</span></div><p class="fn-desc">Al primer mensaje de un número nuevo, identifica si es Consumidor Final o posible Revendedor según sus preguntas y muestra el catálogo correspondiente.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#085</span><span class="fn-name">Seguimiento de deuda con escalamiento automático</span></div><p class="fn-desc">Escalamiento progresivo de cobro: T+3 días post-vencimiento → recordatorio suave; T+7 → oferta de pago parcial; T+15 → suspensión automática.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#086</span><span class="fn-name">Reporte semanal de finanzas enviado automáticamente</span></div><p class="fn-desc">Cada lunes, el sistema envía al admin un resumen financiero de la semana anterior: ingresos, costos, utilidad, servicios nuevos y bajas.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#087</span><span class="fn-name">Exportación de reporte mensual en PDF para contabilidad</span></div><p class="fn-desc">Genera un PDF de cierre mensual con todos los movimientos, pagos aprobados, rechazados y balance neto. Listo para entregar a un contador.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="c co"><div class="fn-top"><span class="fn-num">#088</span><span class="fn-name">Canal de novedades y actualizaciones del sistema</span></div><p class="fn-desc">Canal interno de la comunidad donde el admin publica actualizaciones del sistema, cambios de precios y mantenimientos programados.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tc">canales</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#089</span><span class="fn-name">Reputación de revendedores en comunidad</span></div><p class="fn-desc">Sistema de calificaciones entre revendedores de la comunidad. Muestra un puntaje de confianza basado en volumen de ventas y tiempo en el sistema.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tco">comunidad</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#090</span><span class="fn-name">Integración con proveedor de pagos (MP/Stripe)</span></div><p class="fn-desc">Genera links de pago de MercadoPago o Stripe desde el chat con monto precompletado. Confirma el pago automáticamente vía webhook sin necesidad de comprobante.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#091</span><span class="fn-name">Prueba gratuita (trial) automatizada</span></div><p class="fn-desc">Asigna automáticamente un período de prueba de 24h a prospectos nuevos, con recordatorio antes del vencimiento y cierre del trial si no hay pago.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#092</span><span class="fn-name">Panel de revendedor — vista de sus propios clientes</span></div><p class="fn-desc">Los revendedores pueden consultar el estado de sus clientes (vencimientos, morosidad, stock propio) sin acceso a datos de otros revendedores.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#093</span><span class="fn-name">Gestión de sorteos y concursos en grupos</span></div><p class="fn-desc">Organiza sorteos en grupos: registro de participantes, selección aleatoria verificable y publicación del ganador con captura de pantalla automática.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#094</span><span class="fn-name">Circuit breaker del motor OCR</span></div><p class="fn-desc">Si OCR falla 3 veces consecutivas, activa un modo de pausa de 60 segundos y alerta al admin. Evita que un error en cadena sature el servidor.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="g co"><div class="fn-top"><span class="fn-num">#095</span><span class="fn-name">Estadísticas de engagement por grupo</span></div><p class="fn-desc">Registra mensajes, reacciones, miembros activos y consultas por semana en cada grupo, con reporte mensual al admin de los grupos más y menos activos.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#096</span><span class="fn-name">Gestión de proveedores con alertas de vencimiento</span></div><p class="fn-desc">Agenda de proveedores con fechas de renovación de cuentas madre, alertas previas y registro de costos por proveedor para el balance financiero.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="sec p"><div class="fn-top"><span class="fn-num">#097</span><span class="fn-name">Gestión de secretos y rotación de API keys</span></div><p class="fn-desc">Centraliza Gemini Key, Evolution Token, Telegram Token y otros secretos. Define política de rotación trimestral con alertas previas al vencimiento de cada key.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="badge-sec">🔐 seguridad</span><span class="ctx-tiny tp">chat priv.</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#098</span><span class="fn-name">Modo mantenimiento con mensaje automático</span></div><p class="fn-desc">Activa un modo mantenimiento que responde automáticamente a todos los mensajes con el tiempo estimado de restauración y redirige al canal de novedades.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tc">canales</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p"><div class="fn-top"><span class="fn-num">#099</span><span class="fn-name">Onboarding guiado para nuevos clientes</span></div><p class="fn-desc">Flujo de bienvenida de 3 pasos para clientes nuevos: explicación del servicio, cómo consultar /clave, cómo reportar una /caida y cómo renovar.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span></div></div>
+
+<div class="fn-card is-new" data-type="new" data-ctx="p g c co"><div class="fn-top"><span class="fn-num">#100</span><span class="fn-name">Motor central de contexto MCP — memoria por conversación</span></div><p class="fn-desc">Capa de contexto que mantiene el estado de cada conversación activa (intención del cliente, últimos comandos, servicios consultados) para que el bot no pierda el hilo entre mensajes en grupos, canales y chats privados.</p><div class="fn-meta"><span class="badge-new">nueva</span><span class="ctx-tiny tp">chat priv.</span><span class="ctx-tiny tg">grupos</span><span class="ctx-tiny tc">canales</span><span class="ctx-tiny tco">comunidad</span></div></div>
+
+  </div><!-- /fn-grid -->
+</div><!-- /page-fn -->
+
+<script>
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('page-'+id).classList.add('active');
+  event.target.closest('.nav-tab').classList.add('active');
+}
+
+let activeFilters = new Set(['all']);
+
+function fnFilter(tag, btn) {
+  const grid = document.getElementById('fn-grid');
+  const cards = grid.querySelectorAll('.fn-card');
+
+  if (tag === 'all') {
+    activeFilters = new Set(['all']);
+    document.querySelectorAll('.fb').forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    cards.forEach(c => c.classList.remove('hidden'));
+    return;
+  }
+
+  activeFilters.delete('all');
+  document.querySelectorAll('.fb').forEach(b => { if(b.textContent.trim().startsWith('Todo')) b.classList.remove('on'); });
+
+  if (activeFilters.has(tag)) {
+    activeFilters.delete(tag);
+    btn.classList.remove('on');
+  } else {
+    activeFilters.add(tag);
+    btn.classList.add('on');
+  }
+
+  if (activeFilters.size === 0) {
+    activeFilters.add('all');
+    document.querySelectorAll('.fb')[0].classList.add('on');
+    cards.forEach(c => c.classList.remove('hidden'));
+    return;
+  }
+
+  cards.forEach(card => {
+    const type = card.getAttribute('data-type');
+    const ctx = card.getAttribute('data-ctx') || '';
+    const isSec = card.querySelector('.badge-sec');
+    let show = false;
+    for (const f of activeFilters) {
+      if (f === 'existing' && type === 'existing') { show = true; break; }
+      if (f === 'new' && type === 'new') { show = true; break; }
+      if (f === 'sec' && isSec) { show = true; break; }
+      if (f === 'g' && ctx.includes('g')) { show = true; break; }
+      if (f === 'c' && ctx.includes('c')) { show = true; break; }
+      if (f === 'p' && ctx.includes('p')) { show = true; break; }
+      if (f === 'co' && ctx.includes('co')) { show = true; break; }
+    }
+    card.classList.toggle('hidden', !show);
+  });
+}
+</script>
+</body>
+</html>

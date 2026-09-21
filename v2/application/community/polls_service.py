@@ -8,6 +8,17 @@ from infrastructure.external.telegram.bot_app import send_telegram_poll
 
 logger = logging.getLogger("application.community.polls")
 
+SENSITIVE_POLL_KEYWORDS = [
+    "precio", "presupuesto", "cuánto", "pagar", "costo",
+    "comprar", "contratar", "interesa", "quiero", "saldo"
+]
+
+
+def is_sensitive_poll(question: str) -> bool:
+    """Evalúa si una encuesta involucra datos sensibles de compra o pricing para forzar anonimato (MED-01)."""
+    q_lower = str(question or "").lower()
+    return any(kw in q_lower for kw in SENSITIVE_POLL_KEYWORDS)
+
 
 async def create_and_dispatch_poll(
     question: str,
@@ -29,8 +40,14 @@ async def create_and_dispatch_poll(
     if len(clean_opts) < 2:
         return {"success": False, "error": "La encuesta debe tener al menos 2 opciones de respuesta"}
 
+    sensitive = is_sensitive_poll(clean_q)
+    if sensitive:
+        category = "sensitive_pricing" if category == "demand" else category
+        logger.info(f"🔒 Encuesta de intención de compra/precio detectada: '{clean_q}'. Forzando anonimato estricto (MED-01).")
+
     target_wa = whatsapp_target or os.getenv("WHATSAPP_BROADCAST_TARGET", "").strip()
     target_tg = telegram_target or os.getenv("TELEGRAM_CHANNEL_ID", "").strip()
+
 
     wa_sent = False
     tg_sent = False

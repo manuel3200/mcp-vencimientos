@@ -271,7 +271,7 @@ El servidor FastMCP expone herramientas seguras para interactuar con la lógica 
       actor="soporte_operador"
   )
   ```
-  **Salida**: `https://streamvault.local/secret/view/b4c9e8210fa842...`
+  **Salida**: `https://secrets.tudominio.com/v/sec_b4c9e8210fa842...`
 
 #### `verificar_integridad_auditoria`
 - **Descripción**: Recorre la bitácora criptográfica HMAC-SHA256 y verifica que ningún registro histórico haya sido modificado o alterado directamente en la base de datos.

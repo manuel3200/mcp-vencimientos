@@ -1,5 +1,5 @@
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Optional, Dict, Any
 
 def parse_date_to_iso(date_str: Optional[str]) -> Optional[str]:
@@ -95,3 +95,50 @@ def parse_http_custom_message(text: Optional[str]) -> Optional[Dict[str, Any]]:
                 }
 
     return None
+
+
+class HWIDLeaseManager:
+    """Administra leases de sesión HWID para prevenir clonaciones y accesos simultáneos (HIGH-03)."""
+    LEASE_TIMEOUT_SECONDS = 300  # 5 minutos de ventana activa
+
+    def __init__(self):
+        self._leases: Dict[str, Dict[str, Any]] = {}
+
+    def request_access(self, config_id: str, hwid: str) -> Dict[str, Any]:
+        """Verifica si el HWID puede acceder o si existe una sesión activa con otro HWID."""
+        now = datetime.utcnow()
+        clean_cid = str(config_id).strip()
+        clean_h = str(hwid).strip()
+
+        current_lease = self._leases.get(clean_cid)
+
+        if current_lease and current_lease["hwid"] != clean_h:
+            last_seen = current_lease["last_activity"]
+            elapsed = (now - last_seen).total_seconds()
+            if elapsed < self.LEASE_TIMEOUT_SECONDS:
+                # Sesión activa de otro dispositivo dentro del timeout
+                return {
+                    "granted": False,
+                    "reason": "active_session_exists",
+                    "active_hwid": current_lease["hwid"],
+                    "remaining_seconds": int(self.LEASE_TIMEOUT_SECONDS - elapsed)
+                }
+
+        # Conceder o renovar lease
+        self._leases[clean_cid] = {"hwid": clean_h, "last_activity": now}
+        return {"granted": True, "reason": "lease_granted"}
+
+    def release_lease(self, config_id: str, hwid: Optional[str] = None) -> bool:
+        clean_cid = str(config_id).strip()
+        if clean_cid in self._leases:
+            if hwid is None or self._leases[clean_cid]["hwid"] == str(hwid).strip():
+                del self._leases[clean_cid]
+                return True
+        return False
+
+    def get_lease(self, config_id: str) -> Optional[Dict[str, Any]]:
+        return self._leases.get(str(config_id).strip())
+
+
+hwid_lease_manager = HWIDLeaseManager()
+

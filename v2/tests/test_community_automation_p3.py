@@ -99,7 +99,8 @@ class TestCommunityAutomationP3(unittest.TestCase):
         mock_resp.status_code = 200
         mock_resp.json.return_value = {"ok": True, "result": {"poll": {"id": "TG_POLL_123"}}}
 
-        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        with patch("infrastructure.external.telegram.bot_app.get_telegram_config", return_value=("123456:BOT_TOKEN_MOCK", "-1001234567890")), \
+             patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
             mock_post.return_value = mock_resp
 
             ok = self.loop.run_until_complete(
@@ -154,7 +155,7 @@ class TestCommunityAutomationP3(unittest.TestCase):
             conn = get_connection()
             try:
                 row = conn.execute("""
-                    SELECT * FROM audit_logs 
+                    SELECT * FROM audit_log 
                     WHERE action = 'DISPATCH_COMMUNITY_POLL'
                     ORDER BY id DESC LIMIT 1
                 """).fetchone()

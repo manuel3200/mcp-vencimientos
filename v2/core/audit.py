@@ -25,6 +25,11 @@ def _get_audit_repo():
     return audit_repo
 
 
+def get_latest_audit_entry() -> Optional[Dict[str, Any]]:
+    """Consulta diferida del último bloque de auditoría para compatibilidad de endpoints."""
+    return _get_audit_repo().get_latest_audit_entry()
+
+
 
 def get_audit_hmac_key() -> str:
     """Obtiene la clave simétrica para la firma HMAC del log de auditoría."""

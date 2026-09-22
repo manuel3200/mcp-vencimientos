@@ -239,9 +239,3 @@ def decrypt_secret(ciphertext: Optional[str], key: Optional[str] = None) -> str:
         return decrypted_bytes.decode("utf-8")
     except InvalidTag as e:
         raise ValueError("Clave incorrecta o integridad de secreto alterada (tag AES-GCM inválido)") from e
-
-
-from core.mcp_guard import validate_tool_execution, ADMIN_ONLY_TOOLS, CLIENT_SCOPED_TOOLS
-
-
-

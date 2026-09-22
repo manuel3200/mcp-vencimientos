@@ -9,7 +9,6 @@ import re
 import logging
 from typing import Dict, Any, List, Optional
 
-from core.audit import log_audit_event
 from core.config import settings
 
 logger = logging.getLogger("core.mcp_guard")
@@ -82,6 +81,7 @@ def validate_tool_execution(
     # 2. Bloquear tools exclusivas de administrador si no es admin
     if tool_name in ADMIN_ONLY_TOOLS:
         try:
+            from core.audit import log_audit_event
             log_audit_event(
                 actor=requester_phone_or_jid or "anonymous_client",
                 action="SECURITY_PROMPT_INJECTION_BLOCKED",
@@ -111,6 +111,7 @@ def validate_tool_execution(
         )
         if clean_req and param_phone and clean_req != param_phone:
             try:
+                from core.audit import log_audit_event
                 log_audit_event(
                     actor=requester_phone_or_jid,
                     action="SECURITY_CROSS_CLIENT_ATTEMPT_BLOCKED",

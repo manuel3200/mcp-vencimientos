@@ -13,10 +13,15 @@ from typing import Dict, Any, Optional, Tuple
 
 from core.config import settings
 from core.security import encrypt_secret, decrypt_secret
-from core.audit import log_audit_event
-from db.connection import get_connection
 
 logger = logging.getLogger("core.ephemeral_secrets")
+
+
+def _get_conn():
+    """Conexión diferida para evitar ciclos de importación en tiempo de carga."""
+    from db.connection import get_connection
+    return get_connection()
+
 
 
 def create_ephemeral_secret(
@@ -39,7 +44,7 @@ def create_ephemeral_secret(
     expires_dt = datetime.utcnow() + timedelta(seconds=ttl_seconds)
     expires_at_str = expires_dt.strftime("%Y-%m-%d %H:%M:%S")
 
-    conn = get_connection()
+    conn = _get_conn()
     try:
         with conn:
             conn.execute("""
@@ -58,6 +63,7 @@ def create_ephemeral_secret(
     full_url = f"{base_url}/v/{token}"
 
     try:
+        from core.audit import log_audit_event
         log_audit_event(
             actor=actor,
             action="GENERATE_EPHEMERAL_SECRET",
@@ -85,7 +91,7 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
     - ('expired', None): El enlace superó su tiempo de vida útil (TTL).
     """
     clean_token = token.strip()
-    conn = get_connection()
+    conn = _get_conn()
     try:
         with conn:
             row = conn.execute("""
@@ -137,6 +143,7 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
         conn.close()
 
     try:
+        from core.audit import log_audit_event
         log_audit_event(
             actor="client_web",
             action="CONSUME_EPHEMERAL_SECRET",
@@ -156,7 +163,7 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
 def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
     """Quema inmediatamente un secreto efímero para forzar su expiración anticipada."""
     clean_token = token.strip()
-    conn = get_connection()
+    conn = _get_conn()
     burned = False
     try:
         with conn:
@@ -171,6 +178,7 @@ def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
 
     if burned:
         try:
+            from core.audit import log_audit_event
             log_audit_event(
                 actor=actor,
                 action="BURN_EPHEMERAL_SECRET",
@@ -183,3 +191,4 @@ def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
         except Exception as e:
             logger.warning(f"Error en auditoría al forzar quemado: {e}")
     return burned
+

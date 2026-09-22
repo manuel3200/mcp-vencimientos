@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-09-22T00:02:24.291Z",
-  "durationSeconds": "4.35",
+  "timestamp": "2026-09-22T01:57:46.064Z",
+  "durationSeconds": "4.99",
   "securityScore": 100,
   "securityGrade": "A+",
   "summary": {
@@ -14,7 +14,7 @@
   "phases": {
     "sast": {
       "filesScanned": 158,
-      "linesScanned": 39059,
+      "linesScanned": 39057,
       "findingsCount": 0
     },
     "secrets": {

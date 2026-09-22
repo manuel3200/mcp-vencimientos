@@ -13,16 +13,17 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 
 from core.config import settings
-from db.repositories.audit_repo import (
-    insert_audit_entry,
-    get_latest_audit_entry,
-    get_all_audit_entries_asc,
-    list_audit_history
-)
 
 logger = logging.getLogger("core.audit")
 
 GENESIS_HASH = "0" * 64
+
+
+def _get_audit_repo():
+    """Importación perezosa para desacoplar el núcleo de persistencia y evitar ciclos."""
+    from db.repositories import audit_repo
+    return audit_repo
+
 
 
 def get_audit_hmac_key() -> str:
@@ -76,7 +77,8 @@ def log_audit_event(
     Toma el signature_hmac del último bloque insertado como prev_hash y genera
     una nueva firma HMAC-SHA256 encadenada.
     """
-    latest = get_latest_audit_entry()
+    repo = _get_audit_repo()
+    latest = repo.get_latest_audit_entry()
     prev_hash = latest["signature_hmac"] if latest and latest.get("signature_hmac") else GENESIS_HASH
 
     sig = compute_audit_signature(
@@ -90,7 +92,7 @@ def log_audit_event(
         ip_or_source=ip_or_source
     )
 
-    entry = insert_audit_entry(
+    entry = repo.insert_audit_entry(
         actor=actor,
         action=action,
         target_type=target_type,
@@ -116,7 +118,8 @@ def verify_audit_chain(key: Optional[str] = None) -> Tuple[bool, int, str]:
     Si algún registro fue modificado o borrado manualmente en SQLite, la función
     detecta la inconsistencia e identifica el ID del registro corrompido.
     """
-    entries = get_all_audit_entries_asc()
+    repo = _get_audit_repo()
+    entries = repo.get_all_audit_entries_asc()
     if not entries:
         return True, 0, "Bitácora vacía: sin registros que auditar."
 
@@ -171,7 +174,8 @@ def get_audit_history(
     limit: int = 50
 ) -> List[Dict[str, Any]]:
     """Consulta el historial de auditoría para un objetivo específico o global."""
-    return list_audit_history(target_id=target_id, target_type=target_type, limit=limit)
+    repo = _get_audit_repo()
+    return repo.list_audit_history(target_id=target_id, target_type=target_type, limit=limit)
 
 
 def format_audit_report(records: List[Dict[str, Any]], target_query: Optional[str] = None) -> str:
@@ -220,7 +224,8 @@ async def anchor_audit_root_to_telegram(chat_id: Optional[str] = None) -> Dict[s
     from db.connection import get_connection
     from telegram_bot import send_telegram_message
 
-    latest = get_latest_audit_entry()
+    repo = _get_audit_repo()
+    latest = repo.get_latest_audit_entry()
     latest_sig = latest.get("signature_hmac", GENESIS_HASH) if latest else GENESIS_HASH
     latest_id = latest.get("id", 0) if latest else 0
 

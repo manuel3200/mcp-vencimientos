@@ -28,8 +28,13 @@
             {
               "name": "Accept",
               "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.STREAMVAULT_ADMIN_PASSWORD || $env.ADMIN_PASSWORD || $env.SESSION_SECRET_KEY || 'admin123' }}"
             }
           ]
+
         },
         "options": {
           "timeout": 20000

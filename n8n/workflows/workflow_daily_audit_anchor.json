@@ -66,8 +66,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_AUDIT_CHANNEL_ID || $env.TELEGRAM_ADMIN_CHAT_ID }}\",\n  \"text\": \"{{ $json.telegram_formatted_message }}\",\n  \"parse_mode\": \"HTML\"\n}",
+        "jsonBody": "={{ JSON.stringify({ chat_id: ($env.TELEGRAM_AUDIT_CHANNEL_ID || $env.TELEGRAM_ADMIN_CHAT_ID), text: $json.telegram_formatted_message, parse_mode: 'HTML' }) }}",
         "options": {
+
           "timeout": 15000
         }
       },

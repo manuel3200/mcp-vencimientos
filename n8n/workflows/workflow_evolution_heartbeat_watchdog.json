@@ -74,8 +74,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_ADMIN_CHAT_ID }}\",\n  \"text\": \"🚨 <b>¡ALERTA STREAMVAULT: SESIÓN WHATSAPP CAÍDA!</b>\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n• <b>Instancia:</b> <code>{{ $('node-http-check-state').first().json.instance?.instanceName || 'streamvault' }}</code>\\n• <b>Estado:</b> <code>{{ $('node-http-check-state').first().json.instance?.state || 'close' }}</code>\\n• <b>Hora:</b> <code>\" + new Date().toISOString() + \"</code>\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n⚠️ Los envíos automáticos de vencimientos y recordatorios están pausados preventivamente para evitar baneos. Por favor ingresa al panel y reescanea el código QR.\",\n  \"parse_mode\": \"HTML\"\n}",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_ADMIN_CHAT_ID, text: '🚨 <b>¡ALERTA STREAMVAULT: SESIÓN WHATSAPP CAÍDA!</b>\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n• <b>Instancia:</b> <code>' + ($('node-http-check-state').first().json.instance?.instanceName || 'streamvault') + '</code>\\n• <b>Estado:</b> <code>' + ($('node-http-check-state').first().json.instance?.state || 'close') + '</code>\\n• <b>Hora:</b> <code>' + new Date().toISOString() + '</code>\\n━━━━━━━━━━━━━━━━━━━━━━━━━━\\n⚠️ Los envíos automáticos de vencimientos y recordatorios están pausados preventivamente para evitar baneos. Por favor ingresa al panel y reescanea el código QR.', parse_mode: 'HTML' }) }}",
         "options": {
+
           "timeout": 15000
         }
       },

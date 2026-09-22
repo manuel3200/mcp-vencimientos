@@ -71,8 +71,9 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"chat_id\": \"{{ $env.TELEGRAM_ADMIN_CHAT_ID }}\",\n  \"text\": \"{{ $json.formatted_text }}\",\n  \"parse_mode\": \"HTML\"\n}",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_ADMIN_CHAT_ID, text: $json.formatted_text, parse_mode: 'HTML' }) }}",
         "options": {
+
           "timeout": 15000
         }
       },

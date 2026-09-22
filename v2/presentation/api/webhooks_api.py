@@ -348,12 +348,15 @@ async def whatsapp_webhook(request: Request):
     remote_jid = key.get("remoteJid", "")
     msg_id = (key.get("id") or "").strip()
 
-    # 0.15 MARCAR MENSAJE COMO LEÍDO (DOBLE TILDE AZUL)
-    if not from_me and msg_id and remote_jid and "status@broadcast" not in remote_jid:
-        try:
-            asyncio.create_task(whatsapp_client.mark_as_read(remote_jid, msg_id, from_me=False))
-        except Exception:
-            pass
+    # 0.15 MARCAR MENSAJE COMO LEÍDO (ÚNICAMENTE CUANDO EL BOT EFECTIVAMENTE RESPONDE)
+    # Si el bot no responde (saludos, mensajes no categorizados, etc.), el mensaje permanece
+    # NO LEÍDO para evitar dejar en visto al cliente y permitir la atención manual del operador.
+    def mark_as_read_on_reply():
+        if not from_me and msg_id and remote_jid and "status@broadcast" not in remote_jid:
+            try:
+                asyncio.create_task(whatsapp_client.mark_as_read(remote_jid, msg_id, from_me=False))
+            except Exception:
+                pass
 
     # 0.2 DEDUPLICACIÓN POR MESSAGE ID (wamid) PARA EVITAR PROCESAR CLONES
     if msg_id:
@@ -1508,6 +1511,7 @@ async def whatsapp_webhook(request: Request):
             f"¡Hola {client_name}! 🙌 Recibimos tu comprobante correctamente (#P{payment_id}).\n\n"
             f"Nuestro equipo lo verificará en el sistema a la brevedad y extenderá tu servicio. ¡Muchas gracias por tu pago! ✨"
         )
+        mark_as_read_on_reply()
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
         return JSONResponse({"status": "ok", "action": "receipt_acknowledged", "payment_id": payment_id, "detected": detected_info})
 
@@ -1617,6 +1621,7 @@ async def whatsapp_webhook(request: Request):
 
             lines.append("¡Cualquier consulta o renovación estamos a tu disposición! 🙌✨")
             reply = "\n".join(lines)
+            mark_as_read_on_reply()
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "expiry_info_sent", "ephemeral": bool(ephemeral_url)})
@@ -1625,6 +1630,7 @@ async def whatsapp_webhook(request: Request):
                 f"¡Hola {client_name}! En este momento no registramos suscripciones activas a tu nombre en el sistema. "
                 f"Si deseas contratar Netflix, Disney+, Max o servidores HTTP Custom, avísanos y te enviamos las tarifas disponibles."
             )
+            mark_as_read_on_reply()
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "no_active_services"})
@@ -1706,6 +1712,7 @@ async def whatsapp_webhook(request: Request):
                 f"Una vez realizada la transferencia, envíanos el comprobante por este mismo chat para procesar tu pedido. ¡Muchas gracias! 🙌✨"
             )
 
+        mark_as_read_on_reply()
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "payment_info_sent", "active_accounts_count": len(active_accs)})
@@ -1738,6 +1745,7 @@ async def whatsapp_webhook(request: Request):
             platform_filter=target_platform,
             include_payment_methods=True
         )
+        mark_as_read_on_reply()
         await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "catalog_sent", "platform_filter": target_platform})
@@ -1766,6 +1774,7 @@ async def whatsapp_webhook(request: Request):
                 f"¡Hola {client_name}! En este momento no registramos una suscripción activa asociada a tu número en el sistema. "
                 f"Si contrataste con otro nombre o correo, indícanoslo por favor para verificar tu servicio."
             )
+            mark_as_read_on_reply()
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "no_active_for_replacement"})
@@ -1788,6 +1797,7 @@ async def whatsapp_webhook(request: Request):
                 lines.append(f"• *{a['platform']}* (`{a['email']}`)")
             lines.append(f"\nPor favor indícanos cuál presenta inconvenientes respondiendo con el nombre del servicio o escribiendo: */caida <plataforma>*")
             reply = "\n".join(lines)
+            mark_as_read_on_reply()
             await whatsapp_client.send_text_message(sender_phone, reply, delay_seconds=2.0)
             _AUTO_REPLY_COOLDOWNS[sender_phone] = now
             return JSONResponse({"status": "ok", "action": "multiple_accounts_clarification"})
@@ -1804,6 +1814,7 @@ async def whatsapp_webhook(request: Request):
                 + ("ya se encuentra en cola de atención técnica prioritaria" if st == "waiting" else "está siendo atendido por soporte")
                 + f".\n\n📌 Hemos adjuntado tu nuevo mensaje a la solicitud abierta y te avisaremos por aquí apenas la nueva cuenta quede activa. ¡Muchas gracias por tu paciencia! 🙌✨"
             )
+            mark_as_read_on_reply()
             await whatsapp_client.send_text_message(sender_phone, client_reply, delay_seconds=1.5)
 
             admin_configured = (settings.get("admin_whatsapp") or os.getenv("ADMIN_WHATSAPP", "")).strip()
@@ -1847,6 +1858,7 @@ async def whatsapp_webhook(request: Request):
             f"🛠️ *¡Hola {client_name}!* 🙌 Hemos recibido tu reporte sobre el inconveniente con tu servicio de *{target_account['platform']}* (Reporte #C{report_id}).\n\n"
             f"Nuestro equipo técnico ya está revisando tu caso para brindarte una solución a la brevedad por este medio. ¡Muchas gracias por tu paciencia! ✨"
         )
+        mark_as_read_on_reply()
         await whatsapp_client.send_text_message(sender_phone, client_reply, delay_seconds=1.5)
 
         # 4. Notificación y pedido de AUTORIZACIÓN al WhatsApp Privado del Administrador
@@ -1908,6 +1920,7 @@ async def whatsapp_webhook(request: Request):
         bot_settings = database.get_whatsapp_api_settings()
         bot_phone = bot_settings.get("bot_phone") or ""
         ref_msg = database.ReferralManager.format_referral_summary(client_id_val, bot_phone=bot_phone)
+        mark_as_read_on_reply()
         await whatsapp_client.send_text_message(sender_phone, ref_msg, delay_seconds=1.5)
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "referral_summary_sent"})
@@ -1929,6 +1942,7 @@ async def whatsapp_webhook(request: Request):
             )
         else:
             c_reply = f"❌ *CUPÓN NO DISPONIBLE:* {msg}"
+        mark_as_read_on_reply()
         await whatsapp_client.send_text_message(sender_phone, c_reply, delay_seconds=1.5)
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "coupon_validated", "valid": is_val})
@@ -1937,6 +1951,7 @@ async def whatsapp_webhook(request: Request):
     matched_faq_11 = database.FAQEngine.find_match(text)
     if matched_faq_11:
         faq_reply = f"🤖 *RESPUESTA AUTOMÁTICA:* {matched_faq_11['question']}\n\n{matched_faq_11['answer']}"
+        mark_as_read_on_reply()
         await whatsapp_client.send_text_message(sender_phone, faq_reply, delay_seconds=1.5)
         _AUTO_REPLY_COOLDOWNS[sender_phone] = now
         return JSONResponse({"status": "ok", "action": "private_faq_replied", "faq_id": matched_faq_11["id"]})

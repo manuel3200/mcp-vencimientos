@@ -564,6 +564,43 @@ async def mark_as_read(
         return {"success": False, "error": str(e)}
 
 
+async def configure_instance_settings(
+    read_messages: bool = False,
+    read_status: bool = False,
+    reject_call: bool = False,
+    groups_ignore: bool = False,
+    always_online: bool = False,
+    sync_full_history: bool = False
+) -> Dict[str, Any]:
+    """Configura los ajustes de comportamiento de la instancia en Evolution API v2.
+    
+    Por defecto, read_messages se desactiva (False) para garantizar que los mensajes
+    entrantes no queden automáticamente 'en visto' con doble tilde azul si el bot no responde.
+    """
+    config = get_evolution_config()
+    url = f"{config['api_url']}/settings/set/{config['instance_name']}"
+    headers = get_headers(config["api_key"])
+    payload = {
+        "rejectCall": reject_call,
+        "msgCall": "",
+        "groupsIgnore": groups_ignore,
+        "alwaysOnline": always_online,
+        "readMessages": read_messages,
+        "readStatus": read_status,
+        "syncFullHistory": sync_full_history
+    }
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                logger.info(f"Ajustes de instancia en Evolution API actualizados (readMessages={read_messages})")
+                return {"success": True, "data": resp.json()}
+            else:
+                return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text[:200]}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 async def configure_webhook(webhook_url: str) -> Dict[str, Any]:
     """Registra o actualiza la URL del webhook en Evolution API para recibir eventos."""
     config = get_evolution_config()

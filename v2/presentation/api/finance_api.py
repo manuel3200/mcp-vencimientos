@@ -13,8 +13,8 @@ router = APIRouter(tags=["Finance"])
 def _authenticate_admin_or_service(request: Request) -> bool:
     """Valida sesión activa de navegador o token de servicio para n8n/microservicios."""
     session_token = request.cookies.get("session_token")
-    auth_header = request.headers.get("Authorization", "")
-    bearer_token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else ""
+    auth_header = request.headers.get("Authorization", "").strip()
+    bearer_token = auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else auth_header
     x_api_key = request.headers.get("X-API-KEY", "").strip()
 
     token_candidate = bearer_token or x_api_key

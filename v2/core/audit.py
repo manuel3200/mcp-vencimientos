@@ -5,6 +5,7 @@ para operaciones críticas (cambio de claves maestras, pagos, bajas de cuentas, 
 """
 
 import os
+import json
 import hmac
 import hashlib
 import secrets
@@ -30,14 +31,73 @@ def get_latest_audit_entry() -> Optional[Dict[str, Any]]:
     return _get_audit_repo().get_latest_audit_entry()
 
 
-
 def get_audit_hmac_key() -> str:
-    """Obtiene la clave simétrica para la firma HMAC del log de auditoría."""
-    return (
+    """Obtiene la clave simétrica dedicada para la firma HMAC del log de auditoría (V16)."""
+    explicit_key = (
         getattr(settings, "AUDIT_HMAC_KEY", "") or
-        os.getenv("AUDIT_HMAC_KEY", "") or
-        settings.SESSION_SECRET_KEY
+        os.getenv("AUDIT_HMAC_KEY", "")
+    ).strip()
+    if explicit_key:
+        return explicit_key
+
+    app_env = (getattr(settings, "APP_ENV", "") or os.getenv("APP_ENV", "")).strip().lower()
+    if app_env == "production":
+        raise RuntimeError("AUDIT_HMAC_KEY dedicada es obligatoria en producción (V16).")
+
+    # En desarrollo/tests derivar una clave con separación criptográfica de dominio respecto a SESSION_SECRET_KEY
+    base_secret = getattr(settings, "SESSION_SECRET_KEY", "") or os.getenv("SESSION_SECRET_KEY", "") or "dev-fallback"
+    return hashlib.sha256(f"streamvault-audit-hmac-v2:{base_secret}".encode("utf-8")).hexdigest()
+
+
+def _build_canonical_audit_json(
+    prev_hash: str,
+    actor: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    old_value: str,
+    new_value: str,
+    ip_or_source: str,
+) -> str:
+    """Construye un payload JSON canónico determinista inmune a colisiones por delimitador '|' (V16)."""
+    payload = {
+        "v": 2,
+        "prev_hash": (prev_hash or "").strip(),
+        "actor": (actor or "").strip(),
+        "action": (action or "").strip().upper(),
+        "target_type": (target_type or "").strip().lower(),
+        "target_id": str(target_id if target_id is not None else "").strip(),
+        "old_value": (old_value or "").strip(),
+        "new_value": (new_value or "").strip(),
+        "ip_or_source": (ip_or_source or "").strip(),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _compute_legacy_pipe_signature(
+    prev_hash: str,
+    actor: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    old_value: str,
+    new_value: str,
+    ip_or_source: str,
+    key: str,
+) -> str:
+    """Compatibilidad de solo verificación para bloques históricos previos a V16 sin caracteres '|'."""
+    canonical_payload = (
+        f"{(prev_hash or '').strip()}|{(actor or '').strip()}|{(action or '').strip().upper()}|"
+        f"{(target_type or '').strip().lower()}|{str(target_id if target_id is not None else '').strip()}|"
+        f"{(old_value or '').strip()}|"
+        f"{(new_value or '').strip()}|"
+        f"{(ip_or_source or '').strip()}"
     )
+    return hmac.new(
+        key.encode("utf-8"),
+        canonical_payload.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
 
 
 def compute_audit_signature(
@@ -51,21 +111,23 @@ def compute_audit_signature(
     ip_or_source: str,
     key: Optional[str] = None
 ) -> str:
-    """Calcula la firma HMAC-SHA256 del bloque de auditoría uniendo sus campos canónicos."""
+    """Calcula la firma HMAC-SHA256 del bloque de auditoría sobre JSON canónico determinista (V16)."""
     hmac_key = key or get_audit_hmac_key()
-    canonical_payload = (
-        f"{prev_hash}|{actor.strip()}|{action.strip().upper()}|"
-        f"{target_type.strip().lower()}|{str(target_id).strip()}|"
-        f"{old_value.strip() if old_value else ''}|"
-        f"{new_value.strip() if new_value else ''}|"
-        f"{ip_or_source.strip() if ip_or_source else ''}"
+    canonical_payload = _build_canonical_audit_json(
+        prev_hash=prev_hash,
+        actor=actor,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        old_value=old_value,
+        new_value=new_value,
+        ip_or_source=ip_or_source,
     )
-    sig = hmac.new(
+    return hmac.new(
         hmac_key.encode("utf-8"),
         canonical_payload.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
-    return sig
 
 
 def log_audit_event(
@@ -77,40 +139,52 @@ def log_audit_event(
     new_value: str = "",
     ip_or_source: str = ""
 ) -> Dict[str, Any]:
-    """Registra de forma inmutable una operación crítica en la bitácora criptográfica.
-    
-    Toma el signature_hmac del último bloque insertado como prev_hash y genera
-    una nueva firma HMAC-SHA256 encadenada.
-    """
+    """Registra de forma inmutable y atómica (BEGIN IMMEDIATE) una operación crítica en la bitácora criptográfica (V16)."""
     repo = _get_audit_repo()
-    latest = repo.get_latest_audit_entry()
-    prev_hash = latest["signature_hmac"] if latest and latest.get("signature_hmac") else GENESIS_HASH
 
-    sig = compute_audit_signature(
-        prev_hash=prev_hash,
-        actor=actor,
-        action=action,
-        target_type=target_type,
-        target_id=target_id,
-        old_value=old_value,
-        new_value=new_value,
-        ip_or_source=ip_or_source
-    )
+    def _sign_with_prev(prev_hash: str) -> str:
+        return compute_audit_signature(
+            prev_hash=prev_hash,
+            actor=actor,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            old_value=old_value,
+            new_value=new_value,
+            ip_or_source=ip_or_source,
+        )
 
-    entry = repo.insert_audit_entry(
-        actor=actor,
-        action=action,
-        target_type=target_type,
-        target_id=target_id,
-        old_value=old_value,
-        new_value=new_value,
-        ip_or_source=ip_or_source,
-        prev_hash=prev_hash,
-        signature_hmac=sig
-    )
+    if hasattr(repo, "append_audit_entry_atomic"):
+        entry = repo.append_audit_entry_atomic(
+            actor=actor,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            old_value=old_value,
+            new_value=new_value,
+            ip_or_source=ip_or_source,
+            signature_builder=_sign_with_prev,
+        )
+    else:
+        latest = repo.get_latest_audit_entry()
+        prev_hash = latest["signature_hmac"] if latest and latest.get("signature_hmac") else GENESIS_HASH
+        sig = _sign_with_prev(prev_hash)
+        entry = repo.insert_audit_entry(
+            actor=actor,
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            old_value=old_value,
+            new_value=new_value,
+            ip_or_source=ip_or_source,
+            prev_hash=prev_hash,
+            signature_hmac=sig
+        )
+
+    sig_logged = entry.get("signature_hmac", "")
     logger.info(
         f"🔒 AUDIT_LOG #{entry.get('id')}: [{action}] por '{actor}' en {target_type}#{target_id} "
-        f"(sig: {sig[:12]}...)"
+        f"(sig: {sig_logged[:12]}...)"
     )
     return entry
 
@@ -129,6 +203,7 @@ def verify_audit_chain(key: Optional[str] = None) -> Tuple[bool, int, str]:
         return True, 0, "Bitácora vacía: sin registros que auditar."
 
     hmac_key = key or get_audit_hmac_key()
+    legacy_fallback_key = getattr(settings, "SESSION_SECRET_KEY", "") or hmac_key
     expected_prev = GENESIS_HASH
 
     for idx, entry in enumerate(entries):
@@ -145,20 +220,47 @@ def verify_audit_chain(key: Optional[str] = None) -> Tuple[bool, int, str]:
             logger.error(msg)
             return False, idx, msg
 
-        # 2. Recomputar firma HMAC del bloque actual
+        # 2. Recomputar firma HMAC del bloque actual (JSON canónico V16)
+        actor_val = entry.get("actor") or ""
+        action_val = entry.get("action") or ""
+        target_type_val = entry.get("target_type") or ""
+        target_id_val = entry.get("target_id") or ""
+        old_val = entry.get("old_value") or ""
+        new_val = entry.get("new_value") or ""
+        source_val = entry.get("ip_or_source") or ""
+
         computed_sig = compute_audit_signature(
             prev_hash=prev_hash,
-            actor=entry.get("actor") or "",
-            action=entry.get("action") or "",
-            target_type=entry.get("target_type") or "",
-            target_id=entry.get("target_id") or "",
-            old_value=entry.get("old_value") or "",
-            new_value=entry.get("new_value") or "",
-            ip_or_source=entry.get("ip_or_source") or "",
+            actor=actor_val,
+            action=action_val,
+            target_type=target_type_val,
+            target_id=target_id_val,
+            old_value=old_val,
+            new_value=new_val,
+            ip_or_source=source_val,
             key=hmac_key
         )
 
-        if not secrets.compare_digest(sig_stored, computed_sig):
+        matched = secrets.compare_digest(sig_stored, computed_sig)
+        if not matched and not any("|" in str(v) for v in (actor_val, action_val, target_type_val, target_id_val, old_val, new_val, source_val)):
+            for candidate_key in (hmac_key, legacy_fallback_key):
+                if candidate_key:
+                    legacy_sig = _compute_legacy_pipe_signature(
+                        prev_hash=prev_hash,
+                        actor=actor_val,
+                        action=action_val,
+                        target_type=target_type_val,
+                        target_id=target_id_val,
+                        old_value=old_val,
+                        new_value=new_val,
+                        ip_or_source=source_val,
+                        key=candidate_key,
+                    )
+                    if secrets.compare_digest(sig_stored, legacy_sig):
+                        matched = True
+                        break
+
+        if not matched:
             msg = (
                 f"🚨 MANIPULACIÓN DETECTADA (TAMPERING) en registro #{entry_id}: "
                 f"firma almacenada '{sig_stored[:16]}...' difiere de la firma calculada '{computed_sig[:16]}...'."

@@ -77,9 +77,11 @@ function generateReports(pipelineResults, outputDir) {
         findingsCount: sca.findings.length
       },
       dast: {
+        status: dast.status || (dast.serverOnline ? 'COMPLETED' : 'NOT_RUN'),
         serverOnline: dast.serverOnline,
         probesExecuted: dast.probesExecuted,
-        findingsCount: dast.findings.length
+        findingsCount: dast.findings.length,
+        error: dast.error || null
       }
     },
     findings: allFindings
@@ -89,12 +91,14 @@ function generateReports(pipelineResults, outputDir) {
   fs.writeFileSync(jsonPath, JSON.stringify(jsonReport, null, 2), 'utf-8');
 
   // 2. Generar Markdown
+  const dastStatus = dast.status || (dast.serverOnline ? 'COMPLETED' : 'NOT_RUN');
   let md = `# 🛡️ REPORTE CONSOLIDADO DE AUDITORÍA Y ROBUSTEZ DEVSECOPS
 ## StreamVault v2 — Pipeline Automatizado de Seguridad
 
 - **Fecha de Ejecución**: \`${timestamp}\`
 - **Tiempo de Análisis**: \`${(durationMs / 1000).toFixed(2)} segundos\`
-- **Puntuación de Seguridad**: **\`${score}/100\`** (Calificación: **\`${grade}\`**)
+- **Puntuación Estática/Composición**: **\`${score}/100\`** (Calificación: **\`${grade}\`**)
+- **Estado DAST**: **\`${dastStatus}\`**
 - **Total de Hallazgos**: **\`${allFindings.length}\`**
 
 ---
@@ -116,22 +120,24 @@ function generateReports(pipelineResults, outputDir) {
 - **Archivos Python Auditados**: \`${sast.filesScanned}\`
 - **Líneas de Código Analizadas**: \`${sast.linesScanned.toLocaleString()}\`
 - **Hallazgos Detectados**: \`${sast.findings.length}\`
-${sast.findings.length === 0 ? '✅ *Cero vulnerabilidades estáticas detectadas (Sin SQLi, Sin Command Injection, Sin Insecure Deserialization).*' : ''}
+${sast.findings.length === 0 ? '✅ *Cero vulnerabilidades estáticas detectadas por las reglas SAST configuradas.*' : ''}
 
 #### 2. Detección de Secretos y Credenciales
 - **Archivos Analizados**: \`${secrets.filesScanned}\`
 - **Hallazgos Detectados**: \`${secrets.findings.length}\`
-${secrets.findings.length === 0 ? '✅ *Cero credenciales sensibles, tokens de bots o claves privadas expuestas en código fuente.*' : ''}
+${secrets.findings.length === 0 ? '✅ *Cero credenciales sensibles, tokens de bots o claves privadas expuestas en los archivos escaneados.*' : ''}
 
 #### 3. Auditoría de Dependencias (SCA - OSV.dev)
 - **Paquetes Evaluados**: \`${sca.packagesScanned}\` (\`v2/requirements.txt\`)
 - **Vulnerabilidades Conocidas (CVEs)**: \`${sca.findings.length}\`
-${sca.findings.length === 0 ? '✅ *Todas las dependencias están libres de CVEs críticos reportados en la base de datos de seguridad.*' : ''}
+${sca.findings.length === 0 ? '✅ *Sin CVEs reportados para las versiones consultadas en el manifiesto.*' : ''}
 
 #### 4. Pruebas Dinámicas de Robustez (DAST)
-- **Estado del Servidor Local**: \`${dast.serverOnline ? 'ONLINE (http://localhost:8000)' : 'SIMULADO / OFFLINE'}\`
+- **Estado de Ejecución**: \`${dastStatus}\`
+- **Estado del Servidor Local**: \`${dast.serverOnline ? `ONLINE (${dast.targetUrl})` : `OFFLINE (${dast.targetUrl})`}\`
 - **Probes Dinámicos Ejecutados**: \`${dast.probesExecuted}\`
 - **Hallazgos Detectados**: \`${dast.findings.length}\`
+${dastStatus === 'NOT_RUN' ? `⚠️ *DAST no ejecutado (${dast.error || 'Servidor apagado'}). No se contabilizan probes simulados como aprobados.*` : ''}
 `;
 
   if (dast.probes && dast.probes.length > 0) {
@@ -150,8 +156,10 @@ ${sca.findings.length === 0 ? '✅ *Todas las dependencias están libres de CVEs
       const loc = f.file ? `${f.file}:${f.line}` : (f.package || 'N/A');
       md += `| **${f.origin}** | \`${f.id}\` | ${f.title} | **${f.severity}** | \`${loc}\` | ${f.remediation} |\n`;
     });
+  } else if (dastStatus === 'NOT_RUN') {
+    md += `\n---\n\n### ℹ️ Estado de Verificación\n\nLos controles estáticos (SAST, Secret Scanner) y de manifiesto (SCA) finalizaron sin hallazgos, pero la verificación dinámica (**DAST**) quedó en estado \`NOT_RUN\` porque el servidor objetivo no estaba en ejecución.\n`;
   } else {
-    md += `\n---\n\n### 🏆 Conclusión de Robustez\n\nEl sistema superó exitosamente todas las pruebas de seguridad estáticas, dinámicas y de composición sin registrar fallos de severidad alta o crítica.\n`;
+    md += `\n---\n\n### 🏆 Conclusión de Robustez\n\nEl sistema superó exitosamente todas las pruebas de seguridad estáticas, dinámicas y de composición ejecutadas.\n`;
   }
 
   md += `\n---\n*Reporte generado automáticamente por StreamVault DevSecOps Security Pipeline.*\n`;

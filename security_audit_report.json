@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-09-22T02:40:56.468Z",
-  "durationSeconds": "4.23",
+  "timestamp": "2026-09-26T19:30:32.001Z",
+  "durationSeconds": "5.95",
   "securityScore": 100,
   "securityGrade": "A+",
   "summary": {
@@ -13,22 +13,24 @@
   },
   "phases": {
     "sast": {
-      "filesScanned": 158,
-      "linesScanned": 39074,
+      "filesScanned": 165,
+      "linesScanned": 33780,
       "findingsCount": 0
     },
     "secrets": {
-      "filesScanned": 160,
+      "filesScanned": 174,
       "findingsCount": 0
     },
     "sca": {
-      "packagesScanned": 13,
+      "packagesScanned": 18,
       "findingsCount": 0
     },
     "dast": {
+      "status": "NOT_RUN",
       "serverOnline": false,
-      "probesExecuted": 5,
-      "findingsCount": 0
+      "probesExecuted": 0,
+      "findingsCount": 0,
+      "error": "connect ECONNREFUSED 127.0.0.1:8000"
     }
   },
   "findings": []

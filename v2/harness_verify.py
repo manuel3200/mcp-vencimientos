@@ -1,14 +1,36 @@
 #!/usr/bin/env python3
 """
-StreamVault v2 - Harness Engineering Verification Runner
+StreamVault v2 - Harness Engineering Verification Runner (Canónico - Q04)
 Ejecuta la batería completa de pruebas de regresión, reglas comerciales,
-arquitectura limpia y contratos en un entorno temporal aislado en memoria.
+arquitectura limpia, fronteras HTTP/MCP y controles de seguridad en un entorno temporal aislado.
 """
 import os
 import sys
 import time
 import tempfile
 import traceback
+
+CANONICAL_SUITES = [
+    ("Clean Architecture & Modular Contracts", "tests.test_clean_architecture"),
+    ("HTTP Custom & HWID Rules", "tests.test_http_custom"),
+    ("Tarifas Comerciales y Clientes", "tests.test_pricing_and_clients"),
+    ("Aprobación de Pagos y Notificaciones", "tests.test_payments_approval"),
+    ("Cuentas, Estados y Vencimientos", "tests.test_accounts_and_alerts"),
+    ("Gestión de Grupos y Moderación (Atlas-MD)", "tests.test_groups_and_moderation"),
+    ("Aislamiento de Privacidad, Cifrado y pHash (Fase 1)", "tests.test_group_privacy_isolation"),
+    ("Protección Anti-DDoS y Rate Limiting (Fase 2)", "tests.test_ddos_and_rate_limiting"),
+    ("Auditoría Inmutable, Enlaces Efímeros y Cifrado en Reposo (Fase 3)", "tests.test_audit_log_and_ephemeral_secrets"),
+    ("Crecimiento Comercial, Cupones, Referidos y Comunidad (Fase 4)", "tests.test_growth_and_community"),
+    ("Capacidades Avanzadas de WhatsApp: Reacciones, VCards, Stickers y Lectura", "tests.test_evolution_advanced_features"),
+    ("Automatización Comercial y Analítica de Negocio (Prioridad 2)", "tests.test_commercial_automation_p2"),
+    ("Fidelización, Automatización Comunitaria y Sondeos (Prioridad 3)", "tests.test_community_automation_p3"),
+    ("Hardening de Seguridad de Auditoría (Mitigación CRIT/HIGH/MED)", "tests.test_security_audit_hardening"),
+    ("Controles de Seguridad Bloque 1 P0 (V01-V08, V11, V12, V15, V17, O01, O02)", "tests.test_security_bloque1_p0"),
+    ("Controles de Seguridad Bloque 2 P1 (V09, V10, V13, V14, V16, O03)", "tests.test_security_bloque2_p1"),
+    ("Controles de Operación y Verificación Reproducible Bloque 3 P2 (O05-O07, Q02-Q05)", "tests.test_security_bloque3_p2"),
+    ("Consolidación de Árboles Duplicados y Fachadas Canónicas Bloque 4 (Q06)", "tests.test_security_bloque4_q06"),
+]
+
 
 def main():
     start_total = time.time()
@@ -40,24 +62,7 @@ def main():
         traceback.print_exc()
         sys.exit(1)
 
-    # 2. Definir suites de pruebas a ejecutar
-    suites = [
-        ("Clean Architecture & Modular Contracts", "tests.test_clean_architecture"),
-        ("HTTP Custom & HWID Rules", "tests.test_http_custom"),
-        ("Tarifas Comerciales y Clientes", "tests.test_pricing_and_clients"),
-        ("Aprobación de Pagos y Notificaciones", "tests.test_payments_approval"),
-        ("Cuentas, Estados y Vencimientos", "tests.test_accounts_and_alerts"),
-        ("Gestión de Grupos y Moderación (Atlas-MD)", "tests.test_groups_and_moderation"),
-        ("Aislamiento de Privacidad, Cifrado y pHash (Fase 1)", "tests.test_group_privacy_isolation"),
-        ("Protección Anti-DDoS y Rate Limiting (Fase 2)", "tests.test_ddos_and_rate_limiting"),
-        ("Auditoría Inmutable, Enlaces Efímeros y Cifrado en Reposo (Fase 3)", "tests.test_audit_log_and_ephemeral_secrets"),
-        ("Crecimiento Comercial, Cupones, Referidos y Comunidad (Fase 4)", "tests.test_growth_and_community"),
-        ("Capacidades Avanzadas de WhatsApp: Reacciones, VCards, Stickers y Lectura", "tests.test_evolution_advanced_features"),
-        ("Automatización Comercial y Analítica de Negocio (Prioridad 2)", "tests.test_commercial_automation_p2"),
-        ("Fidelización, Automatización Comunitaria y Sondeos (Prioridad 3)", "tests.test_community_automation_p3"),
-        ("Hardening de Seguridad de Auditoría (Mitigación CRIT/HIGH/MED)", "tests.test_security_audit_hardening")
-    ]
-
+    suites = list(CANONICAL_SUITES)
     failed = 0
     passed = 0
 
@@ -68,7 +73,9 @@ def main():
         t_start = time.time()
         try:
             mod = __import__(module_path, fromlist=["run_tests"])
-            mod.run_tests()
+            res = mod.run_tests()
+            if res is False:
+                raise AssertionError(f"La suite '{name}' devolvió resultado fallido (False).")
             elapsed = time.time() - t_start
             print(f"  ⏱️  Tiempo: {elapsed:.3f}s\n")
             passed += 1
@@ -83,9 +90,10 @@ def main():
 
     print("=" * 65)
     print("📊 REPORTE DE CALIDAD Y OBSERVABILIDAD DEL HARNESS v2")
-    print(f"• Suites Exitosas: {passed}/{len(suites)}")
-    print(f"• Suites Fallidas: {failed}/{len(suites)}")
-    print(f"• Tiempo Total:   {total_time:.3f} segundos")
+    print(f"• Suites Ejecutadas: {passed + failed}/{len(suites)}")
+    print(f"• Suites Exitosas:   {passed}/{len(suites)}")
+    print(f"• Suites Fallidas:   {failed}/{len(suites)}")
+    print(f"• Tiempo Total:      {total_time:.3f} segundos")
     print("=" * 65)
 
     # Limpieza del entorno efímero
@@ -96,11 +104,12 @@ def main():
         pass
 
     if failed > 0:
-        print("🛑 VERIFICACIÓN FALLIDA: Se detectaron regresiones en las reglas de negocio v2.")
+        print("🛑 VERIFICACIÓN FALLIDA: Se detectaron regresiones en las reglas de negocio o seguridad v2.")
         sys.exit(1)
     else:
-        print("✨ VERIFICACIÓN EXITOSA: Todas las reglas de negocio, contratos y arquitectura v2 están intactos.")
+        print("✨ VERIFICACIÓN EXITOSA: Todas las suites canónicas ejecutadas pasaron sin errores.")
         sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

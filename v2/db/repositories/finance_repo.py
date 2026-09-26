@@ -270,13 +270,28 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
             except Exception:
                 pass
 
-        with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
             row = conn.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
             if not row:
+                conn.rollback()
                 return {"success": False, "error": f"No se encontró la transacción de pago #{payment_id}"}
 
             p = dict(row)
             if p.get("status") == "reversed":
+                conn.rollback()
+                return {"success": False, "error": f"El pago #{payment_id} ya fue revertido con anterioridad."}
+
+            # Anular el pago en payments de forma atómica verificando rowcount == 1 (V12)
+            rev_note = f"REVERTIDO por {admin_user}: {reason}"
+            cur = conn.execute("""
+                UPDATE payments
+                SET status = 'reversed',
+                    notes = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes || ' | ' || ? END
+                WHERE id = ? AND (status IS NULL OR status != 'reversed')
+            """, (rev_note, rev_note, payment_id))
+            if cur.rowcount != 1:
+                conn.rollback()
                 return {"success": False, "error": f"El pago #{payment_id} ya fue revertido con anterioridad."}
 
             acc_id = p.get("account_id")
@@ -284,7 +299,6 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
 
             # Si la transacción estaba asociada a una cuenta de streaming:
             if acc_id:
-                # Comprobar si existen otros pagos activos/completados para esta cuenta
                 other_active_row = conn.execute("""
                     SELECT COUNT(*) as cnt FROM payments
                     WHERE account_id = ? AND id != ? AND (status IS NULL OR status != 'reversed')
@@ -297,9 +311,6 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
                     prev_exp = acc.get("previous_expiry_date")
 
                     if other_active > 0:
-                        # Caso duplicado: aún queda al menos un pago válido activo
-                        # Si la duplicación extendió la fecha de vencimiento, restaurar el vencimiento previo
-                        # pero CONSERVAR payment_status = 'pagado' ya que el cliente pagó su servicio
                         if prev_exp and prev_exp != acc.get("expiry_date"):
                             conn.execute("""
                                 UPDATE streaming_accounts
@@ -308,7 +319,6 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
                             """, (prev_exp, acc_id))
                             restored_expiry = prev_exp
                     else:
-                        # Caso normal (único pago): restaurar vencimiento y marcar como 'pendiente'
                         if prev_exp and prev_exp != acc.get("expiry_date"):
                             conn.execute("""
                                 UPDATE streaming_accounts
@@ -323,42 +333,38 @@ def reverse_customer_payment(payment_id: int, reason: str = "Error de aprobació
                                 WHERE id = ?
                             """, (acc_id,))
 
-            # Anular el pago en payments de forma segura contra NULL
-            rev_note = f"REVERTIDO por {admin_user}: {reason}"
-            conn.execute("""
-                UPDATE payments
-                SET status = 'reversed',
-                    notes = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes || ' | ' || ? END
-                WHERE id = ?
-            """, (rev_note, rev_note, payment_id))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
-            try:
-                from core.audit import log_audit_event
-                log_audit_event(
-                    actor=admin_user,
-                    action="REVERT_PAYMENT",
-                    target_type="payment",
-                    target_id=str(payment_id),
-                    old_value=f"amount:{p.get('amount')},account_id:{acc_id}",
-                    new_value=f"status:reversed,reason:{reason}",
-                    ip_or_source="finance_repo"
-                )
-            except Exception as e:
-                logger.warning(f"No se pudo registrar log de auditoría para reversión de pago #{payment_id}: {e}")
+        try:
+            from core.audit import log_audit_event
+            log_audit_event(
+                actor=admin_user,
+                action="REVERT_PAYMENT",
+                target_type="payment",
+                target_id=str(payment_id),
+                old_value=f"amount:{p.get('amount')},account_id:{acc_id}",
+                new_value=f"status:reversed,reason:{reason}",
+                ip_or_source="finance_repo"
+            )
+        except Exception as e:
+            logger.warning(f"No se pudo registrar log de auditoría para reversión de pago #{payment_id}: {e}")
 
-            return {
-                "success": True,
-                "payment_id": payment_id,
-                "amount": p["amount"],
-                "reversed_amount": p["amount"],
-                "profit": p.get("profit", 0.0),
-                "account_id": acc_id,
-                "restored_expiry": restored_expiry,
-                "reason": reason
-            }
+        return {
+            "success": True,
+            "payment_id": payment_id,
+            "amount": p["amount"],
+            "reversed_amount": p["amount"],
+            "profit": p.get("profit", 0.0),
+            "account_id": acc_id,
+            "restored_expiry": restored_expiry,
+            "reason": reason
+        }
     except Exception as e:
         logger.error(f"Error revirtiendo pago #{payment_id}: {e}", exc_info=True)
-        return {"success": False, "error": str(e)}
+        return {"success": False, "error": "Error interno procesando la reversión del pago"}
     finally:
         conn.close()
 

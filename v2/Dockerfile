@@ -19,15 +19,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar e instalar dependencias de Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copiar e instalar dependencias fijadas de Python (Q05: resolución reproducible)
+COPY requirements.txt requirements.lock* ./
+RUN if [ -f requirements.lock ]; then pip install --no-cache-dir -r requirements.lock; else pip install --no-cache-dir -r requirements.txt; fi
+
+# Crear usuario y grupo sin privilegios (O03: non-root container runtime)
+RUN groupadd -g 10001 app && useradd -u 10001 -g 10001 -m -s /usr/sbin/nologin app
 
 # Crear carpeta persistente para la base de datos SQLite antes del código
 RUN mkdir -p /app/data
 
-# Copiar el código fuente de la aplicación
-COPY . .
+# Copiar el código fuente de la aplicación con permisos del usuario no privilegiado
+COPY --chown=10001:10001 . .
+RUN chown -R 10001:10001 /app
+
+# Ejecutar bajo usuario sin privilegios (O03)
+USER 10001:10001
 
 # Puerto expuesto
 EXPOSE 8000

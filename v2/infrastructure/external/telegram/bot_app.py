@@ -14,8 +14,117 @@ _polling_active: bool = False
 
 def get_telegram_config():
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    chat_id = (
+        os.getenv("TELEGRAM_CHAT_ID", "").strip() or
+        os.getenv("TELEGRAM_ADMIN_CHAT_ID", "").strip()
+    )
     return token, chat_id
+
+
+def get_telegram_user_roles() -> Dict[str, str]:
+    """Construye el mapa de usuarios autorizados en Telegram (user_id numérico -> rol RBAC) (V10).
+    Formato de TELEGRAM_ADMIN_USERS: '123456789:SUPER_ADMIN,987654321:FINANZAS,555666777:SOPORTE'.
+    Si TELEGRAM_CHAT_ID es un ID numérico positivo (chat privado 1-a-1 con el dueño), ese user_id
+    recibe SUPER_ADMIN automáticamente.
+    """
+    from core.rbac import ROLE_SUPER_ADMIN, validate_configured_role
+    roles: Dict[str, str] = {}
+
+    _, authorized_chat = get_telegram_config()
+    if authorized_chat and authorized_chat.isdigit():
+        roles[authorized_chat] = ROLE_SUPER_ADMIN
+
+    raw_users = os.getenv("TELEGRAM_ADMIN_USERS", "").strip()
+    if raw_users:
+        for entry in raw_users.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            if ":" in entry:
+                uid_part, role_part = entry.split(":", 1)
+                uid_clean = uid_part.strip()
+                if not uid_clean.isdigit():
+                    logger.warning(f"Telegram RBAC [V10]: user_id no numérico ignorado ('{uid_clean}').")
+                    continue
+                try:
+                    roles[uid_clean] = validate_configured_role(role_part)
+                except ValueError:
+                    logger.warning(f"Telegram RBAC [V10]: rol inválido '{role_part}' para user_id '{uid_clean}'.")
+            elif entry.isdigit():
+                roles[entry] = ROLE_SUPER_ADMIN
+
+    return roles
+
+
+def map_telegram_callback_to_action(callback_data: str) -> str:
+    """Traduce el callback_data de un botón inline a la acción RBAC canónica (V10)."""
+    data = (callback_data or "").strip()
+    if data in ("menu_main", "menu_catalog", "menu_combos"):
+        return "menu"
+    if data in ("menu_balance",):
+        return "balance"
+    if data in ("menu_cobros",):
+        return "cobros"
+    if data in ("menu_datos_pago",):
+        return "datos_pago"
+    if data in ("menu_stock", "menu_stock_list", "check_stock_alert"):
+        return "stock"
+    if data in ("menu_screens",):
+        return "pantallas"
+    if data in ("menu_fallen",):
+        return "caida"
+    if data in ("menu_client_prompt",) or data.startswith("client_"):
+        return "cliente"
+    if data.startswith(("payapp_", "pay_", "payinit_")):
+        return "pagoapro"
+    if data.startswith("payrej_"):
+        return "pagodene"
+    if data.startswith("fall_"):
+        return "caida"
+    if data.startswith("repl_"):
+        return "reemplazo"
+    if data.startswith("fallapp_"):
+        return "autorizar"
+    if data.startswith("fallwait_"):
+        return "esperar"
+    # Acciones exclusivas de SUPER_ADMIN (menu_backup, menu_logs, menu_suppliers, menu_master_accounts, menu_scan)
+    return data
+
+
+def authorize_telegram_actor(
+    chat_id: str,
+    user_id: str,
+    action: str = "",
+    is_anonymous: bool = False,
+) -> Tuple[bool, str, str]:
+    """Verifica chat autorizado, identidad numérica verificable del operador (from.id) y permisos de rol (V10)."""
+    from core.rbac import ROLE_SUPER_ADMIN, ROLE_UNAUTHORIZED, has_permission, normalize_command_action
+
+    _, authorized_chat = get_telegram_config()
+    clean_chat = str(chat_id or "").strip()
+    clean_user = str(user_id or "").strip()
+
+    if not authorized_chat or clean_chat != authorized_chat:
+        return False, ROLE_UNAUTHORIZED, "Chat de Telegram no autorizado."
+
+    # Denegar mensajes anónimos o sin user_id numérico verificable (ej. sender_chat en grupos)
+    if is_anonymous or not clean_user or not clean_user.isdigit():
+        return False, ROLE_UNAUTHORIZED, "Se requiere identidad de usuario numérica verificable (mensajes anónimos denegados)."
+
+    user_roles = get_telegram_user_roles()
+    role = user_roles.get(clean_user, ROLE_UNAUTHORIZED)
+    if role == ROLE_UNAUTHORIZED:
+        return False, ROLE_UNAUTHORIZED, f"Usuario de Telegram '{clean_user}' no autorizado."
+
+    norm_action = normalize_command_action(action) if action else "menu"
+    if norm_action in ("start", "menu", "ayuda", "catalogo", "precios", "precio", "planes", "servicios", "combos", "packs"):
+        return True, role, "Permiso concedido."
+
+    if not has_permission(role, norm_action):
+        return False, role, f"El rol '{role}' no tiene permiso para ejecutar '{norm_action}'."
+
+    return True, role, "Permiso concedido."
+
 
 async def send_telegram_message(
     text: str,
@@ -592,17 +701,27 @@ async def format_and_send_supplier_alert(item: Dict[str, Any], chat_id: str = ""
 # Despachadores de Mensajes y Callbacks
 # ==========================================
 async def handle_telegram_message(msg: Dict[str, Any]):
-    """Procesa mensajes entrantes y comandos del chat administrativo."""
-    _, authorized_chat = get_telegram_config()
+    """Procesa mensajes entrantes y comandos del chat administrativo (V10: verifica chat.id + from.id + rol)."""
     chat_id = str(msg.get("chat", {}).get("id", ""))
-    
-    # Filtro de seguridad estricto: Requiere que TELEGRAM_CHAT_ID esté configurado y coincida
-    if not authorized_chat or chat_id != authorized_chat:
-        logger.warning(f"Mensaje de Telegram ignorado: chat '{chat_id}' no autorizado (esperado: '{authorized_chat}').")
-        return
+    from_obj = msg.get("from") or {}
+    user_id = str(from_obj.get("id", "")).strip()
+    is_anonymous = bool(msg.get("sender_chat")) or bool(from_obj.get("is_bot"))
 
     text = (msg.get("text") or "").strip()
     cmd = text.lower()
+
+    allowed, role, reason = authorize_telegram_actor(
+        chat_id=chat_id,
+        user_id=user_id,
+        action=cmd,
+        is_anonymous=is_anonymous,
+    )
+    if not allowed:
+        logger.warning(f"Telegram RBAC [V10] denegó mensaje en chat='{chat_id}' user='{user_id}': {reason}")
+        _, authorized_chat = get_telegram_config()
+        if authorized_chat and chat_id == authorized_chat and cmd.startswith("/"):
+            await send_telegram_message(f"⛔ <b>Acceso denegado:</b> {reason}", chat_id=chat_id)
+        return
 
     if cmd in ("/start", "/menu", "/ayuda", "menu"):
         menu_text = (
@@ -1096,15 +1215,24 @@ async def handle_telegram_message(msg: Dict[str, Any]):
             await send_telegram_message("\n".join(lines), reply_markup=get_main_menu_keyboard(), chat_id=chat_id)
 
 async def handle_telegram_callback(query: Dict[str, Any]):
-    """Procesa pulsaciones de botones inline."""
-    _, authorized_chat = get_telegram_config()
+    """Procesa pulsaciones de botones inline verificando chat.id y callback_query.from.id (V10)."""
     query_id = query.get("id")
     chat_id = str(query.get("message", {}).get("chat", {}).get("id", ""))
+    from_obj = query.get("from") or {}
+    user_id = str(from_obj.get("id", "")).strip()
+    is_anonymous = bool(from_obj.get("is_bot"))
     data = query.get("data", "")
 
-    # Filtro de seguridad estricto
-    if not authorized_chat or chat_id != authorized_chat:
-        await answer_callback_query(query_id, "No autorizado", show_alert=True)
+    mapped_action = map_telegram_callback_to_action(data)
+    allowed, role, reason = authorize_telegram_actor(
+        chat_id=chat_id,
+        user_id=user_id,
+        action=mapped_action,
+        is_anonymous=is_anonymous,
+    )
+    if not allowed:
+        logger.warning(f"Telegram RBAC [V10] denegó callback '{data}' en chat='{chat_id}' user='{user_id}': {reason}")
+        await answer_callback_query(query_id, f"⛔ No autorizado: {reason}", show_alert=True)
         return
 
     # 1. Menú Principal

@@ -20,9 +20,22 @@ function shannonEntropy(str) {
 }
 
 /**
- * Detector de Secretos y Credenciales en Código Fuente
+ * Redacta el valor sensible dentro del snippet antes de persistirlo en reportes (Q03)
  */
-function runSecretDetection(targetDir) {
+function redactSnippet(line, secretValue) {
+  const trimmed = String(line || '').trim();
+  if (!secretValue || secretValue.length < 4) {
+    return trimmed.length > 100 ? trimmed.substring(0, 97) + '...' : trimmed;
+  }
+  const redacted = `${secretValue.substring(0, 2)}***REDACTED***`;
+  const safeLine = trimmed.split(secretValue).join(redacted);
+  return safeLine.length > 100 ? safeLine.substring(0, 97) + '...' : safeLine;
+}
+
+/**
+ * Detector de Secretos, Credenciales y Defaults Inseguros en Código y Configuración (Q03)
+ */
+function runSecretDetection(targetDir, extraPaths = []) {
   const findings = [];
 
   const secretPatterns = [
@@ -44,30 +57,52 @@ function runSecretDetection(targetDir) {
       id: 'SEC-HARDCODED-PASS',
       title: 'Contraseña Sensible en Duro en Código Fuente',
       severity: 'HIGH',
-      pattern: /(?:password|admin_pass|secret_pass|db_pass|api_secret)\s*=\s*["']([^"']{8,})["']/i,
+      pattern: /\b(?:password|admin_pass|secret_pass|db_pass|api_secret)\s*=\s*["']([^"']{6,})["']/i,
       remediation: 'Nunca guardar credenciales en el código fuente. Utilizar variables de entorno.'
     },
     {
       id: 'SEC-JWT-SECRET',
       title: 'Secreto de Firma JWT o Sesión en Duro',
       severity: 'HIGH',
-      pattern: /(?:jwt_secret|session_secret|secret_key)\s*=\s*["']([A-Za-z0-9_\-+=/]{16,})["']/i,
+      pattern: /\b(?:jwt_secret|session_secret|secret_key)\s*=\s*["']([A-Za-z0-9_\-+=/]{12,})["']/i,
       remediation: 'Cargar la clave de firma de sesión desde la variable de entorno SESSION_SECRET_KEY.'
     },
     {
       id: 'SEC-EVOLUTION-API-KEY',
       title: 'API Key de Evolution API / WhatsApp en Duro',
       severity: 'HIGH',
-      pattern: /(?:evolution_api_key|wpp_api_key|evolution_token)\s*=\s*["']([A-Za-z0-9_\-]{16,})["']/i,
+      pattern: /\b(?:evolution_api_key|wpp_api_key|evolution_token)\s*=\s*["']([A-Za-z0-9_\-]{12,})["']/i,
       remediation: 'Cargar la API key desde la variable de entorno EVOLUTION_API_KEY.'
+    },
+    {
+      id: 'SEC-ENV-DEFAULT',
+      title: 'Default Literal Inseguro en Variable de Entorno Sensible (os.getenv)',
+      severity: 'HIGH',
+      pattern: /os\.(?:getenv|environ\.get)\(\s*["'](?:[A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|API_KEY|HMAC_KEY|ENCRYPTION_KEY)[A-Z0-9_]*)["']\s*,\s*["']([^"']{3,})["']\s*\)/,
+      remediation: 'No proveer secretos por defecto en os.getenv(). Usar cadena vacía "" y fallar cerrado si falta.'
     }
   ];
 
-  const excludedDirs = ['node_modules', '.git', '__pycache__', '.venv', 'venv'];
-  const excludedFiles = ['.env.example', 'README.md', 'walkthrough.md', 'implementation_plan.md'];
+  const excludedDirs = ['node_modules', '.git', '__pycache__', '.venv', 'venv', 'security_pipeline'];
+  const excludedFiles = [
+    '.env.example',
+    'oracle.env.example',
+    'README.md',
+    'walkthrough.md',
+    'implementation_plan.md',
+    'SECURITY_AUDIT_REPORT.md',
+    'security_audit_report.json',
+    'PLAN_CORRECCION_SEGURIDAD_V2.md',
+    'REVISION_SEGURIDAD_V2_2026-09-26.md'
+  ];
 
   function scanDirectory(dir) {
     let files = [];
+    if (!fs.existsSync(dir)) return files;
+    const stat = fs.statSync(dir);
+    if (stat.isFile()) {
+      return [dir];
+    }
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
@@ -86,12 +121,22 @@ function runSecretDetection(targetDir) {
     return files;
   }
 
-  const allFiles = scanDirectory(targetDir);
+  let allFiles = scanDirectory(targetDir);
+  for (const extra of extraPaths) {
+    allFiles = allFiles.concat(scanDirectory(extra));
+  }
+  allFiles = Array.from(new Set(allFiles));
 
   for (const filePath of allFiles) {
     const relFile = path.relative(targetDir, filePath);
-    // Eximir archivos de test que intencionalmente usan valores mock o dummy
-    if (relFile.includes('tests') || relFile.includes('test_') || relFile.includes('harness')) {
+    // Eximir únicamente suites de pruebas automatizadas identificadas por ruta
+    const normalizedRel = relFile.replace(/\\/g, '/');
+    if (
+      normalizedRel.startsWith('tests/') ||
+      normalizedRel.includes('/tests/') ||
+      path.basename(filePath).startsWith('test_') ||
+      path.basename(filePath).startsWith('harness_')
+    ) {
       continue;
     }
 
@@ -106,22 +151,18 @@ function runSecretDetection(targetDir) {
         const match = rule.pattern.exec(line);
         if (match) {
           const secretValue = match[1] || match[0];
-          // Evitar falsos positivos con placeholders típicos
           const lowerVal = secretValue.toLowerCase();
+          // NOTA Q03: NO se excluyen 'admin123', 'default' ni 'change_me' porque son contraseñas débiles reales si aparecen en código.
           if (
             lowerVal.includes('example') ||
             lowerVal.includes('placeholder') ||
             lowerVal.includes('your_') ||
-            lowerVal.includes('admin123') ||
-            lowerVal.includes('change_me') ||
-            lowerVal.includes('default') ||
-            lowerVal.includes('mock') ||
-            lowerVal.includes('test')
+            lowerVal.startsWith('${') ||
+            lowerVal.startsWith('={{')
           ) {
             continue;
           }
 
-          // Si es contraseña o clave, validar entropía para descartar palabras comunes
           const entropy = shannonEntropy(secretValue);
           findings.push({
             id: rule.id,
@@ -132,7 +173,7 @@ function runSecretDetection(targetDir) {
             file: relFile,
             line: idx + 1,
             entropy: entropy.toFixed(2),
-            codeSnippet: trimmed.length > 100 ? trimmed.substring(0, 97) + '...' : trimmed,
+            codeSnippet: redactSnippet(trimmed, secretValue),
             remediation: rule.remediation
           });
         }
@@ -142,9 +183,10 @@ function runSecretDetection(targetDir) {
 
   return {
     module: 'Secret & Credential Detector',
+    status: 'COMPLETED',
     filesScanned: allFiles.length,
     findings
   };
 }
 
-module.exports = { runSecretDetection };
+module.exports = { runSecretDetection, redactSnippet };

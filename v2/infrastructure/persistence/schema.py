@@ -744,5 +744,133 @@ def init_db():
                         INSERT INTO community_faqs (keyword_triggers, question, answer, category)
                         VALUES (?, ?, ?, ?)
                     """, (triggers, q, a, cat))
+
+            # 30. Tokens de Recuperación de Contraseña de Un Solo Uso (V02)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                    token_hash TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    expires_at REAL NOT NULL,
+                    used_at REAL DEFAULT NULL,
+                    requester_ip TEXT DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 31. Tokens Opacos de Servicio con Scopes Mínimos (V03 / V07)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS service_tokens (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token_hash TEXT UNIQUE NOT NULL,
+                    subject TEXT NOT NULL,
+                    scopes TEXT NOT NULL,
+                    expires_at REAL NOT NULL,
+                    revoked_at REAL DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_service_tokens_hash ON service_tokens(token_hash)")
+
+            # 32. Solicitudes OAuth Pendientes de Segundo Factor 2FA (V04 / V05)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS oauth_pending_requests (
+                    request_id TEXT PRIMARY KEY,
+                    client_id TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    state TEXT DEFAULT '',
+                    code_challenge TEXT DEFAULT '',
+                    code_challenge_method TEXT DEFAULT 'S256',
+                    scope TEXT DEFAULT 'mcp',
+                    expires_at REAL NOT NULL,
+                    used INTEGER DEFAULT 0,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # 33. Registro de Eventos de Webhook para Idempotencia Anti-Replay (V06)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS webhook_events_seen (
+                    provider TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    received_at REAL NOT NULL,
+                    PRIMARY KEY (provider, event_id)
+                )
+            """)
+
+            # 34. Sesiones Administrativas Revocables en Servidor (V13)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS admin_sessions (
+                    session_hash TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    mfa_verified INTEGER DEFAULT 1,
+                    expires_at REAL NOT NULL,
+                    last_seen_at REAL NOT NULL,
+                    revoked_at REAL DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_admin_sessions_user ON admin_sessions(username)")
+
+            # 35. Cola Persistente de Despacho Saliente con Idempotencia y Lease (O05)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS outbound_jobs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    producer TEXT NOT NULL,
+                    idempotency_key TEXT NOT NULL,
+                    instance TEXT NOT NULL,
+                    recipient TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    max_attempts INTEGER NOT NULL DEFAULT 3,
+                    next_attempt_at REAL NOT NULL,
+                    lease_until REAL DEFAULT NULL,
+                    lease_owner TEXT DEFAULT NULL,
+                    provider_response TEXT DEFAULT NULL,
+                    last_error TEXT DEFAULT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(producer, idempotency_key)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_outbound_jobs_status_next ON outbound_jobs(instance, status, next_attempt_at)")
+
+            # 36. Control Global de Cadencia por Instancia de Envío (O05)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS outbound_instance_pacing (
+                    instance TEXT PRIMARY KEY,
+                    next_slot_at REAL NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL DEFAULT 0
+                )
+            """)
+
+            # 37. Cuotas y Limitadores Compartidos Persistentes en SQLite (O07)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS shared_rate_limits (
+                    bucket_key TEXT PRIMARY KEY,
+                    count INTEGER NOT NULL DEFAULT 0,
+                    window_reset_at REAL NOT NULL,
+                    cooldown_until REAL NOT NULL DEFAULT 0,
+                    violation_level INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                )
+            """)
+
+            # Migraciones defensivas en oauth_tokens para hashes, scopes, familias y revocación (V05 / V14)
+            for oauth_col_stmt in (
+                "ALTER TABLE oauth_tokens ADD COLUMN access_token_hash TEXT DEFAULT ''",
+                "ALTER TABLE oauth_tokens ADD COLUMN refresh_token_hash TEXT DEFAULT ''",
+                "ALTER TABLE oauth_tokens ADD COLUMN scope TEXT DEFAULT 'mcp'",
+                "ALTER TABLE oauth_tokens ADD COLUMN client_phone TEXT DEFAULT ''",
+                "ALTER TABLE oauth_tokens ADD COLUMN family_id TEXT DEFAULT ''",
+                "ALTER TABLE oauth_tokens ADD COLUMN family_expires_at TEXT DEFAULT ''",
+                "ALTER TABLE oauth_tokens ADD COLUMN used_at TEXT DEFAULT NULL",
+                "ALTER TABLE oauth_tokens ADD COLUMN revoked_at TEXT DEFAULT NULL",
+            ):
+                try:
+                    conn.execute(oauth_col_stmt)
+                except Exception:
+                    pass
     finally:
         conn.close()
+

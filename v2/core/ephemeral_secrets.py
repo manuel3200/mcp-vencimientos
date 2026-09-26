@@ -23,7 +23,6 @@ def _get_conn():
     return get_connection()
 
 
-
 def create_ephemeral_secret(
     data: Dict[str, Any],
     title: str = "Credenciales Seguras",
@@ -76,9 +75,45 @@ def create_ephemeral_secret(
     except Exception as e:
         logger.warning(f"Error registrando auditoría de secreto efímero: {e}")
 
-    logger.info(f"🔑 Secreto efímero creado: {token} (válido por {ttl_seconds}s, max_views={max_views})")
+    logger.info(f"🔑 Secreto efímero creado (id={token[:10]}..., válido por {ttl_seconds}s, max_views={max_views})")
     return token, full_url
 
+
+def peek_ephemeral_secret(token: str) -> Tuple[Optional[str], str]:
+    """Verifica el estado de un secreto efímero SIN descifrarlo ni consumir lecturas (V15)."""
+    clean_token = (token or "").strip()
+    if not clean_token:
+        return None, "not_found"
+
+    conn = _get_conn()
+    try:
+        with conn:
+            row = conn.execute("""
+                SELECT title, expires_at, max_views, view_count, burned_at
+                FROM ephemeral_secrets WHERE token = ?
+            """, (clean_token,)).fetchone()
+            if not row:
+                return None, "not_found"
+            if row["burned_at"] is not None or row["view_count"] >= row["max_views"]:
+                return None, "already_burned"
+
+            now_utc = datetime.utcnow()
+            try:
+                expires_dt = datetime.strptime(row["expires_at"], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                expires_dt = now_utc
+
+            if now_utc > expires_dt:
+                conn.execute("""
+                    UPDATE ephemeral_secrets
+                    SET burned_at = CURRENT_TIMESTAMP, ciphertext = ''
+                    WHERE token = ?
+                """, (clean_token,))
+                return None, "expired"
+
+            return str(row["title"] or "Credenciales Seguras"), "available"
+    finally:
+        conn.close()
 
 
 def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
@@ -115,29 +150,30 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
             if now_utc > expires_dt:
                 conn.execute("""
                     UPDATE ephemeral_secrets
-                    SET burned_at = CURRENT_TIMESTAMP
+                    SET burned_at = CURRENT_TIMESTAMP, ciphertext = ''
                     WHERE token = ?
                 """, (clean_token,))
                 return None, "expired"
 
-            # Consumir y quemar el secreto de forma atómica condicional
+            raw_ciphertext = row["ciphertext"]
+
+            # Consumir y quemar el secreto de forma atómica condicional, limpiando ciphertext al agotar vistas (V15)
             cursor = conn.execute("""
                 UPDATE ephemeral_secrets
                 SET view_count = view_count + 1,
-                    burned_at = CASE WHEN view_count + 1 >= max_views THEN CURRENT_TIMESTAMP ELSE NULL END
+                    burned_at = CASE WHEN view_count + 1 >= max_views THEN CURRENT_TIMESTAMP ELSE NULL END,
+                    ciphertext = CASE WHEN view_count + 1 >= max_views THEN '' ELSE ciphertext END
                 WHERE token = ? AND burned_at IS NULL AND view_count < max_views
             """, (clean_token,))
 
             if cursor.rowcount == 0:
-                # Otra solicitud concurrente consumió el secreto una fracción de ms antes
                 return None, "already_burned"
 
             # Descifrar contenido
-            raw_ciphertext = row["ciphertext"]
             decrypted_json = decrypt_secret(raw_ciphertext)
             payload = json.loads(decrypted_json)
     except Exception as e:
-        logger.error(f"Error procesando secreto efímero {clean_token}: {e}")
+        logger.error(f"Error procesando secreto efímero: {e}")
         return None, "error"
     finally:
         conn.close()
@@ -156,7 +192,7 @@ def reveal_and_burn_secret(token: str) -> Tuple[Optional[Dict[str, Any]], str]:
     except Exception as e:
         logger.warning(f"Error en auditoría al consumir secreto: {e}")
 
-    logger.info(f"🔥 Secreto efímero consumido y quemado atómicamente: {clean_token}")
+    logger.info(f"🔥 Secreto efímero consumido y quemado atómicamente (id={clean_token[:10]}...)")
     return payload, "revealed"
 
 
@@ -169,7 +205,7 @@ def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
         with conn:
             cursor = conn.execute("""
                 UPDATE ephemeral_secrets
-                SET burned_at = CURRENT_TIMESTAMP
+                SET burned_at = CURRENT_TIMESTAMP, ciphertext = ''
                 WHERE token = ? AND burned_at IS NULL
             """, (clean_token,))
             burned = cursor.rowcount > 0
@@ -191,4 +227,3 @@ def burn_secret_immediately(token: str, actor: str = "admin") -> bool:
         except Exception as e:
             logger.warning(f"Error en auditoría al forzar quemado: {e}")
     return burned
-

@@ -261,8 +261,8 @@ def render_fallen_rows(fallen_accounts: List[Dict[str, Any]]) -> str:
 def render_transactions_rows(transactions: List[Dict[str, Any]]) -> str:
     rows = ""
     for t in transactions:
-        c_name = t.get("client_name") or "Venta General"
-        plat = t.get("platform") or "Streaming"
+        c_name = html.escape(str(t.get("client_name") or "Venta General"), quote=True)
+        plat = html.escape(str(t.get("platform") or "Streaming"), quote=True)
         t_ctype = (t.get("client_type") or "").lower()
         if "vip" in t_ctype:
             c_type = "👑 VIP"

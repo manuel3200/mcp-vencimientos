@@ -1,102 +1,19 @@
 #!/usr/bin/env python3
 """
-StreamVault v2 - Harness Engineering Verification Runner
-Ejecuta la batería completa de pruebas de regresión, reglas comerciales,
-arquitectura limpia y contratos en un entorno temporal aislado en memoria.
+harness_runner.py - Wrapper de delegación al runner canónico v2/harness_verify.py (Q04).
+Evita listas de suites duplicadas o divergentes; toda ejecución delega a harness_verify.main().
 """
+
 import os
 import sys
-import time
-import tempfile
-import traceback
 
-def main():
-    start_total = time.time()
-    print("=" * 65)
-    print("🛡️  STREAMVAULT v2 - HARNESS VERIFICATION & QUALITY GATE")
-    print("=" * 65)
+V2_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if V2_ROOT not in sys.path:
+    sys.path.insert(0, V2_ROOT)
 
-    # 1. Configurar entorno efímero aislado para pruebas
-    temp_dir = tempfile.mkdtemp(prefix="streamvault_v2_harness_")
-    os.environ["DATA_DIR"] = temp_dir
+from harness_verify import CANONICAL_SUITES, main  # noqa: E402
 
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    if current_dir not in sys.path:
-        sys.path.insert(0, current_dir)
-
-    print(f"📦 Entorno de prueba aislado: {temp_dir}")
-    print("⚙️  Inicializando esquema de base de datos v2 en entorno de prueba...")
-
-    try:
-        from core.config import settings
-        settings.DATA_DIR = temp_dir
-        settings.DB_PATH = os.path.join(temp_dir, "services.db")
-
-        import db.schema as schema
-        schema.init_db()
-        print("✅ Esquema de base de datos v2 inicializado correctamente.\n")
-    except Exception as e:
-        print(f"❌ Error crítico inicializando el entorno de test v2: {e}")
-        traceback.print_exc()
-        sys.exit(1)
-
-    # 2. Definir suites de pruebas a ejecutar
-    suites = [
-        ("Clean Architecture & Modular Contracts", "tests.test_clean_architecture"),
-        ("HTTP Custom & HWID Rules", "tests.test_http_custom"),
-        ("Tarifas Comerciales y Clientes", "tests.test_pricing_and_clients"),
-        ("Aprobación de Pagos y Notificaciones", "tests.test_payments_approval"),
-        ("Cuentas, Estados y Vencimientos", "tests.test_accounts_and_alerts"),
-        ("Gestión de Grupos y Moderación (Atlas-MD)", "tests.test_groups_and_moderation"),
-        ("Aislamiento de Privacidad, Cifrado y pHash (Fase 1)", "tests.test_group_privacy_isolation"),
-        ("Protección Anti-DDoS y Rate Limiting (Fase 2)", "tests.test_ddos_and_rate_limiting"),
-        ("Auditoría Inmutable, Enlaces Efímeros y Cifrado en Reposo (Fase 3)", "tests.test_audit_log_and_ephemeral_secrets"),
-        ("Crecimiento Comercial, Cupones, Referidos y Comunidad (Fase 4)", "tests.test_growth_and_community")
-    ]
-
-    failed = 0
-    passed = 0
-
-    print("🚀 Ejecutando Batería de Pruebas del Harness v2:")
-    print("-" * 65)
-
-    for name, module_path in suites:
-        t_start = time.time()
-        try:
-            mod = __import__(module_path, fromlist=["run_tests"])
-            mod.run_tests()
-            elapsed = time.time() - t_start
-            print(f"  ⏱️  Tiempo: {elapsed:.3f}s\n")
-            passed += 1
-        except Exception as e:
-            elapsed = time.time() - t_start
-            print(f"  ❌ FALLO en suite '{name}' ({elapsed:.3f}s): {e}")
-            traceback.print_exc()
-            print()
-            failed += 1
-
-    total_time = time.time() - start_total
-
-    print("=" * 65)
-    print("📊 REPORTE DE CALIDAD Y OBSERVABILIDAD DEL HARNESS v2")
-    print(f"• Suites Exitosas: {passed}/{len(suites)}")
-    print(f"• Suites Fallidas: {failed}/{len(suites)}")
-    print(f"• Tiempo Total:   {total_time:.3f} segundos")
-    print("=" * 65)
-
-    # Limpieza del entorno efímero
-    try:
-        import shutil
-        shutil.rmtree(temp_dir, ignore_errors=True)
-    except Exception:
-        pass
-
-    if failed > 0:
-        print("🛑 VERIFICACIÓN FALLIDA: Se detectaron regresiones en las reglas de negocio v2.")
-        sys.exit(1)
-    else:
-        print("✨ VERIFICACIÓN EXITOSA: Todas las reglas de negocio, contratos y arquitectura v2 están intactos.")
-        sys.exit(0)
+__all__ = ["CANONICAL_SUITES", "main"]
 
 if __name__ == "__main__":
     main()

@@ -722,15 +722,45 @@ async def mark_baja_api(account_id: int, request: Request):
 
 
 @router.post("/api/payments/reverse/{payment_id}")
-@router.get("/api/payments/reverse/{payment_id}")
 async def reverse_payment_api(payment_id: int, request: Request):
-    user = verify_session_cookie(request.cookies.get("session_token"))
+    session_token = request.cookies.get("session_token") or ""
+    user = verify_session_cookie(session_token)
     if not user:
         raise HTTPException(status_code=401)
     username = _get_username(user)
 
+    # Protección Anti-CSRF en mutación financiera (V12):
+    # 1. Bloquear peticiones cross-site explícitas (Fetch Metadata / Origin mismatch)
+    sec_fetch_site = (request.headers.get("sec-fetch-site") or "").strip().lower()
+    if sec_fetch_site == "cross-site":
+        raise HTTPException(status_code=403, detail="Cross-site request blocked (CSRF protection)")
+
+    origin = (request.headers.get("origin") or "").strip()
+    host = (request.headers.get("x-forwarded-host") or request.headers.get("host") or "").strip()
+    if origin and host:
+        parsed_origin = urllib.parse.urlparse(origin)
+        if parsed_origin.netloc and parsed_origin.netloc.lower() != host.lower():
+            raise HTTPException(status_code=403, detail="Origin mismatch (CSRF protection)")
+
+    # 2. Si se provee token CSRF en cabecera o formulario, debe ser válido para la sesión actual
+    csrf_candidate = (request.headers.get("X-CSRF-Token") or "").strip()
+    if not csrf_candidate and "application/x-www-form-urlencoded" in (request.headers.get("content-type") or ""):
+        try:
+            form_data = await request.form()
+            csrf_candidate = str(form_data.get("csrf_token") or "").strip()
+        except Exception:
+            csrf_candidate = ""
+    if csrf_candidate:
+        from core.principal import verify_csrf_token
+        if not verify_csrf_token(session_token, csrf_candidate):
+            raise HTTPException(status_code=403, detail="Invalid CSRF token")
+
     try:
-        res = database.reverse_customer_payment(payment_id, reason=f"Revertido desde Panel Web ({username})")
+        res = database.reverse_customer_payment(
+            payment_id,
+            reason=f"Revertido desde Panel Web ({username})",
+            admin_user=f"Web ({username})",
+        )
         if res.get("success"):
             rev_amt = database.format_ars(res.get("reversed_amount") or res.get("amount", 0.0))
             restored = res.get("restored_expiry") or "sin cambios"
@@ -751,8 +781,13 @@ async def reverse_payment_api(payment_id: int, request: Request):
             logger.warning(f"Fallo al revertir cobro #{payment_id}: {err_msg}")
             return RedirectResponse(url=f"/?err={urllib.parse.quote(err_msg)}#finance", status_code=303)
     except Exception as e:
-        logger.error(f"Error crítico al revertir cobro #{payment_id}: {e}", exc_info=True)
-        return RedirectResponse(url=f"/?err={urllib.parse.quote(f'Error al revertir cobro #{payment_id}: {str(e)}')}#finance", status_code=303)
+        import secrets as _sec
+        incident_id = f"inc_{_sec.token_hex(6)}"
+        logger.error(f"Error crítico [{incident_id}] al revertir cobro #{payment_id}: {e}", exc_info=True)
+        return RedirectResponse(
+            url=f"/?err={urllib.parse.quote(f'Error interno al revertir cobro #{payment_id} (Ref: {incident_id})')}#finance",
+            status_code=303,
+        )
 
 
 @router.post("/api/mark-fallen/{account_id}")

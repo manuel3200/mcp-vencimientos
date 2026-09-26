@@ -254,18 +254,58 @@ async def api_whatsapp_mark_read(request: Request):
     return JSONResponse(res)
 
 
+def _record_and_check_webhook_replay(provider: str, event_id: str) -> bool:
+    """Registra atómicamente el ID del evento de webhook; retorna False si es una repetición (V06)."""
+    clean_id = (event_id or "").strip()
+    if not clean_id:
+        return True
+    conn = database.get_connection()
+    try:
+        with conn:
+            cur = conn.execute("""
+                INSERT OR IGNORE INTO webhook_events_seen (provider, event_id, received_at)
+                VALUES (?, ?, ?)
+            """, (provider.strip().lower(), clean_id[:128], time.time()))
+            return cur.rowcount == 1
+    except Exception:
+        return True
+    finally:
+        conn.close()
+
+
 @router.post("/api/webhook/whatsapp")
 @router.post("/webhook/evolution")
 async def whatsapp_webhook(request: Request):
     """Webhook receptor de eventos de Evolution API v2 (Baileys).
-    Procesa mensajes entrantes de clientes, auto-responde consultas de vencimientos/claves/CBU y
-    alerta a Telegram ante el envío de comprobantes de pago.
+    Exige autenticación obligatoria (fail-closed), lectura acotada y protección anti-replay (V06, O07).
     """
-    client_ip = request.client.host if request.client else "desconocido"
-    raw_body = await request.body()
+    from core.rate_limiter import read_bounded_body, get_trusted_client_ip
 
-    # 0.A VERIFICACIÓN CRIPTOGRÁFICA DE FIRMA (HIGH-02: X-Evolution-Signature)
+    client_ip = get_trusted_client_ip(request)
+    try:
+        raw_body = await read_bounded_body(request, max_bytes=12 * 1024 * 1024)
+    except HTTPException as exc:
+        return JSONResponse({"status": "error", "message": exc.detail}, status_code=exc.status_code)
+
     evo_secret = (app_settings.EVOLUTION_WEBHOOK_SECRET or os.getenv("EVOLUTION_WEBHOOK_SECRET", "")).strip()
+    webhook_secret = (app_settings.WEBHOOK_SECRET or os.getenv("WEBHOOK_SECRET", "")).strip()
+
+    # Fail-closed: rechazar si la integración no tiene secreto configurado (V06)
+    if not evo_secret and not webhook_secret:
+        logger.error("🚨 Webhook WhatsApp rechazado: no hay EVOLUTION_WEBHOOK_SECRET ni WEBHOOK_SECRET configurado (fail-closed).")
+        return JSONResponse({"status": "error", "message": "Webhook authentication not configured"}, status_code=401)
+
+    req_token = (
+        request.headers.get("x-webhook-secret") or
+        request.headers.get("apikey") or
+        request.headers.get("x-api-key") or
+        ""
+    ).strip()
+    auth_hdr = (request.headers.get("authorization") or "").strip()
+    if auth_hdr.lower().startswith("bearer "):
+        req_token = req_token or auth_hdr[7:].strip()
+
+    # 0.A VERIFICACIÓN CRIPTOGRÁFICA DE FIRMA O TOKEN (V06)
     if evo_secret:
         sig_hdr = (
             request.headers.get("x-evolution-signature") or
@@ -273,29 +313,17 @@ async def whatsapp_webhook(request: Request):
             ""
         ).strip()
         expected_sig = hmac.new(evo_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
-        is_valid_sig = (
+        is_valid_sig = bool(sig_hdr) and (
             secrets.compare_digest(sig_hdr, expected_sig) or
             secrets.compare_digest(sig_hdr, f"sha256={expected_sig}")
         )
-        if not is_valid_sig:
-            logger.warning(f"🚨 Firma HMAC inválida en webhook Evolution API desde {client_ip}")
+        is_valid_evo_token = bool(req_token) and secrets.compare_digest(req_token, evo_secret)
+        if not (is_valid_sig or is_valid_evo_token):
+            logger.warning(f"🚨 Firma/credencial inválida en webhook Evolution API desde {client_ip}")
             return JSONResponse({"status": "error", "message": "Invalid webhook signature"}, status_code=401)
 
-    # 0.B VERIFICACIÓN DE AUTENTICIDAD DEL WEBHOOK (si WEBHOOK_SECRET está configurado)
-    webhook_secret = (app_settings.WEBHOOK_SECRET or os.getenv("WEBHOOK_SECRET", "")).strip()
-    if webhook_secret:
-        req_token = (
-            request.headers.get("x-webhook-secret") or
-            request.headers.get("apikey") or
-            request.headers.get("x-api-key") or
-            request.query_params.get("secret") or
-            request.query_params.get("token") or
-            ""
-        ).strip()
-        auth_hdr = request.headers.get("authorization", "")
-        if "Bearer " in auth_hdr:
-            req_token = req_token or auth_hdr.split("Bearer ")[-1].strip()
-
+    # 0.B VERIFICACIÓN DE WEBHOOK_SECRET ADICIONAL (V06)
+    if webhook_secret and not evo_secret:
         if not req_token or not secrets.compare_digest(req_token, webhook_secret):
             logger.warning(f"Intento de webhook WhatsApp no autorizado desde {client_ip}")
             return JSONResponse({"status": "error", "message": "Unauthorized webhook"}, status_code=401)
@@ -305,10 +333,15 @@ async def whatsapp_webhook(request: Request):
     except Exception:
         return JSONResponse({"status": "ignored", "reason": "invalid_json"})
 
-
     event = (body.get("event") or body.get("type", "")).lower()
-
     data = body.get("data", {}) or {}
+
+    # 0.C PROTECCIÓN ANTI-REPLAY POR ID DE EVENTO (V06)
+    event_uid = str((data.get("key") or {}).get("id") or body.get("id") or data.get("id") or "").strip()
+    if event_uid:
+        if not _record_and_check_webhook_replay("whatsapp", f"{event}:{event_uid}"):
+            return JSONResponse({"status": "ignored", "reason": "duplicate_event_replay"})
+
 
     # 0. EVENTOS DE GRUPOS: Bienvenida, Despedida y Auto-descubrimiento (group-participants.update, groups.update)
     if event in ("group-participants.update", "group_participants_update", "groups.update"):
@@ -670,7 +703,9 @@ async def whatsapp_webhook(request: Request):
         if not is_auth:
             try:
                 from core.rbac import check_admin_permission
-                allowed, role, _ = check_admin_permission(sender_phone, text_lower, is_from_me=from_me)
+                allowed, role, _ = check_admin_permission(
+                    sender_phone, text_lower, is_from_me=from_me, verified_instance=True
+                )
                 if allowed:
                     is_auth = True
             except Exception:
@@ -2034,38 +2069,67 @@ async def api_chatwoot_setup_canned_responses(request: Request):
 @router.post("/api/webhook/chatwoot")
 async def chatwoot_webhook(request: Request):
     """Webhook receptor de eventos de Chatwoot (message_created).
-    Permite a los agentes ejecutar comandos en el chat como /nc_n_casaextra, /nc_n_full, /stock, /cbu, etc.
+    Exige autenticación obligatoria (fail-closed), lectura acotada, anti-replay y respuestas sanitizadas (V06, V17, O07).
     """
-    chatwoot_secret = (app_settings.CHATWOOT_WEBHOOK_SECRET or os.getenv("CHATWOOT_WEBHOOK_SECRET", "")).strip()
-    if chatwoot_secret:
-        req_token = (
-            request.headers.get("x-webhook-secret") or
-            request.headers.get("x-chatwoot-secret") or
-            request.headers.get("api-access-token") or
-            request.query_params.get("secret") or
-            request.query_params.get("token") or
-            ""
-        ).strip()
-        auth_hdr = request.headers.get("authorization", "")
-        if "Bearer " in auth_hdr:
-            req_token = req_token or auth_hdr.split("Bearer ")[-1].strip()
-
-        if not req_token or not secrets.compare_digest(req_token, chatwoot_secret):
-            client_ip = request.client.host if request.client else "desconocido"
-            logger.warning(f"Intento de webhook Chatwoot no autorizado desde {client_ip}")
-            return JSONResponse({"status": "error", "message": "Unauthorized webhook"}, status_code=401)
+    from core.rate_limiter import read_bounded_body, get_trusted_client_ip
 
     try:
-        body = await request.json()
-    except Exception as e:
-        logger.warning(f"Webhook Chatwoot con payload inválido: {e}")
+        raw_body = await read_bounded_body(request, max_bytes=2 * 1024 * 1024)
+    except HTTPException as exc:
+        return JSONResponse({"status": "error", "message": exc.detail}, status_code=exc.status_code)
+
+    chatwoot_secret = (
+        app_settings.CHATWOOT_WEBHOOK_SECRET or
+        os.getenv("CHATWOOT_WEBHOOK_SECRET", "") or
+        app_settings.WEBHOOK_SECRET or
+        os.getenv("WEBHOOK_SECRET", "")
+    ).strip()
+    if not chatwoot_secret:
+        logger.error("🚨 Webhook Chatwoot rechazado: CHATWOOT_WEBHOOK_SECRET no configurado (fail-closed).")
+        return JSONResponse({"status": "error", "message": "Chatwoot webhook authentication not configured"}, status_code=401)
+
+    req_token = (
+        request.headers.get("x-webhook-secret") or
+        request.headers.get("x-chatwoot-secret") or
+        request.headers.get("api-access-token") or
+        ""
+    ).strip()
+    auth_hdr = (request.headers.get("authorization") or "").strip()
+    if auth_hdr.lower().startswith("bearer "):
+        req_token = req_token or auth_hdr[7:].strip()
+
+    sig_hdr = (request.headers.get("x-chatwoot-signature") or "").strip()
+    expected_sig = hmac.new(chatwoot_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    valid_sig = bool(sig_hdr) and (
+        secrets.compare_digest(sig_hdr, expected_sig) or
+        secrets.compare_digest(sig_hdr, f"sha256={expected_sig}")
+    )
+    valid_tok = bool(req_token) and secrets.compare_digest(req_token, chatwoot_secret)
+
+    if not (valid_sig or valid_tok):
+        client_ip = request.client.host if request.client else "desconocido"
+        logger.warning(f"Intento de webhook Chatwoot no autorizado desde {client_ip}")
+        return JSONResponse({"status": "error", "message": "Unauthorized webhook"}, status_code=401)
+
+    try:
+        body = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception:
         return JSONResponse({"status": "ignored", "reason": "invalid_json"})
+
+    cw_event_id = str(body.get("id") or body.get("message_id") or "").strip()
+    if cw_event_id and not _record_and_check_webhook_replay("chatwoot", cw_event_id):
+        return JSONResponse({"status": "ignored", "reason": "duplicate_event_replay"})
 
     try:
         result = await process_chatwoot_command(body)
         return JSONResponse(result)
     except Exception as e:
-        logger.error(f"Error procesando comando de Chatwoot: {e}", exc_info=True)
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+        incident_id = secrets.token_hex(8)
+        logger.error(f"Error procesando comando de Chatwoot id={incident_id}: {e}", exc_info=True)
+        return JSONResponse(
+            {"status": "error", "error": "internal_error", "incident_id": incident_id},
+            status_code=500,
+        )
+
 
 

@@ -1,9 +1,10 @@
 # 🛡️ REPORTE CONSOLIDADO DE AUDITORÍA Y ROBUSTEZ DEVSECOPS
 ## StreamVault v2 — Pipeline Automatizado de Seguridad
 
-- **Fecha de Ejecución**: `2026-09-22T02:40:56.468Z`
-- **Tiempo de Análisis**: `4.23 segundos`
-- **Puntuación de Seguridad**: **`100/100`** (Calificación: **`A+`**)
+- **Fecha de Ejecución**: `2026-09-26T19:30:32.001Z`
+- **Tiempo de Análisis**: `5.95 segundos`
+- **Puntuación Estática/Composición**: **`100/100`** (Calificación: **`A+`**)
+- **Estado DAST**: **`NOT_RUN`**
 - **Total de Hallazgos**: **`0`**
 
 ---
@@ -22,38 +23,33 @@
 ### 🧩 Resumen de Fases Ejecutadas
 
 #### 1. Análisis Estático de Código (SAST)
-- **Archivos Python Auditados**: `158`
-- **Líneas de Código Analizadas**: `39.074`
+- **Archivos Python Auditados**: `165`
+- **Líneas de Código Analizadas**: `33.780`
 - **Hallazgos Detectados**: `0`
-✅ *Cero vulnerabilidades estáticas detectadas (Sin SQLi, Sin Command Injection, Sin Insecure Deserialization).*
+✅ *Cero vulnerabilidades estáticas detectadas por las reglas SAST configuradas.*
 
 #### 2. Detección de Secretos y Credenciales
-- **Archivos Analizados**: `160`
+- **Archivos Analizados**: `174`
 - **Hallazgos Detectados**: `0`
-✅ *Cero credenciales sensibles, tokens de bots o claves privadas expuestas en código fuente.*
+✅ *Cero credenciales sensibles, tokens de bots o claves privadas expuestas en los archivos escaneados.*
 
 #### 3. Auditoría de Dependencias (SCA - OSV.dev)
-- **Paquetes Evaluados**: `13` (`v2/requirements.txt`)
+- **Paquetes Evaluados**: `18` (`v2/requirements.txt`)
 - **Vulnerabilidades Conocidas (CVEs)**: `0`
-✅ *Todas las dependencias están libres de CVEs críticos reportados en la base de datos de seguridad.*
+✅ *Sin CVEs reportados para las versiones consultadas en el manifiesto.*
 
 #### 4. Pruebas Dinámicas de Robustez (DAST)
-- **Estado del Servidor Local**: `SIMULADO / OFFLINE`
-- **Probes Dinámicos Ejecutados**: `5`
+- **Estado de Ejecución**: `NOT_RUN`
+- **Estado del Servidor Local**: `OFFLINE (http://127.0.0.1:8000)`
+- **Probes Dinámicos Ejecutados**: `0`
 - **Hallazgos Detectados**: `0`
-
-**Detalle de Probes Dinámicos:**
-- [✅] **Simulación Dinámica: Protección de Rutas Administrativas Sin Sesión** (`/api/admin/accounts`): Protegido por verify_session_cookie con redirección obligatoria a /login.
-- [✅] **Simulación Dinámica: Anti-Brute-Force en Endpoint de Login** (`/api/login`): AuthRateLimiter activo: 5 fallos consecutivos disparan bloqueo de 30 min (1800s).
-- [✅] **Simulación Dinámica: Ciclo de Vida de Enlaces Efímeros (/s/<token>)** (`/s/{token}`): Autodestrucción garantizada tras el primer acceso. Retorno 404 ante repeticiones.
-- [✅] **Simulación Dinámica: Aislamiento de Privacidad en Chats Grupales (@g.us)** (`/api/webhook/whatsapp`): 27 comandos sensibles bloqueados mediante regex estricto de intercepción.
-- [✅] **Simulación Dinámica: Validación de Comprobantes Reciclados (pHash)** (`/api/webhook/whatsapp [OCR]`): Distancia de Hamming <= 4 rechaza comprobantes repetidos y enciende alerta de fraude.
+⚠️ *DAST no ejecutado (connect ECONNREFUSED 127.0.0.1:8000). No se contabilizan probes simulados como aprobados.*
 
 ---
 
-### 🏆 Conclusión de Robustez
+### ℹ️ Estado de Verificación
 
-El sistema superó exitosamente todas las pruebas de seguridad estáticas, dinámicas y de composición sin registrar fallos de severidad alta o crítica.
+Los controles estáticos (SAST, Secret Scanner) y de manifiesto (SCA) finalizaron sin hallazgos, pero la verificación dinámica (**DAST**) quedó en estado `NOT_RUN` porque el servidor objetivo no estaba en ejecución.
 
 ---
 *Reporte generado automáticamente por StreamVault DevSecOps Security Pipeline.*

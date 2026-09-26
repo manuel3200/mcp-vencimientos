@@ -71,8 +71,13 @@ async def api_sync_groups(request: Request):
             "groups": database.list_groups_config()
         })
     except Exception as e:
-        logger.error(f"Error sincronizando grupos: {e}")
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+        import secrets
+        incident_id = f"INC-{secrets.token_hex(4).upper()}"
+        logger.error(f"[{incident_id}] Error sincronizando grupos: {e}", exc_info=True)
+        return JSONResponse(
+            {"status": "error", "message": f"Error interno sincronizando grupos ({incident_id})", "incident_id": incident_id},
+            status_code=500,
+        )
 
 
 @router.post("/api/groups/add-manual")

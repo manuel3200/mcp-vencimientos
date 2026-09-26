@@ -197,8 +197,13 @@ async def api_send_referral_whatsapp(request: Request, client_id: int):
         import whatsapp_client
         res = await whatsapp_client.send_text_message(clean_wa, share_msg, delay_seconds=1.0)
     except Exception as e:
-        logger.error(f"Error despachando WhatsApp de referidos a cliente {client_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error conectando con Evolution API: {str(e)}")
+        import secrets
+        incident_id = f"INC-{secrets.token_hex(4).upper()}"
+        logger.error(f"[{incident_id}] Error despachando WhatsApp de referidos a cliente {client_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error interno conectando con Evolution API ({incident_id})",
+        )
 
     if not res.get("success"):
         err_msg = res.get("error") or "Evolution API no pudo entregar el mensaje. Verifica que la sesión de WhatsApp esté conectada."

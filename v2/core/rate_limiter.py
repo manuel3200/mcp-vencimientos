@@ -218,7 +218,7 @@ class ReceiptQuotaManager:
 
     @staticmethod
     def validate_image_constraints(image_bytes: bytes) -> Tuple[bool, str]:
-        """Pre-filtro de tamaño y resolución para comprobantes."""
+        """Pre-filtro de tamaño, resolución mínima/máxima y protección contra bombas de descompresión (O07)."""
         if not image_bytes:
             return False, "bytes de imagen vacíos"
         if len(image_bytes) > 8 * 1024 * 1024:
@@ -226,10 +226,13 @@ class ReceiptQuotaManager:
         try:
             import io
             from PIL import Image
+            Image.MAX_IMAGE_PIXELS = 16_000_000  # Máx 16 MP contra decompression bombs
             with Image.open(io.BytesIO(image_bytes)) as img:
                 width, height = img.size
                 if width < 200 or height < 200:
                     return False, f"Imagen rechazada por resolución insuficiente ({width}x{height} < 200x200)"
+                if width > 4096 or height > 4096 or (width * height) > 16_000_000:
+                    return False, f"Imagen rechazada por dimensiones excesivas ({width}x{height})"
             return True, "ok"
         except Exception as e:
             return False, f"Error comprobando imagen: {e}"
@@ -410,3 +413,151 @@ rate_limiter = RateLimiter()
 receipt_quota_manager = ReceiptQuotaManager()
 gemini_circuit_breaker = CircuitBreaker(fail_threshold=3, reset_timeout=60.0)
 auth_rate_limiter = AuthRateLimiter(max_attempts=5, window_seconds=900.0, lockout_seconds=1800.0)
+
+
+# ==============================================================================
+# O07: Lectores acotados de stream HTTP/Multipart, IP de proxy confiable y cuotas SQLite
+# ==============================================================================
+
+async def read_bounded_body(request, max_bytes: int = 4 * 1024 * 1024) -> bytes:
+    """Lee el cuerpo de un Request en fragmentos y aborta con HTTP 413 antes de agotar memoria (O07).
+    No confía exclusivamente en Content-Length (puede faltar en chunked o mentir).
+    """
+    from fastapi import HTTPException
+
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(status_code=413, detail=f"Payload excede el máximo permitido ({max_bytes} bytes).")
+        except ValueError:
+            pass
+
+    chunks = bytearray()
+    async for chunk in request.stream():
+        if len(chunks) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Contenido demasiado grande (máximo {max_bytes} bytes).")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+async def read_bounded_upload_file(upload_file, max_bytes: int = 2 * 1024 * 1024, chunk_size: int = 65536) -> bytes:
+    """Lee un UploadFile multipart en bloques acotados y rechaza con HTTP 413 si supera max_bytes (O07)."""
+    from fastapi import HTTPException
+
+    chunks = bytearray()
+    while True:
+        chunk = await upload_file.read(chunk_size)
+        if not chunk:
+            break
+        if len(chunks) + len(chunk) > max_bytes:
+            raise HTTPException(status_code=413, detail=f"Archivo subido excede el límite permitido ({max_bytes} bytes).")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def get_trusted_client_ip(request) -> str:
+    """Obtiene la IP real del cliente confiando en X-Forwarded-For solo si proviene de un proxy de confianza (O07)."""
+    import os
+
+    direct_ip = (request.client.host if getattr(request, "client", None) else "unknown") or "unknown"
+    trusted_raw = os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1,::1").strip()
+    trusted_proxies = {ip.strip() for ip in trusted_raw.split(",") if ip.strip()}
+
+    if direct_ip in trusted_proxies:
+        xff = (request.headers.get("X-Forwarded-For") or "").strip()
+        if xff:
+            first_hop = xff.split(",")[0].strip()
+            if first_hop:
+                return first_hop
+        x_real = (request.headers.get("X-Real-IP") or "").strip()
+        if x_real:
+            return x_real
+    return direct_ip
+
+
+def check_shared_sqlite_quota(
+    bucket_key: str,
+    limit: int,
+    window_seconds: float = 60.0,
+    cooldown_seconds: float = 300.0,
+) -> Tuple[bool, int]:
+    """Evalúa y persiste una cuota compartida entre procesos en SQLite con expiración automática (O07).
+    Retorna (allowed: bool, retry_after_seconds: int).
+    """
+    from db.connection import get_connection
+
+    clean_key = (bucket_key or "").strip()
+    if not clean_key:
+        return True, 0
+
+    now = time.time()
+    conn = get_connection()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        # Purgar entradas caducadas hace más de 1 hora para acotar el tamaño de la tabla
+        conn.execute(
+            "DELETE FROM shared_rate_limits WHERE window_reset_at < ? AND cooldown_until < ?",
+            (now - 3600.0, now - 3600.0),
+        )
+        row = conn.execute(
+            "SELECT * FROM shared_rate_limits WHERE bucket_key = ?",
+            (clean_key,),
+        ).fetchone()
+
+        if row:
+            cooldown_until = float(row["cooldown_until"] or 0.0)
+            if now < cooldown_until:
+                conn.commit()
+                return False, max(1, int(cooldown_until - now))
+
+            window_reset = float(row["window_reset_at"] or 0.0)
+            count = int(row["count"] or 0)
+            level = int(row["violation_level"] or 0)
+
+            if now >= window_reset:
+                count = 1
+                window_reset = now + float(window_seconds)
+            else:
+                count += 1
+
+            if count > int(limit):
+                new_level = level + 1
+                cd_until = now + float(cooldown_seconds)
+                conn.execute(
+                    """
+                    UPDATE shared_rate_limits
+                    SET count = ?, cooldown_until = ?, violation_level = ?, updated_at = ?
+                    WHERE bucket_key = ?
+                    """,
+                    (count, cd_until, new_level, now, clean_key),
+                )
+                conn.commit()
+                return False, max(1, int(cooldown_seconds))
+
+            conn.execute(
+                """
+                UPDATE shared_rate_limits
+                SET count = ?, window_reset_at = ?, updated_at = ?
+                WHERE bucket_key = ?
+                """,
+                (count, window_reset, now, clean_key),
+            )
+            conn.commit()
+            return True, 0
+        else:
+            conn.execute(
+                """
+                INSERT INTO shared_rate_limits (bucket_key, count, window_reset_at, cooldown_until, violation_level, updated_at)
+                VALUES (?, 1, ?, 0, 0, ?)
+                """,
+                (clean_key, now + float(window_seconds), now),
+            )
+            conn.commit()
+            return True, 0
+    except Exception:
+        conn.rollback()
+        return True, 0
+    finally:
+        conn.close()
+

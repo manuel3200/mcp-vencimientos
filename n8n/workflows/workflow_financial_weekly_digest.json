@@ -31,7 +31,7 @@
             },
             {
               "name": "Authorization",
-              "value": "=Bearer {{ $env.STREAMVAULT_ADMIN_PASSWORD || $env.ADMIN_PASSWORD || $env.SESSION_SECRET_KEY || 'admin123' }}"
+              "value": "=Bearer {{ $env.FINANCE_API_TOKEN || $env.STREAMVAULT_FINANCE_API_TOKEN }}"
             }
           ]
 

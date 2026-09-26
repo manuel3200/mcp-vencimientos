@@ -26,23 +26,30 @@ KNOWN_BANKS = [
 ]
 
 
-def extract_text_from_image(image_bytes: bytes) -> str:
-    """Extrae texto de una imagen utilizando pytesseract si está disponible."""
-    if not image_bytes:
+def extract_text_from_image(image_bytes: bytes, timeout_seconds: int = 10) -> str:
+    """Extrae texto de una imagen utilizando pytesseract con límites de tamaño, dimensiones y timeout de proceso (O07)."""
+    if not image_bytes or len(image_bytes) > 8 * 1024 * 1024:
         return ""
     try:
         from PIL import Image
         import pytesseract
 
-        img = Image.open(io.BytesIO(image_bytes))
-        if img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
+        Image.MAX_IMAGE_PIXELS = 16_000_000  # Protección contra bombas de descompresión
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            width, height = img.size
+            if width < 200 or height < 200 or width > 4096 or height > 4096 or (width * height) > 16_000_000:
+                logger.info(f"OCR rechazado por dimensiones fuera de rango seguro: {width}x{height}")
+                return ""
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+            else:
+                img = img.copy()
 
-        # Intentar con español, luego con idioma por defecto
+        # Ejecutar OCR con timeout real del subproceso Tesseract (O07)
         try:
-            text = pytesseract.image_to_string(img, lang="spa")
+            text = pytesseract.image_to_string(img, lang="spa", timeout=timeout_seconds)
         except Exception:
-            text = pytesseract.image_to_string(img)
+            text = pytesseract.image_to_string(img, timeout=timeout_seconds)
 
         return (text or "").strip()
     except Exception as e:
@@ -438,6 +445,20 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
     if not clean_b64:
         return None
 
+    # Pre-filtro de longitud base64 ANTES de decodificar en memoria (~11 MB b64 equivale a ~8 MB binarios - O07)
+    if len(clean_b64) > 11 * 1024 * 1024:
+        logger.info(f"Imagen base64 rechazada antes de decodificar por longitud excesiva ({len(clean_b64)} chars).")
+        return {
+            "is_receipt": False,
+            "bank": None,
+            "amount": None,
+            "amount_formatted": None,
+            "operation_id": None,
+            "date": None,
+            "recipient": None,
+            "summary": "Imagen rechazada por tamaño base64 excesivo (> 8MB)"
+        }
+
     # Pre-filtro de decodificación y tamaño (> 8 MB)
     try:
         raw_bytes = base64.b64decode(clean_b64)
@@ -458,9 +479,10 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
             "summary": "Imagen rechazada por tamaño excesivo (> 8MB)"
         }
 
-    # Pre-filtro de dimensiones mínimas (< 200x200)
+    # Pre-filtro de dimensiones mínimas (< 200x200) y máximas (> 4096x4096 / 16 MP - O07)
     try:
         from PIL import Image
+        Image.MAX_IMAGE_PIXELS = 16_000_000
         with Image.open(io.BytesIO(raw_bytes)) as img:
             width, height = img.size
             if width < 200 or height < 200:
@@ -474,6 +496,18 @@ async def analyze_image_with_gemini(image_b64: str, mime_type: str = "image/jpeg
                     "date": None,
                     "recipient": None,
                     "summary": "Imagen rechazada por resolución insuficiente (< 200x200)"
+                }
+            if width > 4096 or height > 4096 or (width * height) > 16_000_000:
+                logger.info(f"Imagen rechazada por dimensiones excesivas ({width}x{height}).")
+                return {
+                    "is_receipt": False,
+                    "bank": None,
+                    "amount": None,
+                    "amount_formatted": None,
+                    "operation_id": None,
+                    "date": None,
+                    "recipient": None,
+                    "summary": "Imagen rechazada por dimensiones excesivas (> 4096px)"
                 }
     except Exception as img_err:
         logger.debug(f"Error comprobando dimensiones de imagen: {img_err}")

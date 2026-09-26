@@ -133,6 +133,7 @@ function runSastScan(targetDir) {
 
   return {
     module: 'SAST Scanner',
+    status: 'COMPLETED',
     filesScanned: pyFiles.length,
     linesScanned: totalLines,
     findings

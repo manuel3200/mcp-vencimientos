@@ -1,0 +1,20 @@
+# StreamVault v2 - Reproducible Dependency Lockfile (Q05)
+# Versiones fijadas (==) verificadas contra OSV.dev (Q02) para builds reproducibles multi-arquitectura (amd64/arm64).
+fastmcp==3.2.0
+fastapi==0.115.12
+starlette==1.3.1
+pydantic==2.11.1
+uvicorn==0.34.0
+apscheduler==3.11.0
+httpx==0.28.1
+httpcore==1.0.7
+anyio==4.14.2
+pytz==2025.2
+python-dotenv==1.2.2
+pyotp==2.9.0
+itsdangerous==2.2.0
+cryptography==50.0.0
+pypdf==6.16.1
+pillow==12.3.0
+pytesseract==0.3.13
+python-multipart==0.0.31

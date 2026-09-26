@@ -5,26 +5,43 @@ services:
   # 1. STREAMVAULT v2 — NÚCLEO CRM, REGLAS DE NEGOCIO Y FASTMCP
   # ============================================================================
   streamvault-app:
-    image: ghcr.io/manuel3200/streamvault-v2:latest
+    image: ${STREAMVAULT_IMAGE:-ghcr.io/manuel3200/streamvault-v2:v2}
     container_name: streamvault-core
     restart: unless-stopped
+    user: "10001:10001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    tmpfs:
+      - /tmp:size=128m,noexec,nosuid,nodev
     ports:
-      - "8000:8000"
+      - "${BIND_HOST:-127.0.0.1}:8000:8000"
     volumes:
       - streamvault_data:/app/data
     environment:
-      - ADMIN_USER=${ADMIN_USER:-admin}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY}
-      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL}
+      - APP_ENV=${APP_ENV:-production}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:?Configurar ADMIN_USERNAME}
+      - ADMIN_USER=${ADMIN_USERNAME:?Configurar ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Configurar ADMIN_PASSWORD}
+      - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:?Configurar SESSION_SECRET_KEY}
+      - DB_ENCRYPTION_KEY=${DB_ENCRYPTION_KEY:?Configurar DB_ENCRYPTION_KEY}
+      - BACKUP_ENCRYPTION_KEY=${BACKUP_ENCRYPTION_KEY:?Configurar BACKUP_ENCRYPTION_KEY}
+      - AUDIT_HMAC_KEY=${AUDIT_HMAC_KEY:?Configurar AUDIT_HMAC_KEY}
+      - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:?Configurar PUBLIC_BASE_URL}
       - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8000}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
-      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?Configurar TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:?Configurar TELEGRAM_CHAT_ID}
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_CHAT_ID:?Configurar TELEGRAM_CHAT_ID}
+      - TELEGRAM_CHANNEL_ID=${TELEGRAM_CHANNEL_ID:-}
       - EVOLUTION_API_URL=http://evolution-api:8080
-      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
-      - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:?Configurar EVOLUTION_API_KEY}
+      - EVOLUTION_WEBHOOK_SECRET=${EVOLUTION_WEBHOOK_SECRET:?Configurar EVOLUTION_WEBHOOK_SECRET}
       - EVOLUTION_INSTANCE_NAME=${EVOLUTION_INSTANCE_NAME:-streamvault}
+      - CHATWOOT_WEBHOOK_SECRET=${CHATWOOT_WEBHOOK_SECRET:-}
+      - FINANCE_API_TOKEN=${FINANCE_API_TOKEN:?Configurar FINANCE_API_TOKEN}
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET:?Configurar N8N_WEBHOOK_SECRET}
       - N8N_BUFFER_WEBHOOK_URL=http://n8n:5678/webhook/dispatch-whatsapp
       - TIMEZONE=America/Argentina/Buenos_Aires
     depends_on:
@@ -40,11 +57,16 @@ services:
   # Cero consumo del disco local de la máquina ARM.
   # ============================================================================
   n8n:
-    image: n8nio/n8n:latest
+    image: ${N8N_IMAGE:-n8nio/n8n:1.82.3}
     container_name: streamvault-n8n
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
     ports:
-      - "5678:5678"
+      - "${BIND_HOST:-127.0.0.1}:5678:5678"
     volumes:
       - n8n_storage:/home/node/.n8n
       - ./n8n/workflows:/workflows:ro
@@ -60,7 +82,7 @@ services:
       # Autenticación y Seguridad n8n
       - N8N_BASIC_AUTH_ACTIVE=true
       - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:?Configurar N8N_PASSWORD}
       - N8N_HOST=${N8N_HOST:-localhost}
       - N8N_PORT=5678
       - N8N_PROTOCOL=${N8N_PROTOCOL:-http}
@@ -73,12 +95,15 @@ services:
       
       # Variables accesibles por los flujos de n8n
       - STREAMVAULT_APP_URL=http://streamvault-app:8000
+      - FINANCE_API_TOKEN=${FINANCE_API_TOKEN:?Configurar FINANCE_API_TOKEN}
+      - N8N_WEBHOOK_SECRET=${N8N_WEBHOOK_SECRET:?Configurar N8N_WEBHOOK_SECRET}
       - EVOLUTION_API_URL=http://evolution-api:8080
-      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY}
+      - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:?Configurar EVOLUTION_API_KEY}
       - EVOLUTION_INSTANCE_NAME=${EVOLUTION_INSTANCE_NAME:-streamvault}
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_ADMIN_CHAT_ID}
-      - TELEGRAM_AUDIT_CHANNEL_ID=${TELEGRAM_CHANNEL_ID}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:?Configurar TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:?Configurar TELEGRAM_CHAT_ID}
+      - TELEGRAM_ADMIN_CHAT_ID=${TELEGRAM_CHAT_ID:?Configurar TELEGRAM_CHAT_ID}
+      - TELEGRAM_AUDIT_CHANNEL_ID=${TELEGRAM_CHANNEL_ID:-}
       - GENERIC_TIMEZONE=America/Argentina/Buenos_Aires
       - TZ=America/Argentina/Buenos_Aires
     networks:
@@ -94,8 +119,13 @@ services:
     image: evoapicloud/evolution-api:v2.3.7
     container_name: streamvault-evolution
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
     ports:
-      - "8081:8080"
+      - "${BIND_HOST:-127.0.0.1}:8081:8080"
     environment:
       - SERVER_URL=${EVOLUTION_SERVER_URL:-http://localhost:8081}
       - DOCKER_ENV=true

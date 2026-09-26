@@ -21,7 +21,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "={{ $env.EVOLUTION_API_URL || 'http://evolution-api:8080' }}/instance/connectionState/{{ $env.EVOLUTION_INSTANCE_NAME || 'streamvault' }}",
+        "url": "={{ $env.EVOLUTION_API_URL || 'http://evolution-api:8080' }}/instance/connectionState/{{ $env.EVOLUTION_INSTANCE_NAME || 'streaming-bot' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
@@ -44,13 +44,24 @@
     {
       "parameters": {
         "conditions": {
-          "string": [
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
             {
-              "value1": "={{ $json.instance?.state || $json.state || 'unknown' }}",
-              "operation": "notEqual",
-              "value2": "open"
+              "id": "watchdog-condition-state-not-open",
+              "leftValue": "={{ $json.instance?.state || $json.state || 'unknown' }}",
+              "rightValue": "open",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         }
       },
       "id": "node-filter-disconnected",

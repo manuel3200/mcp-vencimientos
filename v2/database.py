@@ -14,24 +14,44 @@ from core.security import (
     decrypt_backup,
     encrypt_secret,
     decrypt_secret,
-    is_encrypted_secret
+    is_encrypted_secret,
+    create_session_cookie,
+    verify_session_cookie,
+    revoke_session_cookie,
+    revoke_all_user_sessions,
 )
 from core.audit import (
     log_audit_event,
     verify_audit_chain,
     get_audit_history,
-    format_audit_report
+    format_audit_report,
+    compute_audit_signature,
+    get_audit_hmac_key,
 )
 from core.ephemeral_secrets import (
     create_ephemeral_secret,
+    peek_ephemeral_secret,
     reveal_and_burn_secret,
     burn_secret_immediately
+)
+from core.principal import (
+    Principal,
+    require_scope,
+    issue_service_token,
+    revoke_service_token,
+    authenticate_service_token,
+    authenticate_request,
+    generate_csrf_token,
+    verify_csrf_token,
 )
 from core.rbac import (
     ROLE_SUPER_ADMIN,
     ROLE_FINANZAS,
     ROLE_SOPORTE,
     ROLE_UNAUTHORIZED,
+    VALID_ROLES,
+    validate_configured_role,
+    canonicalize_whatsapp_phone,
     get_actor_role,
     has_permission,
     check_admin_permission
@@ -40,10 +60,14 @@ from core.utils import parse_money, format_ars, clean_whatsapp_phone, _parse_dat
 
 from db.repositories.admin_repo import (
     create_or_update_admin,
+    bootstrap_admin_once,
     get_admin_user,
     verify_admin_credentials,
     set_telegram_otp,
-    verify_telegram_otp
+    verify_telegram_otp,
+    create_password_reset_token,
+    invalidate_password_reset_token,
+    consume_password_reset_token_and_update_password,
 )
 
 from db.repositories.clients_repo import (
@@ -117,11 +141,17 @@ from db.repositories.settings_repo import (
     get_oauth_settings,
     save_oauth_settings,
     regenerate_oauth_secret,
+    is_registered_redirect_uri,
+    validate_pkce_s256,
     validate_oauth_client,
+    create_pending_oauth_request,
+    get_pending_oauth_request,
+    mark_pending_oauth_request_used,
     create_oauth_auth_code,
     verify_and_consume_auth_code,
     create_oauth_tokens,
     refresh_oauth_token,
+    revoke_oauth_token_family,
     verify_oauth_access_token
 )
 
@@ -280,4 +310,27 @@ from application.community.scheduled_broadcast_service import (
 from application.community.word_filter_service import (
     inspect_community_message
 )
+
+# Operación Reproducible, Cola Persistente, Snapshots Cifrados y Cuotas Compartidas (Bloque 3: O05, O06, O07)
+from services.outbound_queue_service import (
+    enqueue_outbound_job,
+    claim_next_outbound_job,
+    complete_outbound_job,
+    fail_outbound_job,
+    get_outbound_job,
+    list_failed_outbound_jobs,
+)
+from services.backup_service import (
+    create_sqlite_snapshot,
+    create_encrypted_sqlite_backup_bytes,
+    create_encrypted_sqlite_backup_bytes_async,
+    verify_encrypted_sqlite_backup_bytes,
+)
+from core.rate_limiter import (
+    read_bounded_body,
+    read_bounded_upload_file,
+    get_trusted_client_ip,
+    check_shared_sqlite_quota,
+)
+
 

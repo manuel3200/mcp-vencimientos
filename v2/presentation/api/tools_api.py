@@ -1,4 +1,6 @@
 import os
+import urllib.parse
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File
@@ -142,12 +144,15 @@ async def import_stock_api(request: Request, file: Optional[UploadFile] = None, 
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    
+    from core.rate_limiter import read_bounded_upload_file
+
     content = ""
     if file and file.filename:
-        file_bytes = await file.read()
+        file_bytes = await read_bounded_upload_file(file, max_bytes=2 * 1024 * 1024)
         content = file_bytes.decode("utf-8", errors="ignore")
     elif csv_text and csv_text.strip():
+        if len(csv_text.encode("utf-8")) > 2 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="El texto CSV excede el tamaño máximo de 2 MB.")
         content = csv_text.strip()
     
     if not content:
@@ -166,12 +171,15 @@ async def import_sales_api(request: Request, file: Optional[UploadFile] = None, 
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
-    
+    from core.rate_limiter import read_bounded_upload_file
+
     content = ""
     if file and file.filename:
-        file_bytes = await file.read()
+        file_bytes = await read_bounded_upload_file(file, max_bytes=2 * 1024 * 1024)
         content = file_bytes.decode("utf-8", errors="ignore")
     elif csv_text and csv_text.strip():
+        if len(csv_text.encode("utf-8")) > 2 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="El texto CSV excede el tamaño máximo de 2 MB.")
         content = csv_text.strip()
     
     if not content:
@@ -240,24 +248,29 @@ async def api_clear_logs(request: Request):
     system_logger.clear_memory_logs()
     return RedirectResponse(url="/?msg=logs_cleared#logs", status_code=303)
 
-from fastapi.responses import FileResponse
 from core.config import settings
 from application.http_custom.renew_custom import execute_renew_http_custom
+from services.backup_service import create_encrypted_sqlite_backup_bytes_async
 
 @router.get("/api/system/backup-download")
 async def api_download_database_backup(request: Request):
-    """Descarga el archivo físico SQLite services.db directamente en el navegador."""
+    """Genera un snapshot consistente de SQLite con sqlite3.backup(), lo cifra con BACKUP_ENCRYPTION_KEY y lo entrega (O06)."""
     user = verify_session_cookie(request.cookies.get("session_token"))
     if not user:
         raise HTTPException(status_code=401)
     db_file = settings.DB_PATH
     if not os.path.exists(db_file):
         raise HTTPException(status_code=404, detail="Archivo de base de datos no encontrado")
+    actor = user if isinstance(user, str) else user.get("username", "admin")
+    encrypted_bytes = await create_encrypted_sqlite_backup_bytes_async(db_file, actor=f"web:{actor}")
     today_str = datetime.now().strftime("%Y%m%d_%H%M")
-    return FileResponse(
-        path=db_file,
-        filename=f"services_backup_{today_str}.db",
-        media_type="application/x-sqlite3"
+    return Response(
+        content=encrypted_bytes,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f"attachment; filename=services_backup_{today_str}.db.enc",
+            "Cache-Control": "no-store",
+        }
     )
 
 @router.post("/api/system/prune-receipts")
@@ -288,11 +301,19 @@ async def api_renew_http_custom(account_id: int, request: Request, days: int = F
 
 @router.get("/api/audit/anchor")
 async def api_get_audit_anchor(request: Request):
-    """Retorna el ancla criptográfica actual (root hash, total de bloques y último ID) para consumo por n8n o auditores."""
+    """Retorna el ancla criptográfica actual (root hash, total de bloques y último ID) para consumo por n8n o auditores autenticados."""
+    import secrets
+    from core.principal import authenticate_request
     from core.audit import get_latest_audit_entry, GENESIS_HASH
     from db.connection import get_connection
-    from datetime import datetime
-    
+
+    principal = authenticate_request(request)
+    if principal is None:
+        api_key = (request.headers.get("X-API-Key") or request.headers.get("apikey") or "").strip()
+        expected_n8n = (getattr(settings, "N8N_WEBHOOK_SECRET", "") or os.getenv("N8N_WEBHOOK_SECRET", "")).strip()
+        if not (api_key and expected_n8n and secrets.compare_digest(api_key, expected_n8n)):
+            raise HTTPException(status_code=401, detail="No autorizado")
+
     latest = get_latest_audit_entry()
     latest_sig = latest.get("signature_hmac", GENESIS_HASH) if latest else GENESIS_HASH
     latest_id = latest.get("id", 0) if latest else 0
@@ -314,4 +335,77 @@ async def api_get_audit_anchor(request: Request):
 
 
 # ==========================================
-# 12. Endpoints Evolution API WhatsApp & Webhooks
+# O05: Cola Persistente de Despacho Saliente (202 Accepted + Consulta de Estado)
+# ==========================================
+
+def _authorize_outbound_queue(request: Request) -> str:
+    import secrets
+    from core.principal import authenticate_request
+
+    principal = authenticate_request(request)
+    if principal is not None:
+        return principal.subject
+
+    api_key = (request.headers.get("X-API-Key") or request.headers.get("apikey") or "").strip()
+    expected_n8n = (getattr(settings, "N8N_WEBHOOK_SECRET", "") or os.getenv("N8N_WEBHOOK_SECRET", "")).strip()
+    if api_key and expected_n8n and secrets.compare_digest(api_key, expected_n8n):
+        return "n8n-buffer"
+    raise HTTPException(status_code=401, detail="No autorizado para operar la cola de envíos.")
+
+
+@router.post("/api/v1/outbound-queue/enqueue")
+async def api_enqueue_outbound_job(request: Request):
+    """Encola un mensaje saliente con clave de idempotencia y responde 202 Accepted tras persistir (O05)."""
+    import json
+    from core.rate_limiter import read_bounded_body
+    from services.outbound_queue_service import enqueue_outbound_job
+
+    producer = _authorize_outbound_queue(request)
+    raw_body = await read_bounded_body(request, max_bytes=32 * 1024)
+    try:
+        data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception:
+        raise HTTPException(status_code=400, detail="Cuerpo JSON inválido.")
+
+    try:
+        job = enqueue_outbound_job(
+            producer=str(data.get("producer") or producer),
+            idempotency_key=str(data.get("idempotency_key") or ""),
+            recipient=str(data.get("recipient") or ""),
+            payload=data.get("payload") if isinstance(data.get("payload"), dict) else {"message": str(data.get("message") or "")},
+            instance=data.get("instance"),
+        )
+        return JSONResponse(
+            {
+                "status": "accepted",
+                "job_id": job.get("id"),
+                "duplicate": bool(job.get("duplicate")),
+                "job_status": job.get("status", "pending"),
+            },
+            status_code=202,
+        )
+    except PermissionError as p_err:
+        raise HTTPException(status_code=403, detail=str(p_err))
+    except ValueError as v_err:
+        raise HTTPException(status_code=400, detail=str(v_err))
+
+
+@router.get("/api/v1/outbound-queue/jobs/{job_id}")
+async def api_get_outbound_job_status(job_id: int, request: Request):
+    """Consulta el estado de una tarea en la cola de despacho (O05)."""
+    from services.outbound_queue_service import get_outbound_job
+
+    _authorize_outbound_queue(request)
+    job = get_outbound_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada.")
+    return {"status": "ok", "job": job}
+
+
+@router.get("/api/v1/outbound-queue/dead-letter")
+async def api_list_outbound_dead_letter(request: Request, limit: int = 50):
+    """Lista las tareas en dead_letter o ambiguous_review para revisión operativa (O05)."""
+    from services.outbound_queue_service import list_failed_outbound_jobs
+
+    _authorize_outbound_queue(request)
+    return {"status": "ok", "jobs": list_failed_outbound_jobs(limit=limit)}

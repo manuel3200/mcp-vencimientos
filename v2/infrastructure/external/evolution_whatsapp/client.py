@@ -9,11 +9,11 @@ import database
 logger = logging.getLogger("whatsapp_client")
 
 def get_evolution_config() -> Dict[str, Any]:
-    """Obtiene la configuración activa de Evolution API desde la base de datos o variables de entorno."""
+    """Obtiene la configuración activa de Evolution API desde la base de datos o variables de entorno (V01: sin clave por defecto)."""
     settings = database.get_whatsapp_api_settings()
     api_url = (settings.get("api_url") or os.getenv("EVOLUTION_API_URL", "http://evolution-api:8080")).strip().rstrip("/")
-    api_key = (settings.get("api_key") or os.getenv("EVOLUTION_API_KEY", "mcp-evolution-key-2026")).strip()
-    instance_name = (settings.get("instance_name") or os.getenv("EVOLUTION_INSTANCE_NAME", "streaming-bot")).strip()
+    api_key = (settings.get("api_key") or os.getenv("EVOLUTION_API_KEY", "")).strip()
+    instance_name = (settings.get("instance_name") or os.getenv("EVOLUTION_INSTANCE_NAME", "streamvault")).strip()
 
     return {
         "api_url": api_url,
